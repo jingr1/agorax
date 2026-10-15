@@ -1,3 +1,5 @@
 # TanStack Router regenerates this with LF; pin EOL so autocrlf
 # does not mark it permanently dirty on macOS/Linux.
 src/routeTree.gen.ts text eol=lf
+# Bash treats a trailing CR as part of the option name (`set -o pipefail`).
+*.sh text eol=lf

@@ -10,7 +10,7 @@ LOG="${AGORAX_AGENT_LOG:-/tmp/agorax-daemon.log}"
 PORT="${AGORAX_MANAGED_AGENT_PORT:-8788}"
 DB_PATH="${AGORAX_AGENT_DB_PATH:-$ROOT/.agorax/agent.db}"
 BIN="$ROOT/.agorax/agorax-agentd"
-export PATH="$HOME/.local/go1.24.5/bin:$HOME/go/bin:/usr/local/go/bin:${PATH:-}"
+export PATH="$HOME/.local/go1.27.2/bin:$HOME/.local/go1.24.5/bin:$HOME/go/bin:/usr/local/go/bin:${PATH:-}"
 export AGORAX_MANAGED_AGENT_PORT="$PORT"
 export AGORAX_AGENT_DB_PATH="$DB_PATH"
 

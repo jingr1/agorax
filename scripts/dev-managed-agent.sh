@@ -25,7 +25,7 @@ if [[ "${AGORAX_MANAGED_AGENT_REPLACE:-}" == "1" ]]; then
   FORCE=1
 fi
 
-export PATH="$HOME/.local/go1.24.5/bin:$HOME/go/bin:/usr/local/go/bin:${PATH:-}"
+export PATH="$HOME/.local/go1.27.2/bin:$HOME/.local/go1.24.5/bin:$HOME/go/bin:/usr/local/go/bin:${PATH:-}"
 
 mkdir -p "$ROOT/.agorax"
 
