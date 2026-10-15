@@ -1,0 +1,425 @@
+import type { EngineDiagnosticSink } from "./diagnostics.ts";
+import type { AgentActivitySendInput } from "../types.ts";
+import type {
+  AgentSessionActivateEffectInput,
+  EngineClock,
+  EngineCommandResultContract,
+  EngineCommandResultIntent,
+  EngineExternalCommand,
+  EngineScheduledTask,
+  EngineScheduler,
+  EngineTypedCommandPort
+} from "./types.ts";
+
+// Effect executor: performs external command descriptions through the
+// injected command port and feeds every settlement (success, failure,
+// timeout) back into the dispatch loop as a command-result intent.
+//
+// The executor holds no decision logic. Retrying, fallback, and recovery are
+// reducer transitions, never executed in place here.
+
+export interface CreateEngineEffectExecutorInput {
+  clock: EngineClock;
+  commandPort: EngineTypedCommandPort;
+  diagnosticSink?: EngineDiagnosticSink;
+  onResult: (intent: EngineCommandResultIntent) => void;
+  scheduler: EngineScheduler;
+}
+
+export interface EngineEffectExecutor {
+  abort(commandId: string, reason: string): void;
+  dispose(): void;
+  execute(command: EngineExternalCommand): void;
+}
+
+export function createEngineEffectExecutor({
+  clock,
+  commandPort,
+  diagnosticSink,
+  onResult,
+  scheduler
+}: CreateEngineEffectExecutorInput): EngineEffectExecutor {
+  let disposed = false;
+  const timeoutTasks = new Set<EngineScheduledTask>();
+  const abortControllersByCommandId = new Map<string, AbortController>();
+
+  const settle = (intent: EngineCommandResultIntent): void => {
+    if (disposed) {
+      diagnosticSink?.({
+        commandId: intent.commandId,
+        type: "commandResultAfterDispose"
+      });
+      return;
+    }
+    onResult(intent);
+  };
+
+  return {
+    abort(commandId, reason) {
+      const controller = abortControllersByCommandId.get(commandId.trim());
+      if (!controller || controller.signal.aborted) return;
+      const error = new Error(
+        reason.trim() || "engine command aborted"
+      ) as Error & { code: string };
+      error.code = "aborted";
+      error.name = "AbortError";
+      controller.abort(error);
+    },
+    dispose() {
+      disposed = true;
+      for (const task of timeoutTasks) {
+        task.cancel();
+      }
+      timeoutTasks.clear();
+      for (const controller of abortControllersByCommandId.values()) {
+        controller.abort(new Error("engine disposed"));
+      }
+      abortControllersByCommandId.clear();
+    },
+    execute(command) {
+      commandPort.observe?.(command);
+      let settled = false;
+      let timeoutTask: EngineScheduledTask | null = null;
+      const abortController = new AbortController();
+      abortControllersByCommandId.set(command.commandId, abortController);
+      const resultContract = commandResultContract(command);
+      const execution = executeCommand(
+        commandPort,
+        command,
+        abortController.signal
+      );
+
+      const finishTimeoutTask = (): void => {
+        if (
+          abortControllersByCommandId.get(command.commandId) === abortController
+        ) {
+          abortControllersByCommandId.delete(command.commandId);
+        }
+        if (timeoutTask !== null) {
+          timeoutTasks.delete(timeoutTask);
+          timeoutTask.cancel();
+          timeoutTask = null;
+        }
+      };
+
+      const timeoutMs = "timeoutMs" in command ? command.timeoutMs : undefined;
+      if (timeoutMs !== undefined) {
+        timeoutTask = scheduler.schedule(timeoutMs, () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          abortController.abort(new Error("engine command timed out"));
+          finishTimeoutTask();
+          settle({
+            commandId: command.commandId,
+            commandType: command.type,
+            ...commandCorrelationFields(command),
+            outcome: "timedOut",
+            settledAtUnixMs: clock.nowUnixMs(),
+            resultContract,
+            type: "engine/commandResult"
+          });
+        });
+        timeoutTasks.add(timeoutTask);
+      }
+
+      execution.then(
+        (value) => {
+          if (settled) {
+            diagnosticSink?.({
+              commandId: command.commandId,
+              type: "commandResultAfterTimeout"
+            });
+            return;
+          }
+          settled = true;
+          finishTimeoutTask();
+          settle({
+            commandId: command.commandId,
+            commandType: command.type,
+            ...commandCorrelationFields(command),
+            outcome: "succeeded",
+            settledAtUnixMs: clock.nowUnixMs(),
+            resultContract,
+            type: "engine/commandResult",
+            value
+          });
+        },
+        (error: unknown) => {
+          if (settled) {
+            diagnosticSink?.({
+              commandId: command.commandId,
+              type: "commandResultAfterTimeout"
+            });
+            return;
+          }
+          settled = true;
+          finishTimeoutTask();
+          settle({
+            commandId: command.commandId,
+            commandType: command.type,
+            ...commandCorrelationFields(command),
+            ...engineCommandErrorFields(error),
+            outcome: "failed",
+            settledAtUnixMs: clock.nowUnixMs(),
+            resultContract,
+            type: "engine/commandResult"
+          });
+        }
+      );
+    }
+  };
+}
+
+function executeCommand(
+  commandPort: EngineTypedCommandPort,
+  command: EngineExternalCommand,
+  signal: AbortSignal
+): Promise<unknown> {
+  if (
+    command.type === "queue/sendPrompt" &&
+    command.requiredSettingsPatch !== undefined
+  ) {
+    return Promise.reject(
+      new Error(
+        "queue/sendPrompt settings preconditions must be resolved by the Engine before execution"
+      )
+    );
+  }
+  if (command.type === "plan/submitDecision") {
+    return commandPort.executePlanDecision
+      ? commandPort.executePlanDecision(command, {
+          commandId: command.commandId,
+          origin: "engine",
+          signal
+        })
+      : Promise.reject(
+          new Error(
+            "EngineTypedCommandPort.executePlanDecision is not configured"
+          )
+        );
+  }
+  const effects = commandPort.effects;
+  switch (command.type) {
+    case "session/activate":
+      return effects.activateSession(activationInput(command), {
+        commandId: command.commandId,
+        origin: "engine",
+        signal
+      });
+    case "goal/control":
+      return effects.controlGoal
+        ? effects.controlGoal(
+            {
+              action: command.action,
+              agentSessionId: command.agentSessionId,
+              clientSubmitId: command.clientSubmitId,
+              ...(command.objective ? { objective: command.objective } : {}),
+              workspaceId: command.workspaceId
+            },
+            { commandId: command.commandId, origin: "engine", signal }
+          )
+        : Promise.reject(
+            new Error("AgentSessionEffectPort.controlGoal is not configured")
+          );
+    case "queue/sendPrompt":
+      return effects.sendInput(promptInput(command), {
+        commandId: command.commandId,
+        origin: "engine",
+        signal
+      });
+    case "session/updateSettings":
+      return effects.updateSessionSettings(
+        {
+          agentSessionId: command.agentSessionId,
+          commandId: command.commandId,
+          correlationId: command.correlationId,
+          settings: command.settings,
+          workspaceId: command.workspaceId
+        },
+        { commandId: command.commandId, origin: "engine", signal }
+      );
+    case "turn/cancel":
+      return effects.cancelTurn(
+        {
+          agentSessionId: command.agentSessionId,
+          turnId: command.turnId,
+          workspaceId: command.workspaceId
+        },
+        { commandId: command.commandId, origin: "engine", signal }
+      );
+    case "sessions/delete":
+      return effects.deleteSessions(
+        {
+          agentSessionIds: [...command.agentSessionIds],
+          workspaceId: command.workspaceId
+        },
+        { commandId: command.commandId, origin: "engine", signal }
+      );
+    case "interaction/respond":
+      return effects.respondToInteraction(
+        {
+          ...(command.action ? { action: command.action } : {}),
+          agentSessionId: command.agentSessionId,
+          ...(command.optionId ? { optionId: command.optionId } : {}),
+          ...(command.payload ? { payload: { ...command.payload } } : {}),
+          requestId: command.requestId,
+          turnId: command.turnId,
+          workspaceId: command.workspaceId
+        },
+        { commandId: command.commandId, origin: "engine", signal }
+      );
+    case "session/setPinned":
+      return effects.setSessionPinned(
+        {
+          agentSessionId: command.agentSessionId,
+          pinned: command.pinned,
+          workspaceId: command.workspaceId
+        },
+        { commandId: command.commandId, origin: "engine", signal }
+      );
+    case "session/rename":
+      return effects.renameSession(
+        {
+          agentSessionId: command.agentSessionId,
+          title: command.title,
+          workspaceId: command.workspaceId
+        },
+        { commandId: command.commandId, origin: "engine", signal }
+      );
+    default:
+      return commandPort.execute(command, {
+        commandId: command.commandId,
+        origin: "engine",
+        signal
+      });
+  }
+}
+
+function commandResultContract(
+  command: EngineExternalCommand
+): EngineCommandResultContract {
+  if (command.type === "session/activate") return "activation-v1";
+  if (command.type === "goal/control") return "goal-control-v1";
+  return "opaque";
+}
+
+function promptInput(
+  command: Extract<EngineExternalCommand, { type: "queue/sendPrompt" }>
+): AgentActivitySendInput {
+  return {
+    agentSessionId: command.agentSessionId,
+    ...(command.capabilityRefs?.length
+      ? { capabilityRefs: command.capabilityRefs }
+      : {}),
+    clientSubmitId: command.clientSubmitId,
+    content: [...command.content],
+    displayPrompt: command.displayPrompt ?? null,
+    ...(command.guidance === true ? { guidance: true } : {}),
+    ...(command.guidance === true && command.targetTurnId?.trim()
+      ? { targetTurnId: command.targetTurnId.trim() }
+      : {}),
+    ...(command.submitDiagnostics
+      ? { submitDiagnostics: { ...command.submitDiagnostics } }
+      : {}),
+    workspaceId: command.workspaceId
+  };
+}
+
+function activationInput(
+  command: Extract<EngineExternalCommand, { type: "session/activate" }>
+): AgentSessionActivateEffectInput {
+  const shared = {
+    activationId: command.correlationId,
+    agentSessionId: command.agentSessionId,
+    ...(command.capabilityRefs?.length
+      ? { capabilityRefs: command.capabilityRefs }
+      : {}),
+    ...(command.cwd !== undefined ? { cwd: command.cwd } : {}),
+    ...(command.initialContent
+      ? { initialContent: [...command.initialContent] }
+      : {}),
+    ...(command.initialDisplayPrompt !== undefined
+      ? { initialDisplayPrompt: command.initialDisplayPrompt }
+      : {}),
+    ...(command.isolation ? { isolation: command.isolation } : {}),
+    ...(command.modelExplicit !== undefined
+      ? { modelExplicit: command.modelExplicit }
+      : {}),
+    ...(command.railPlacement
+      ? { railPlacement: { ...command.railPlacement } }
+      : {}),
+    ...(command.reasoningEffortExplicit !== undefined
+      ? { reasoningEffortExplicit: command.reasoningEffortExplicit }
+      : {}),
+    ...(command.settings ? { settings: { ...command.settings } } : {}),
+    ...(command.submitDiagnostics
+      ? { submitDiagnostics: { ...command.submitDiagnostics } }
+      : {}),
+    ...(command.title !== undefined ? { title: command.title } : {}),
+    ...(command.visible !== undefined ? { visible: command.visible } : {}),
+    workspaceId: command.workspaceId
+  };
+  return command.mode === "new"
+    ? {
+        ...shared,
+        agentTargetId: command.agentTargetId,
+        clientSubmitId: command.clientSubmitId,
+        ...(command.initialGoalControl
+          ? { initialGoalControl: { ...command.initialGoalControl } }
+          : {}),
+        ...(command.initialAgoraxModeActivation
+          ? {
+              initialAgoraxModeActivation: {
+                ...command.initialAgoraxModeActivation
+              }
+            }
+          : {}),
+        mode: "new"
+      }
+    : {
+        ...shared,
+        agentTargetId: command.agentTargetId,
+        mode: "existing"
+      };
+}
+
+function commandCorrelationFields(command: EngineExternalCommand): {
+  correlationId?: string;
+} {
+  if (!("correlationId" in command)) {
+    return {};
+  }
+  const value = command.correlationId;
+  return typeof value === "string" && value.trim()
+    ? { correlationId: value.trim() }
+    : {};
+}
+
+function engineCommandErrorFields(error: unknown): {
+  errorCode?: string;
+  errorReason?: string;
+  errorMessage: string;
+} {
+  const record =
+    error && typeof error === "object"
+      ? (error as Record<string, unknown>)
+      : null;
+  const code = typeof record?.code === "string" ? record.code.trim() : "";
+  const normalizedCode =
+    code ||
+    (error instanceof Error && error.name === "AbortError" ? "aborted" : "");
+  const reason = typeof record?.reason === "string" ? record.reason.trim() : "";
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof record?.message === "string"
+        ? record.message
+        : String(error);
+  return {
+    ...(normalizedCode ? { errorCode: normalizedCode } : {}),
+    ...(reason ? { errorReason: reason } : {}),
+    errorMessage: message
+  };
+}

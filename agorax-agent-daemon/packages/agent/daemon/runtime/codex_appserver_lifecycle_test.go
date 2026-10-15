@@ -1,0 +1,887 @@
+package agentruntime
+
+import (
+	"context"
+	"errors"
+	"io"
+	"reflect"
+	"sync"
+	"testing"
+	"time"
+)
+
+// --- per-process app-server transport ---
+
+// multiProcAppServerTransport spawns a fresh scripted connection per Start so
+// tests can count how many app-server OS processes a session spawned and how
+// many are still live. The shared-conn scriptedAppServerTransport cannot
+// distinguish two processes because every Start reuses the same connection.
+type multiProcAppServerTransport struct {
+	mu        sync.Mutex
+	conns     []*scriptedAppServerConnection
+	specs     []ProcessSpec
+	startErr  error
+	configure func(server *fakeCodexAppServer)
+}
+
+func (t *multiProcAppServerTransport) Start(_ context.Context, spec ProcessSpec) (ProcessConnection, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.startErr != nil {
+		return nil, t.startErr
+	}
+	conn, server := newScriptedAppServerHarness()
+	if t.configure != nil {
+		t.configure(server)
+	}
+	t.conns = append(t.conns, conn)
+	t.specs = append(t.specs, spec)
+	return conn, nil
+}
+
+func (t *multiProcAppServerTransport) setStartErr(err error) {
+	t.mu.Lock()
+	t.startErr = err
+	t.mu.Unlock()
+}
+
+func (t *multiProcAppServerTransport) setConfigure(configure func(server *fakeCodexAppServer)) {
+	t.mu.Lock()
+	t.configure = configure
+	t.mu.Unlock()
+}
+
+// snapshot returns how many processes were spawned in total and which of them
+// are still live (never closed).
+func (t *multiProcAppServerTransport) snapshot() (spawned int, live []*scriptedAppServerConnection) {
+	t.mu.Lock()
+	conns := append([]*scriptedAppServerConnection(nil), t.conns...)
+	t.mu.Unlock()
+	for _, conn := range conns {
+		conn.mu.Lock()
+		closed := conn.closeCount > 0
+		conn.mu.Unlock()
+		if !closed {
+			live = append(live, conn)
+		}
+	}
+	return len(conns), live
+}
+
+func (t *multiProcAppServerTransport) conn(index int) *scriptedAppServerConnection {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if index < 0 || index >= len(t.conns) {
+		return nil
+	}
+	return t.conns[index]
+}
+
+func (t *multiProcAppServerTransport) spec(index int) ProcessSpec {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if index < 0 || index >= len(t.specs) {
+		return ProcessSpec{}
+	}
+	return t.specs[index]
+}
+
+func connClosed(conn *scriptedAppServerConnection) bool {
+	if conn == nil {
+		return false
+	}
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	return conn.closeCount > 0
+}
+
+func TestCodexAppServerAdapterProviderLaunchPrepareMutatesSpecAndCleansUpOnClose(t *testing.T) {
+	t.Parallel()
+
+	transport := newScriptedAppServerTransport()
+	adapter := NewCodexAppServerAdapter(transport)
+	cleanupCalls := 0
+	adapter.SetProviderLaunchPreparer(func(_ context.Context, input ProviderLaunchPrepareInput) (ProviderLaunchPrepareResult, error) {
+		if input.Provider != ProviderCodex {
+			t.Fatalf("Provider = %q, want %q", input.Provider, ProviderCodex)
+		}
+		if input.DirectStart {
+			t.Fatal("DirectStart = true, want false for codex app-server")
+		}
+		if input.Session.AgentSessionID != "agent-session-1" {
+			t.Fatalf("Session.AgentSessionID = %q", input.Session.AgentSessionID)
+		}
+		return ProviderLaunchPrepareResult{
+			Command: []string{"prepared-codex", "app-server"},
+			Env:     append(append([]string(nil), input.Env...), "HOOK_ENV=1"),
+			CWD:     "/prepared/workspace",
+			Cleanup: func(context.Context) error {
+				cleanupCalls++
+				return nil
+			},
+		}, nil
+	})
+
+	session := testAppServerSession()
+	session.Env = []string{"SESSION_ENV=1"}
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if cleanupCalls != 0 {
+		t.Fatalf("cleanup calls before close = %d, want 0", cleanupCalls)
+	}
+	transport.mu.Lock()
+	specs := append([]ProcessSpec(nil), transport.specs...)
+	transport.mu.Unlock()
+	if len(specs) != 1 {
+		t.Fatalf("transport starts = %d, want 1", len(specs))
+	}
+	spec := specs[0]
+	if !reflect.DeepEqual(spec.Command, []string{"prepared-codex", "app-server"}) {
+		t.Fatalf("Command = %#v", spec.Command)
+	}
+	if spec.CWD != "/prepared/workspace" {
+		t.Fatalf("CWD = %q", spec.CWD)
+	}
+	if !reflect.DeepEqual(spec.Env[len(spec.Env)-4:], []string{
+		"SESSION_ENV=1",
+		"HOOK_ENV=1",
+		codexAppServerLogFormatEnv,
+		codexAppServerRustLogEnv,
+	}) {
+		t.Fatalf("Env tail = %#v", spec.Env)
+	}
+
+	if err := adapter.Close(context.Background(), session); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if cleanupCalls != 1 {
+		t.Fatalf("cleanup calls after close = %d, want 1", cleanupCalls)
+	}
+}
+
+func TestCodexAppServerAdapterStartUsesInjectedProviderCommand(t *testing.T) {
+	t.Parallel()
+
+	transport := newScriptedAppServerTransport()
+	adapter := NewCodexAppServerAdapterWithHostMetadataAndCommandResolver(
+		transport,
+		LegacyHostMetadata(),
+		func(_ context.Context, provider string) (ProviderCommand, error) {
+			if provider != ProviderCodex {
+				t.Fatalf("provider = %q, want %q", provider, ProviderCodex)
+			}
+			return ProviderCommand{
+				Command: []string{"/user/bin/codex", "app-server"},
+				Env:     []string{"PATH=/managed/node/bin:/user/bin", "AGORAX_APP_NODE=/managed/node/bin/node"},
+			}, nil
+		},
+	)
+	session := testAppServerSession()
+	session.Env = []string{"SESSION_ENV=1"}
+
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(transport.specs) != 1 {
+		t.Fatalf("process starts = %d, want 1", len(transport.specs))
+	}
+	spec := transport.specs[0]
+	if !reflect.DeepEqual(spec.Command, []string{"/user/bin/codex", "app-server"}) {
+		t.Fatalf("Command = %#v", spec.Command)
+	}
+	if !containsString(spec.Env, "SESSION_ENV=1") || !containsString(spec.Env, "AGORAX_APP_NODE=/managed/node/bin/node") {
+		t.Fatalf("Env = %#v, want session and managed runtime env", spec.Env)
+	}
+}
+
+func TestCodexAppServerAdapterProviderLaunchPrepareFailureDoesNotSpawn(t *testing.T) {
+	t.Parallel()
+
+	transport := &multiProcAppServerTransport{}
+	adapter := NewCodexAppServerAdapter(transport)
+	prepareErr := errors.New("prepare failed")
+	adapter.SetProviderLaunchPreparer(func(context.Context, ProviderLaunchPrepareInput) (ProviderLaunchPrepareResult, error) {
+		return ProviderLaunchPrepareResult{}, prepareErr
+	})
+
+	if _, err := adapter.Start(context.Background(), testAppServerSession()); !errors.Is(err, prepareErr) {
+		t.Fatalf("Start error = %v, want %v", err, prepareErr)
+	}
+	spawned, _ := transport.snapshot()
+	if spawned != 0 {
+		t.Fatalf("spawned processes = %d, want 0", spawned)
+	}
+}
+
+func TestCodexAppServerAdapterProviderLaunchCleanupRunsOnProcessStartFailure(t *testing.T) {
+	t.Parallel()
+
+	transport := &multiProcAppServerTransport{}
+	startErr := errors.New("process start failed")
+	transport.setStartErr(startErr)
+	adapter := NewCodexAppServerAdapter(transport)
+	cleanupCalls := 0
+	cleanupSawCanceledContext := false
+	adapter.SetProviderLaunchPreparer(func(_ context.Context, input ProviderLaunchPrepareInput) (ProviderLaunchPrepareResult, error) {
+		return ProviderLaunchPrepareResult{
+			Command: input.Command,
+			Env:     input.Env,
+			CWD:     input.CWD,
+			Cleanup: func(ctx context.Context) error {
+				if ctx.Err() != nil {
+					cleanupSawCanceledContext = true
+				}
+				cleanupCalls++
+				return nil
+			},
+		}, nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := adapter.Start(ctx, testAppServerSession()); !errors.Is(err, startErr) {
+		t.Fatalf("Start error = %v, want %v", err, startErr)
+	}
+	if cleanupCalls != 1 {
+		t.Fatalf("cleanup calls = %d, want 1", cleanupCalls)
+	}
+	if cleanupSawCanceledContext {
+		t.Fatal("cleanup received canceled launch context")
+	}
+}
+
+// --- single-live-process invariant tests ---
+
+func TestCodexAppServerAdapterConcurrentStartsLeaveSingleLiveProcess(t *testing.T) {
+	t.Parallel()
+
+	transport := &multiProcAppServerTransport{}
+	adapter := NewCodexAppServerAdapter(transport)
+	session := testAppServerSession()
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = adapter.Start(context.Background(), session)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Start[%d]: %v", i, err)
+		}
+	}
+	spawned, live := transport.snapshot()
+	if len(live) != 1 {
+		t.Fatalf("live app-server processes = %d (spawned %d), want exactly 1", len(live), spawned)
+	}
+	if !adapter.HasLiveSession(session) {
+		t.Fatalf("HasLiveSession = false, want true after concurrent starts")
+	}
+}
+
+func TestCodexAppServerAdapterStartOverLiveSessionStopsPreviousProcess(t *testing.T) {
+	t.Parallel()
+
+	transport := &multiProcAppServerTransport{}
+	adapter := NewCodexAppServerAdapter(transport)
+	session := testAppServerSession()
+
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	spawned, live := transport.snapshot()
+	if spawned != 2 {
+		t.Fatalf("spawned processes = %d, want 2", spawned)
+	}
+	if len(live) != 1 || live[0] != transport.conn(1) {
+		t.Fatalf("live processes = %d, want exactly the replacement process live", len(live))
+	}
+	if !connClosed(transport.conn(0)) {
+		t.Fatalf("previous app-server process was orphaned instead of closed")
+	}
+}
+
+func TestCodexAppServerAdapterResumeOverLiveSessionClosesPreviousProcess(t *testing.T) {
+	t.Parallel()
+
+	transport := &multiProcAppServerTransport{}
+	adapter := NewCodexAppServerAdapter(transport)
+	session := testAppServerSession()
+
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	session.ProviderSessionID = "codex-thread-1"
+	if err := adapter.Resume(context.Background(), session); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	spawned, live := transport.snapshot()
+	if spawned != 2 {
+		t.Fatalf("spawned processes = %d, want 2", spawned)
+	}
+	if len(live) != 1 || live[0] != transport.conn(1) {
+		t.Fatalf("live processes = %d, want exactly the resumed process live", len(live))
+	}
+	if !connClosed(transport.conn(0)) {
+		t.Fatalf("pre-resume app-server process was orphaned instead of closed")
+	}
+	if !adapter.HasLiveSession(session) {
+		t.Fatalf("HasLiveSession = false, want true after resume")
+	}
+}
+
+func TestCodexAppServerAdapterResumeSpawnFailureKeepsPreviousSessionLive(t *testing.T) {
+	t.Parallel()
+
+	transport := &multiProcAppServerTransport{}
+	adapter := NewCodexAppServerAdapter(transport)
+	session := testAppServerSession()
+
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	transport.setStartErr(errors.New("spawn failed"))
+	session.ProviderSessionID = "codex-thread-1"
+	if err := adapter.Resume(context.Background(), session); err == nil {
+		t.Fatalf("Resume with failing spawn should error")
+	}
+	spawned, live := transport.snapshot()
+	if spawned != 1 || len(live) != 1 || live[0] != transport.conn(0) {
+		t.Fatalf("spawned=%d live=%d, want the original process to stay live", spawned, len(live))
+	}
+	if !adapter.HasLiveSession(session) {
+		t.Fatalf("HasLiveSession = false, want true: failed resume must keep the old session usable")
+	}
+}
+
+func TestCodexAppServerAdapterResumeThreadFailureKeepsPreviousSessionLive(t *testing.T) {
+	t.Parallel()
+
+	transport := &multiProcAppServerTransport{}
+	adapter := NewCodexAppServerAdapter(transport)
+	session := testAppServerSession()
+
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	transport.setConfigure(func(server *fakeCodexAppServer) {
+		server.threadResumeError = true
+	})
+	session.ProviderSessionID = "codex-thread-1"
+	if err := adapter.Resume(context.Background(), session); err == nil {
+		t.Fatalf("Resume with failing thread/resume should error")
+	}
+	spawned, live := transport.snapshot()
+	if spawned != 2 {
+		t.Fatalf("spawned processes = %d, want 2", spawned)
+	}
+	if len(live) != 1 || live[0] != transport.conn(0) {
+		t.Fatalf("live processes = %d, want only the original process live (new one closed)", len(live))
+	}
+	if !adapter.HasLiveSession(session) {
+		t.Fatalf("HasLiveSession = false, want true: failed resume must keep the old session usable")
+	}
+}
+
+func TestCodexAppServerAdapterResumeMCPAuthFailureDoesNotBlockLifecycle(t *testing.T) {
+	t.Parallel()
+
+	transport := &multiProcAppServerTransport{}
+	adapter := NewCodexAppServerAdapter(transport)
+	session := testAppServerSession()
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	transport.setConfigure(func(server *fakeCodexAppServer) {
+		server.mcpAuthStderrOnResume = true
+		server.mcpAuthStderrResumeResponse = true
+		server.mcpFailureResponseDelay = 1100 * time.Millisecond
+	})
+	session.ProviderSessionID = "codex-thread-1"
+	startedAt := time.Now()
+	err := adapter.Resume(context.Background(), session)
+	if err != nil {
+		t.Fatalf("Resume with optional MCP auth failure: %v", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed >= 3*time.Second {
+		t.Fatalf("Resume took %s; MCP failure blocked lifecycle", elapsed)
+	}
+	spawned, live := transport.snapshot()
+	if spawned != 2 || len(live) != 1 || live[0] != transport.conn(1) {
+		t.Fatalf("spawned=%d live=%d, want only the resumed process live", spawned, len(live))
+	}
+	if !adapter.HasLiveSession(session) {
+		t.Fatal("HasLiveSession = false after optional MCP startup failure")
+	}
+}
+
+func TestCodexAppServerAdapterStartMCPAuthFailureDoesNotBlockLifecycle(t *testing.T) {
+	t.Parallel()
+
+	transport := &multiProcAppServerTransport{}
+	adapter := NewCodexAppServerAdapter(transport)
+	transport.setConfigure(func(server *fakeCodexAppServer) {
+		server.mcpAuthStderrOnStart = true
+		server.mcpAuthStderrStartResponse = true
+		server.mcpFailureResponseDelay = 1100 * time.Millisecond
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := adapter.Start(ctx, testAppServerSession()); err != nil {
+		t.Fatalf("Start with optional MCP auth failure: %v", err)
+	}
+	spawned, live := transport.snapshot()
+	if spawned != 1 || len(live) != 1 || live[0] != transport.conn(0) {
+		t.Fatalf("spawned=%d live=%d, want the started process to remain live", spawned, len(live))
+	}
+}
+
+func TestCodexAppServerAdapterMCPStartupStatusFailureDoesNotBlockLifecycle(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		configure     func(*fakeCodexAppServer)
+		resume        bool
+		wantLiveIndex int
+	}{
+		{
+			name: "start",
+			configure: func(server *fakeCodexAppServer) {
+				server.mcpStartupStatusFailedOnStart = true
+				server.mcpStartupStatusFailureResponse = true
+				server.mcpFailureResponseDelay = 1100 * time.Millisecond
+			},
+			wantLiveIndex: 0,
+		},
+		{
+			name: "resume",
+			configure: func(server *fakeCodexAppServer) {
+				server.mcpStartupStatusFailedOnResume = true
+				server.mcpStartupStatusFailureResponse = true
+				server.mcpFailureResponseDelay = 1100 * time.Millisecond
+			},
+			resume:        true,
+			wantLiveIndex: 1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &multiProcAppServerTransport{}
+			adapter := NewCodexAppServerAdapter(transport)
+			session := testAppServerSession()
+			if test.resume {
+				if _, err := adapter.Start(context.Background(), session); err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+				session.ProviderSessionID = "codex-thread-1"
+			}
+			transport.setConfigure(test.configure)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			startedAt := time.Now()
+			var err error
+			if test.resume {
+				err = adapter.Resume(ctx, session)
+			} else {
+				_, err = adapter.Start(ctx, session)
+			}
+			if err != nil {
+				t.Fatalf("MCP startup status failure blocked lifecycle: %v", err)
+			}
+			if elapsed := time.Since(startedAt); elapsed >= 3*time.Second {
+				t.Fatalf("lifecycle call took %s; MCP failure blocked lifecycle", elapsed)
+			}
+			spawned, live := transport.snapshot()
+			wantSpawned := 1
+			if test.resume {
+				wantSpawned = 2
+			}
+			if spawned != wantSpawned || len(live) != 1 || live[0] != transport.conn(test.wantLiveIndex) {
+				t.Fatalf("spawned=%d live=%d, want process %d to remain live", spawned, len(live), test.wantLiveIndex)
+			}
+			if !adapter.HasLiveSession(session) {
+				t.Fatal("HasLiveSession = false after optional MCP startup failure")
+			}
+		})
+	}
+}
+
+func TestCodexAppServerAdapterMCPStartupStatusResponseWinsGraceRace(t *testing.T) {
+	t.Parallel()
+
+	transport := &multiProcAppServerTransport{}
+	adapter := NewCodexAppServerAdapter(transport)
+	session := testAppServerSession()
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	transport.setConfigure(func(server *fakeCodexAppServer) {
+		server.mcpStartupStatusFailedOnResume = true
+		server.mcpStartupStatusFailureResponse = true
+	})
+	session.ProviderSessionID = "codex-thread-1"
+	if err := adapter.Resume(context.Background(), session); err != nil {
+		t.Fatalf("Resume response lost MCP startup failure grace race: %v", err)
+	}
+	if !adapter.HasLiveSession(session) {
+		t.Fatal("HasLiveSession = false after successful resume")
+	}
+}
+
+func TestCodexAppServerAdapterThreadStartedNotificationCompletesLifecycleWithoutRPCResponse(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		resume    bool
+		configure func(*fakeCodexAppServer)
+	}{
+		{
+			name: "start",
+			configure: func(server *fakeCodexAppServer) {
+				server.threadStartedOnStart = true
+			},
+		},
+		{
+			name:   "resume",
+			resume: true,
+			configure: func(server *fakeCodexAppServer) {
+				server.threadStartedOnResume = true
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &multiProcAppServerTransport{}
+			adapter := NewCodexAppServerAdapter(transport)
+			session := testAppServerSession()
+			if test.resume {
+				if _, err := adapter.Start(context.Background(), session); err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+				session.ProviderSessionID = "codex-thread-1"
+			}
+			transport.setConfigure(test.configure)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if test.resume {
+				if err := adapter.Resume(ctx, session); err != nil {
+					t.Fatalf("Resume should use thread/started as lifecycle success: %v", err)
+				}
+			} else if _, err := adapter.Start(ctx, session); err != nil {
+				t.Fatalf("Start should use thread/started as lifecycle success: %v", err)
+			}
+			if !adapter.HasLiveSession(session) {
+				t.Fatal("HasLiveSession = false after notification-only lifecycle success")
+			}
+		})
+	}
+}
+
+func TestCodexAppServerAdapterStartReleaseRaceLeavesNoOrphanProcess(t *testing.T) {
+	t.Parallel()
+
+	for iteration := 0; iteration < 25; iteration++ {
+		transport := &multiProcAppServerTransport{}
+		adapter := NewCodexAppServerAdapter(transport)
+		session := testAppServerSession()
+		if _, err := adapter.Start(context.Background(), session); err != nil {
+			t.Fatalf("iteration %d Start: %v", iteration, err)
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _ = adapter.Start(context.Background(), session)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = adapter.ReleaseLiveSession(context.Background(), session)
+		}()
+		wg.Wait()
+
+		wantLive := 0
+		if adapter.HasLiveSession(session) {
+			wantLive = 1
+		}
+		spawned, live := transport.snapshot()
+		if len(live) != wantLive {
+			t.Fatalf("iteration %d: live processes = %d, want %d (spawned %d): process leaked or half-closed",
+				iteration, len(live), wantLive, spawned)
+		}
+	}
+}
+
+func TestCodexAppServerClientCloseIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	conn := newScriptedAppServerConnection()
+	client := newCodexAppServerClient(conn)
+	if err := client.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	conn.mu.Lock()
+	closeCount := conn.closeCount
+	conn.mu.Unlock()
+	if closeCount != 1 {
+		t.Fatalf("underlying connection Close calls = %d, want 1 (client Close must be idempotent)", closeCount)
+	}
+}
+
+type sequencedCloseErrorConnection struct {
+	ProcessConnection
+	mu     sync.Mutex
+	errors []error
+}
+
+func (c *sequencedCloseErrorConnection) Close() error {
+	c.mu.Lock()
+	var err error
+	if len(c.errors) > 0 {
+		err = c.errors[0]
+		c.errors = c.errors[1:]
+	}
+	c.mu.Unlock()
+	if err == nil {
+		return c.ProcessConnection.Close()
+	}
+	if errors.Is(err, ErrSessionNotFound) {
+		// The sentinel represents a connection whose provider session has
+		// already disappeared. Close the scripted transport for test cleanup,
+		// while preserving the provider error returned to the adapter.
+		_ = c.ProcessConnection.Close()
+	}
+	return err
+}
+
+type sequencedCloseErrorTransport struct {
+	mu          sync.Mutex
+	starts      int
+	closeErrors []error
+}
+
+func (t *sequencedCloseErrorTransport) Start(_ context.Context, _ ProcessSpec) (ProcessConnection, error) {
+	conn, _ := newScriptedAppServerHarness()
+	t.mu.Lock()
+	start := t.starts
+	t.starts++
+	closeErrors := append([]error(nil), t.closeErrors...)
+	t.mu.Unlock()
+	if start == 0 {
+		return &sequencedCloseErrorConnection{
+			ProcessConnection: conn,
+			errors:            closeErrors,
+		}, nil
+	}
+	return conn, nil
+}
+
+func TestAppServerAlreadyGoneRetiredHandleDoesNotBackpressureReplacement(t *testing.T) {
+	t.Parallel()
+
+	transport := &sequencedCloseErrorTransport{
+		closeErrors: []error{
+			errors.New("injected first close failure"),
+			errors.New("injected second close failure"),
+			ErrSessionNotFound,
+		},
+	}
+	adapter := NewCodexAppServerAdapter(transport)
+	session := testAppServerSession()
+	if _, err := adapter.Start(t.Context(), session); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if _, err := adapter.Start(t.Context(), session); err != nil {
+		t.Fatalf("replacement Start: %v", err)
+	}
+
+	session.ProviderSessionID = "codex-thread-1"
+	if err := adapter.Resume(t.Context(), session); err != nil {
+		t.Fatalf("Resume after provider session disappeared: %v", err)
+	}
+	if !adapter.HasLiveSession(session) {
+		t.Fatal("replacement app-server session is not usable")
+	}
+	cleanup := adapter.CleanupLiveSessionResources(t.Context(), 1)
+	if cleanup.Attempted != 0 || cleanup.Cleaned != 0 || cleanup.Failed != 0 {
+		t.Fatalf("cleanup=%#v, want no retained session", cleanup)
+	}
+	if err := adapter.ReleaseLiveSession(t.Context(), session); err != nil {
+		t.Fatalf("release replacement: %v", err)
+	}
+}
+
+func TestAppServerCloseTreatsMissingSessionAsSuccess(t *testing.T) {
+	t.Parallel()
+
+	connection, _ := newScriptedAppServerHarness()
+	client := newCodexAppServerClient(&sequencedCloseErrorConnection{
+		ProcessConnection: connection,
+		errors:            []error{ErrSessionNotFound},
+	})
+	adapter := NewCodexAppServerAdapter(&multiProcAppServerTransport{})
+	session := testAppServerSession()
+	adapter.storeSession(session.AgentSessionID, &codexAppServerSession{
+		client:          client,
+		pendingRequests: make(map[string]*pendingInteractiveRequest),
+	})
+
+	if err := adapter.ReleaseLiveSession(t.Context(), session); err != nil {
+		t.Fatalf("ReleaseLiveSession: %v", err)
+	}
+	if adapter.getSession(session.AgentSessionID) != nil {
+		t.Fatal("missing provider session remained owned as current")
+	}
+	if adapter.hasRetiredCodexSessions(session.AgentSessionID) {
+		t.Fatal("missing provider session was retained for cleanup")
+	}
+}
+
+func TestAppServerCloseFailureRetainsUnusableHandleAndBackpressuresReplacement(t *testing.T) {
+	for _, provider := range []string{ProviderCodex} {
+		provider := provider
+		t.Run(provider, func(t *testing.T) {
+			transport := &multiProcAppServerTransport{}
+			adapter := NewCodexAppServerAdapter(transport)
+			session := testAppServerSession()
+			session.Provider = provider
+			session.ProviderSessionID = "codex-thread-1"
+			if _, err := adapter.Start(t.Context(), session); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			oldConnection := transport.conn(0)
+			oldConnection.mu.Lock()
+			oldConnection.closeFailures = 4
+			oldConnection.mu.Unlock()
+
+			if err := adapter.ReleaseLiveSession(t.Context(), session); err == nil {
+				t.Fatal("ReleaseLiveSession error=nil, want close failure")
+			}
+			if adapter.HasLiveSession(session) {
+				t.Fatal("close-failed client remained usable")
+			}
+			if err := adapter.Resume(t.Context(), session); err != nil {
+				t.Fatalf("first replacement Resume: %v", err)
+			}
+			if !adapter.HasLiveSession(session) {
+				t.Fatal("replacement client is not usable")
+			}
+			if err := adapter.ReleaseLiveSession(t.Context(), session); err != nil {
+				t.Fatalf("release replacement: %v", err)
+			}
+			spawnedBefore, _ := transport.snapshot()
+			err := adapter.Resume(t.Context(), session)
+			if AppErrorCode(err) != AppErrorProcessCleanupPending {
+				t.Fatalf("second Resume error code=%q err=%v", AppErrorCode(err), err)
+			}
+			spawnedAfter, _ := transport.snapshot()
+			if spawnedAfter != spawnedBefore {
+				t.Fatalf("spawned processes changed behind cleanup backpressure: %d -> %d", spawnedBefore, spawnedAfter)
+			}
+			cleanupAdapter, ok := any(adapter).(LiveSessionResourceCleanupAdapter)
+			if !ok {
+				t.Fatal("app-server adapter does not own detached resource cleanup")
+			}
+			cleanup := cleanupAdapter.CleanupLiveSessionResources(t.Context(), 1)
+			if cleanup.Attempted != 1 || cleanup.Failed != 1 {
+				t.Fatalf("failed cleanup=%#v", cleanup)
+			}
+			oldConnection.mu.Lock()
+			oldConnection.closeFailures = 0
+			oldConnection.mu.Unlock()
+			cleanup = cleanupAdapter.CleanupLiveSessionResources(t.Context(), 1)
+			if cleanup.Attempted != 1 || cleanup.Cleaned != 1 || cleanup.Failed != 0 {
+				t.Fatalf("successful cleanup=%#v", cleanup)
+			}
+		})
+	}
+}
+
+type doneClosedCloseFailConnection struct {
+	ProcessConnection
+	mu         sync.Mutex
+	done       chan struct{}
+	closeCalls int
+}
+
+func newDoneClosedCloseFailConnection(connection ProcessConnection) *doneClosedCloseFailConnection {
+	done := make(chan struct{})
+	close(done)
+	return &doneClosedCloseFailConnection{ProcessConnection: connection, done: done}
+}
+
+func (*doneClosedCloseFailConnection) Recv() (ProcessFrame, error) {
+	return ProcessFrame{}, io.EOF
+}
+
+func (c *doneClosedCloseFailConnection) Close() error {
+	c.mu.Lock()
+	c.closeCalls++
+	c.mu.Unlock()
+	return errors.New("injected persistent close failure after process exit")
+}
+
+func (c *doneClosedCloseFailConnection) Done() <-chan struct{} { return c.done }
+
+func TestAppServerExitedConnectionWithPersistentCloseFailureRemainsOwned(t *testing.T) {
+	base, _ := newScriptedAppServerHarness()
+	connection := newDoneClosedCloseFailConnection(base)
+	client := newCodexAppServerClient(connection)
+	transport := &multiProcAppServerTransport{}
+	adapter := NewCodexAppServerAdapter(transport)
+	session := testAppServerSession()
+	session.ProviderSessionID = "codex-thread-1"
+	appSession := &codexAppServerSession{client: client, pendingRequests: make(map[string]*pendingInteractiveRequest)}
+	adapter.storeSession(session.AgentSessionID, appSession)
+	select {
+	case <-client.Done():
+	case <-time.After(time.Second):
+		t.Fatal("app-server client did not observe the closed process connection")
+	}
+
+	if adapter.HasLiveSession(session) {
+		t.Fatal("Done-closed app-server client reported usable")
+	}
+	if err := adapter.DisconnectLiveSession(t.Context(), session); err == nil {
+		t.Fatal("DisconnectLiveSession error=nil, want persistent Close failure")
+	}
+	if adapter.getSession(session.AgentSessionID) != appSession {
+		t.Fatal("Done-closed close-failed handle lost current ownership")
+	}
+	if err := adapter.Resume(t.Context(), session); err != nil {
+		t.Fatalf("Resume after exited close failure: %v", err)
+	}
+	if !adapter.HasLiveSession(session) {
+		t.Fatal("replacement app-server session is not usable")
+	}
+	if adapter.getSession(session.AgentSessionID) == appSession {
+		t.Fatal("exited close-failed handle remained current after replacement")
+	}
+	cleanup := adapter.CleanupLiveSessionResources(t.Context(), 1)
+	if cleanup.Attempted != 1 || cleanup.Failed != 1 || cleanup.Cleaned != 0 {
+		t.Fatalf("cleanup=%#v, want one retained failure", cleanup)
+	}
+	connection.mu.Lock()
+	closeCalls := connection.closeCalls
+	connection.mu.Unlock()
+	if closeCalls != 3 {
+		t.Fatalf("Close calls=%d, want disconnect + replacement retirement + bounded cleanup", closeCalls)
+	}
+}

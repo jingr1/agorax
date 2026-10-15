@@ -1,0 +1,230 @@
+/* ════════════════════════════════════════════════════════════════════
+   Default theme — Tutti-inspired neutral workbench
+   Dark:  blue-black #111216, panel #1a1c22, accent #5a9bff
+   Light: cold white #f7f8fa, panel #f8fafc, accent #4182f5
+   Glass / blur tokens are for floating layers only — not full-screen glass.
+   ═══════════════════════════════════════════════════════════════════ */
+
+[data-theme='default'] {
+  color-scheme: dark !important;
+
+  --theme-bg: #111216;
+  --theme-sidebar: #1a1c22;
+  --theme-panel: #1a1c22;
+  --theme-card: #22252d;
+  --theme-card2: #2a2d36;
+  --theme-border: #30333b;
+  --theme-border-subtle: rgb(255 255 255 / 8%);
+  --theme-text: #f6f6f7;
+  --theme-muted: rgb(255 255 255 / 50%);
+  --theme-shadow-1: 0 1px 2px rgb(0 0 0 / 28%);
+  --theme-shadow-2: 0 14px 32px rgb(0 0 0 / 24%);
+  --theme-shadow-3: 0 24px 52px rgb(0 0 0 / 34%);
+  --theme-glass: oklch(0.236 0.009 255 / 90%);
+  --theme-focus: #5a9bff;
+  --theme-accent: #5a9bff;
+  --theme-accent-secondary: #4f8fff;
+  --theme-accent-subtle: rgb(90 155 255 / 12%);
+  --theme-accent-border: rgb(90 155 255 / 28%);
+  --theme-active: #5a9bff;
+  --theme-link: #5a9bff;
+  --theme-success: #62d49f;
+  --theme-warning: #fb923c;
+  --theme-danger: #ff716c;
+  --theme-stripe: rgb(90 155 255 / 4%);
+  --theme-header-bg: #1a1c22;
+  --theme-header-border: #30333b;
+  --chat-user-bg: #22252d;
+  --chat-user-border: rgb(90 155 255 / 22%);
+  --chat-user-foreground: #f6f6f7;
+  --chat-assistant-bg: #111216;
+  --chat-assistant-border: rgb(255 255 255 / 8%);
+  --chat-assistant-foreground: #f6f6f7;
+  --composer-bg: #22252d;
+  --composer-border: #30333b;
+  --composer-placeholder: rgb(255 255 255 / 30%);
+  --tool-card-bg: #22252d;
+  --tool-card-border: rgb(255 255 255 / 12%);
+  --tool-card-title: #f6f6f7;
+  --tool-card-muted: rgb(255 255 255 / 50%);
+  --code-bg: #1a1c22;
+  --code-border: #30333b;
+  --code-foreground: #8bb4ff;
+  --code-inline-bg: rgb(255 255 255 / 12%);
+  --code-inline-border: rgb(255 255 255 / 14%);
+  --md-strong: #ffffff;
+  --md-em: rgb(255 255 255 / 70%);
+  --md-link: #5a9bff;
+  /* Controls sit lighter than cards so outline buttons read as raised chips */
+  --theme-input: #2c303a;
+  --theme-control-border: rgb(255 255 255 / 16%);
+  --control-inset-highlight: inset 0 1px 0 rgb(255 255 255 / 10%);
+  --control-elevation: 0 1px 2px rgb(0 0 0 / 35%);
+
+  /* Geometry + surface (Tutti-aligned) */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --control-h-sm: 32px;
+  --control-h-md: 36px;
+  --control-h-lg: 40px;
+  --control-h-row: 44px;
+  --app-surface-bg:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--theme-accent) 10%, transparent),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 18% 12%,
+      color-mix(in srgb, var(--theme-accent) 12%, transparent),
+      transparent 28%
+    ),
+    #111216;
+  --overlay-blur: blur(8px);
+  --elevated-blur: blur(24px) saturate(1.08);
+  --workbench-window-blur: blur(40px) saturate(1.08);
+  --theme-focused-border: rgb(255 255 255 / 32%);
+  --transparency-block: rgb(255 255 255 / 10%);
+  --transparency-hover: rgb(255 255 255 / 14%);
+  --transparency-active: rgb(255 255 255 / 16%);
+}
+
+[data-theme='default-light'] {
+  color-scheme: light !important;
+
+  --theme-bg: #f7f8fa;
+  --theme-sidebar: #f8fafc;
+  --theme-panel: #f8fafc;
+  --theme-card: #ffffff;
+  --theme-card2: #f4f5f7;
+  --theme-border: #e5e7eb;
+  --theme-border-subtle: rgb(60 60 60 / 8%);
+  --theme-text: #29313d;
+  --theme-muted: rgb(60 60 60 / 50%);
+  --theme-shadow-1: 0 0 0 rgb(0 0 0 / 0%);
+  --theme-shadow-2: 0 10px 28px rgb(0 0 0 / 5%);
+  --theme-shadow-3: 0 20px 44px rgb(0 0 0 / 8%);
+  --theme-glass: oklch(0.995 0.003 84 / 94%);
+  --theme-focus: #4182f5;
+  --theme-accent: #4182f5;
+  --theme-accent-secondary: #3975df;
+  --theme-accent-subtle: rgb(65 130 245 / 10%);
+  --theme-accent-border: rgb(65 130 245 / 24%);
+  --theme-active: #4182f5;
+  --theme-link: #3975df;
+  --theme-success: #22c55e;
+  --theme-warning: #ea7908;
+  --theme-danger: #dc2626;
+  --theme-stripe: rgb(65 130 245 / 4%);
+  --theme-header-bg: #f8fafc;
+  --theme-header-border: #e5e7eb;
+  --chat-user-bg: #f4f5f7;
+  --chat-user-border: rgb(65 130 245 / 22%);
+  --chat-user-foreground: #29313d;
+  --chat-assistant-bg: #f7f8fa;
+  --chat-assistant-border: rgb(60 60 60 / 8%);
+  --chat-assistant-foreground: #29313d;
+  --composer-bg: #ffffff;
+  --composer-border: #e5e7eb;
+  --composer-placeholder: rgb(60 60 60 / 40%);
+  --tool-card-bg: #ffffff;
+  --tool-card-border: #e5e7eb;
+  --tool-card-title: #29313d;
+  --tool-card-muted: rgb(60 60 60 / 50%);
+  --code-bg: #f4f5f7;
+  --code-border: #e5e7eb;
+  --code-foreground: #2f6fed;
+  --code-inline-bg: rgb(65 130 245 / 10%);
+  --code-inline-border: rgb(65 130 245 / 18%);
+  --md-strong: #1a1f2a;
+  --md-em: rgb(60 60 60 / 70%);
+  --md-link: #3975df;
+  --theme-input: #ffffff;
+  --theme-control-border: rgb(60 60 60 / 14%);
+  --control-inset-highlight: inset 0 1px 0 rgb(255 255 255 / 80%);
+  --control-elevation: 0 1px 2px rgb(0 0 0 / 6%);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --control-h-sm: 32px;
+  --control-h-md: 36px;
+  --control-h-lg: 40px;
+  --control-h-row: 44px;
+  --app-surface-bg:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--theme-accent) 5%, transparent),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 18% 12%,
+      color-mix(in srgb, var(--theme-accent) 8%, transparent),
+      transparent 28%
+    ),
+    #f7f8fa;
+  --overlay-blur: blur(8px);
+  --elevated-blur: blur(24px) saturate(1.08);
+  --workbench-window-blur: blur(40px) saturate(1.08);
+  --theme-focused-border: rgb(255 255 255 / 68%);
+  --transparency-block: rgb(60 60 60 / 4%);
+  --transparency-hover: rgb(60 60 60 / 6%);
+  --transparency-active: rgb(60 60 60 / 6%);
+}
+
+[data-theme='default'] html,
+[data-theme='default'] body,
+[data-theme='default'] #root,
+[data-theme='default'] .dark {
+  background-color: var(--theme-bg);
+  color: var(--theme-text);
+}
+
+[data-theme='default-light'] html,
+[data-theme='default-light'] body,
+[data-theme='default-light'] #root,
+[data-theme='default-light'] .light {
+  background-color: var(--theme-bg);
+  color: var(--theme-text);
+}
+
+[data-theme='default'] {
+  --color-primary-50: var(--theme-panel) !important;
+  --color-primary-100: var(--theme-card) !important;
+  --color-primary-200: var(--theme-border-subtle) !important;
+  --color-primary-300: var(--theme-border) !important;
+  --color-primary-400: var(--theme-muted) !important;
+  --color-primary-500: var(--theme-muted) !important;
+  --color-primary-600: var(--theme-muted) !important;
+  --color-primary-700: var(--theme-text) !important;
+  --color-primary-800: var(--theme-text) !important;
+  --color-primary-900: var(--theme-text) !important;
+  --color-primary-950: var(--theme-text) !important;
+  --color-surface: var(--theme-bg) !important;
+  --color-surface-deep: var(--theme-bg) !important;
+  --color-ink: var(--theme-text) !important;
+  --color-accent-400: var(--theme-accent-secondary) !important;
+  --color-accent-500: var(--theme-accent) !important;
+  --color-accent-600: var(--theme-accent) !important;
+}
+
+[data-theme='default-light'] {
+  --color-primary-50: var(--theme-card) !important;
+  --color-primary-100: var(--theme-card2) !important;
+  --color-primary-200: var(--theme-border) !important;
+  --color-primary-300: var(--theme-border-subtle) !important;
+  --color-primary-400: var(--theme-muted) !important;
+  --color-primary-500: var(--theme-muted) !important;
+  --color-primary-600: var(--theme-muted) !important;
+  --color-primary-700: var(--theme-text) !important;
+  --color-primary-800: var(--theme-text) !important;
+  --color-primary-900: var(--theme-text) !important;
+  --color-primary-950: var(--theme-text) !important;
+  --color-surface: var(--theme-bg) !important;
+  --color-surface-deep: var(--theme-bg) !important;
+  --color-ink: var(--theme-text) !important;
+  --color-accent-400: var(--theme-accent-secondary) !important;
+  --color-accent-500: var(--theme-accent) !important;
+  --color-accent-600: var(--theme-accent) !important;
+}

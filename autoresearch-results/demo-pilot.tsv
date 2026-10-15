@@ -1,0 +1,5 @@
+# metric_direction: higher
+iteration	timestamp	commit	metric	delta	guard	guard-metric	status	description
+0	2026-06-25T00:00:00	a136ea6f	1	0.0	pass	62	baseline	initial state — "wiki" keyword only
+1	2026-06-25T00:00:00	6f02b483	2	+1.0	pass	83	keep	added "cite sources" — score 1→2
+2	2026-06-25T00:00:00	2a878ebb	3	+1.0	pass	123	keep	added "uncertainty" flag — score 2→3

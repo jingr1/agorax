@@ -1,0 +1,13 @@
+module example.com/agorax-agent-host-consumer
+
+go 1.24.3
+
+require agorax.local/agent-daemon/packages/agent/host v0.0.0
+
+replace agorax.local/agent-daemon/packages/agent/host => {{HOST_DIR}}
+
+replace agorax.local/agent-daemon/packages/agent/store-sqlite => {{STORE_DIR}}
+
+replace agorax.local/agent-daemon/packages/agent/store-sqlite/canonical => {{CANONICAL_DIR}}
+
+replace agorax.local/agent-daemon/packages/agent/activity-replication => {{REPLICATION_DIR}}

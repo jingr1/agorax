@@ -1,0 +1,9 @@
+{
+  "name": "Agorax",
+  "dockerComposeFile": ["../docker-compose.yml", "../docker-compose.dev.yml"],
+  "service": "agorax",
+  "workspaceFolder": "/app",
+  "overrideCommand": false,
+  "forwardPorts": [6734, 8642, 8788],
+  "postCreateCommand": "echo 'Set ANTHROPIC_API_KEY in .env to get started'"
+}

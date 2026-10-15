@@ -1,0 +1,7 @@
+{
+  "toolCallId": "tool-current",
+  "title": "Bash",
+  "rawOutput": {
+    "output": "Exit code 137"
+  }
+}

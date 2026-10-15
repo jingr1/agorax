@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="80" height="80" fill="none" role="img" aria-label="Codex">
+  <title>Codex</title>
+  <rect x="4" y="4" width="72" height="72" rx="14" fill="#F5F5F5" />
+  <rect x="4" y="4" width="72" height="72" rx="14" stroke="#10A37F" stroke-opacity="0.45" stroke-width="1.5" />
+  <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" fill="#10A37F" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="28" font-weight="600">&gt;_</text>
+</svg>

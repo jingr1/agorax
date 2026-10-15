@@ -1,0 +1,3 @@
+# TanStack Router regenerates this with LF; pin EOL so autocrlf
+# does not mark it permanently dirty on macOS/Linux.
+src/routeTree.gen.ts text eol=lf

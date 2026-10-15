@@ -1,0 +1,405 @@
+package storesqlite
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// CompareAndSwapSessionRuntimeContext replaces provider-private runtime context
+// only when it still equals the caller's observed value. Runtime rebind uses
+// this fence so a prepared connection and its durable launch snapshot cannot
+// silently diverge.
+func (s *Store) CompareAndSwapSessionRuntimeContext(
+	ctx context.Context,
+	workspaceID string,
+	agentSessionID string,
+	expected map[string]any,
+	replacement map[string]any,
+) (Session, bool, error) {
+	if s == nil || s.db == nil {
+		return Session{}, false, errors.New("workspace database is not initialized")
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	if workspaceID == "" || agentSessionID == "" {
+		return Session{}, false, nil
+	}
+	expectedJSON, err := marshalJSONMap(expected)
+	if err != nil {
+		return Session{}, false, err
+	}
+	replacementJSON, err := marshalJSONMap(replacement)
+	if err != nil {
+		return Session{}, false, err
+	}
+	now := unixMs(time.Now().UTC())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Session{}, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	result, err := tx.ExecContext(ctx, `
+UPDATE workspace_agent_sessions
+SET internal_runtime_context_json = ?,
+    updated_at_unix_ms = CASE
+      WHEN ? > updated_at_unix_ms THEN ?
+      ELSE updated_at_unix_ms + 1
+    END
+WHERE workspace_id = ? AND agent_session_id = ? AND deleted_at_unix_ms = 0
+  AND internal_runtime_context_json = ?
+`, replacementJSON, now, now, workspaceID, agentSessionID, expectedJSON)
+	if err != nil {
+		return Session{}, false, fmt.Errorf("compare and swap workspace agent runtime context: %w", err)
+	}
+	updated, err := rowsWereAffected(result, "compare and swap workspace agent runtime context")
+	if err != nil {
+		return Session{}, false, err
+	}
+	if !updated {
+		if _, err := s.commitTransaction(ctx, tx, workspaceID, nil); err != nil {
+			return Session{}, false, err
+		}
+		committed = true
+		return Session{}, false, nil
+	}
+	delta, err := s.commitTransaction(ctx, tx, workspaceID, []TransactionMutation{
+		transactionMutation(workspaceID, agentSessionID, MutationEntitySession, agentSessionID, "upsert", now),
+	})
+	if err != nil {
+		return Session{}, false, err
+	}
+	committed = true
+	session, ok, err := s.GetSession(ctx, workspaceID, agentSessionID)
+	if err != nil {
+		return Session{}, false, err
+	}
+	session.CommitTransactionID = delta.TransactionID
+	session.CommitDelta = delta
+	return session, ok, nil
+}
+
+func (s *Store) UpdateSessionPinned(
+	ctx context.Context,
+	workspaceID string,
+	agentSessionID string,
+	pinned bool,
+) (Session, bool, error) {
+	if s == nil || s.db == nil {
+		return Session{}, false, errors.New("workspace database is not initialized")
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	if workspaceID == "" || agentSessionID == "" {
+		return Session{}, false, nil
+	}
+
+	now := unixMs(time.Now().UTC())
+	pinnedAtUnixMS := int64(0)
+	if pinned {
+		pinnedAtUnixMS = now
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Session{}, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	result, err := tx.ExecContext(ctx, `
+UPDATE workspace_agent_sessions
+SET pinned_at_unix_ms = ?,
+    updated_at_unix_ms = CASE
+      WHEN ? > updated_at_unix_ms THEN ?
+      ELSE updated_at_unix_ms + 1
+    END
+WHERE workspace_id = ? AND agent_session_id = ? AND deleted_at_unix_ms = 0
+`, pinnedAtUnixMS, now, now, workspaceID, agentSessionID)
+	if err != nil {
+		return Session{}, false, fmt.Errorf("update workspace agent session pinned state: %w", err)
+	}
+	updated, err := rowsWereAffected(result, "update workspace agent session pinned state")
+	if err != nil {
+		return Session{}, false, err
+	}
+	if !updated {
+		if _, err := s.commitTransaction(ctx, tx, workspaceID, nil); err != nil {
+			return Session{}, false, err
+		}
+		committed = true
+		return Session{}, false, nil
+	}
+	delta, err := s.commitTransaction(ctx, tx, workspaceID, []TransactionMutation{
+		transactionMutation(workspaceID, agentSessionID, MutationEntitySession, agentSessionID, "upsert", now),
+	})
+	if err != nil {
+		return Session{}, false, err
+	}
+	committed = true
+	session, ok, err := s.GetSession(ctx, workspaceID, agentSessionID)
+	if err != nil {
+		return Session{}, false, err
+	}
+	session.CommitTransactionID = delta.TransactionID
+	session.CommitDelta = delta
+	return session, ok, nil
+}
+
+func (s *Store) UpdateSessionTitle(
+	ctx context.Context,
+	workspaceID string,
+	agentSessionID string,
+	title string,
+) (Session, bool, error) {
+	if s == nil || s.db == nil {
+		return Session{}, false, errors.New("workspace database is not initialized")
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	title = strings.TrimSpace(title)
+	if workspaceID == "" || agentSessionID == "" {
+		return Session{}, false, nil
+	}
+
+	now := unixMs(time.Now().UTC())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Session{}, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	result, err := tx.ExecContext(ctx, `
+UPDATE workspace_agent_sessions
+SET title = ?,
+    internal_runtime_context_json = json_set(
+      internal_runtime_context_json,
+      '$.agoraxInitialTitleEstablished',
+      json('true')
+    ),
+    updated_at_unix_ms = CASE
+      WHEN ? > updated_at_unix_ms THEN ?
+      ELSE updated_at_unix_ms + 1
+    END
+WHERE workspace_id = ? AND agent_session_id = ? AND deleted_at_unix_ms = 0
+`, title, now, now, workspaceID, agentSessionID)
+	if err != nil {
+		return Session{}, false, fmt.Errorf("update workspace agent session title: %w", err)
+	}
+	updated, err := rowsWereAffected(result, "update workspace agent session title")
+	if err != nil {
+		return Session{}, false, err
+	}
+	if !updated {
+		if _, err := s.commitTransaction(ctx, tx, workspaceID, nil); err != nil {
+			return Session{}, false, err
+		}
+		committed = true
+		return Session{}, false, nil
+	}
+	delta, err := s.commitTransaction(ctx, tx, workspaceID, []TransactionMutation{
+		transactionMutation(workspaceID, agentSessionID, MutationEntitySession, agentSessionID, "upsert", now),
+	})
+	if err != nil {
+		return Session{}, false, err
+	}
+	committed = true
+	session, ok, err := s.GetSession(ctx, workspaceID, agentSessionID)
+	if err != nil {
+		return Session{}, false, err
+	}
+	session.CommitTransactionID = delta.TransactionID
+	session.CommitDelta = delta
+	return session, ok, nil
+}
+
+func (s *Store) UpdateSessionSettings(
+	ctx context.Context,
+	workspaceID string,
+	agentSessionID string,
+	model string,
+	settings map[string]any,
+) (Session, bool, error) {
+	if s == nil || s.db == nil {
+		return Session{}, false, errors.New("workspace database is not initialized")
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	if workspaceID == "" || agentSessionID == "" {
+		return Session{}, false, nil
+	}
+	settingsJSON, err := marshalJSONMap(settings)
+	if err != nil {
+		return Session{}, false, err
+	}
+
+	now := unixMs(time.Now().UTC())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Session{}, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if err := requireSessionForkSourceWritableTx(
+		ctx,
+		tx,
+		workspaceID,
+		agentSessionID,
+	); err != nil {
+		return Session{}, false, err
+	}
+	result, err := tx.ExecContext(ctx, `
+UPDATE workspace_agent_sessions
+SET model = ?,
+    settings_json = ?,
+    session_metadata_json = CASE
+      WHEN trim(model) <> trim(?) THEN
+        CASE
+          WHEN json_array_length(json_extract(session_metadata_json, '$.usage.quotas')) > 0
+            THEN json_remove(session_metadata_json, '$.usage.contextWindow')
+          ELSE json_remove(session_metadata_json, '$.usage')
+        END
+      ELSE session_metadata_json
+    END,
+    updated_at_unix_ms = CASE
+      WHEN ? > updated_at_unix_ms THEN ?
+      ELSE updated_at_unix_ms + 1
+    END
+WHERE workspace_id = ? AND agent_session_id = ? AND deleted_at_unix_ms = 0
+`, strings.TrimSpace(model), settingsJSON, strings.TrimSpace(model), now, now, workspaceID, agentSessionID)
+	if err != nil {
+		return Session{}, false, fmt.Errorf("update workspace agent session settings: %w", err)
+	}
+	updated, err := rowsWereAffected(result, "update workspace agent session settings")
+	if err != nil {
+		return Session{}, false, err
+	}
+	if !updated {
+		if _, err := s.commitTransaction(ctx, tx, workspaceID, nil); err != nil {
+			return Session{}, false, err
+		}
+		committed = true
+		return Session{}, false, nil
+	}
+	delta, err := s.commitTransaction(ctx, tx, workspaceID, []TransactionMutation{
+		transactionMutation(workspaceID, agentSessionID, MutationEntitySession, agentSessionID, "upsert", now),
+	})
+	if err != nil {
+		return Session{}, false, err
+	}
+	committed = true
+	session, ok, err := s.GetSession(ctx, workspaceID, agentSessionID)
+	if err != nil {
+		return Session{}, false, err
+	}
+	session.CommitTransactionID = delta.TransactionID
+	session.CommitDelta = delta
+	return session, ok, nil
+}
+
+// UpdateSessionCwd rebinds the durable session working directory and mirrors
+// it into InternalRuntimeContext["cwd"] so activity projections stay aligned.
+func (s *Store) UpdateSessionCwd(
+	ctx context.Context,
+	workspaceID string,
+	agentSessionID string,
+	cwd string,
+) (Session, bool, error) {
+	if s == nil || s.db == nil {
+		return Session{}, false, errors.New("workspace database is not initialized")
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	cwd = strings.TrimSpace(cwd)
+	if workspaceID == "" || agentSessionID == "" || cwd == "" {
+		return Session{}, false, nil
+	}
+
+	current, found, err := s.GetSession(ctx, workspaceID, agentSessionID)
+	if err != nil {
+		return Session{}, false, err
+	}
+	if !found {
+		return Session{}, false, nil
+	}
+	if strings.TrimSpace(current.Cwd) == cwd {
+		return current, true, nil
+	}
+
+	runtimeContext := map[string]any{}
+	for key, value := range current.InternalRuntimeContext {
+		runtimeContext[key] = value
+	}
+	runtimeContext["cwd"] = cwd
+	runtimeContextJSON, err := marshalJSONMap(runtimeContext)
+	if err != nil {
+		return Session{}, false, err
+	}
+
+	now := unixMs(time.Now().UTC())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Session{}, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	result, err := tx.ExecContext(ctx, `
+UPDATE workspace_agent_sessions
+SET cwd = ?,
+    internal_runtime_context_json = ?,
+    updated_at_unix_ms = CASE
+      WHEN ? > updated_at_unix_ms THEN ?
+      ELSE updated_at_unix_ms + 1
+    END
+WHERE workspace_id = ? AND agent_session_id = ? AND deleted_at_unix_ms = 0
+`, cwd, runtimeContextJSON, now, now, workspaceID, agentSessionID)
+	if err != nil {
+		return Session{}, false, fmt.Errorf("update workspace agent session cwd: %w", err)
+	}
+	updated, err := rowsWereAffected(result, "update workspace agent session cwd")
+	if err != nil {
+		return Session{}, false, err
+	}
+	if !updated {
+		if _, err := s.commitTransaction(ctx, tx, workspaceID, nil); err != nil {
+			return Session{}, false, err
+		}
+		committed = true
+		return Session{}, false, nil
+	}
+	delta, err := s.commitTransaction(ctx, tx, workspaceID, []TransactionMutation{
+		transactionMutation(workspaceID, agentSessionID, MutationEntitySession, agentSessionID, "upsert", now),
+	})
+	if err != nil {
+		return Session{}, false, err
+	}
+	committed = true
+	session, ok, err := s.GetSession(ctx, workspaceID, agentSessionID)
+	if err != nil {
+		return Session{}, false, err
+	}
+	session.CommitTransactionID = delta.TransactionID
+	session.CommitDelta = delta
+	return session, ok, nil
+}

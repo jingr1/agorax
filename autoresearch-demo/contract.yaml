@@ -1,0 +1,17 @@
+# Pilot contract — orchestrator dispatches architect:autoresearch (mechanical metric)
+goal: Raise routing-hint keyword score without breaking size guard
+scope:
+  - autoresearch-demo/routing_hint.md
+mutable_target: autoresearch-demo/routing_hint.md
+locked_eval:
+  - autoresearch-demo/eval.sh
+  - autoresearch-demo/guard.sh
+metric: keyword score (0-4 integer)
+direction: higher
+verify: bash autoresearch-demo/eval.sh
+guard: bash autoresearch-demo/guard.sh
+iterations: 2
+results_log: autoresearch-results/demo-pilot.tsv
+rollback: git checkout -- autoresearch-demo/routing_hint.md when metric worsens or guard fails
+greenlight: approved — demo pilot only, no publish/merge/destructive scope
+executor: architect

@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "intents": {
+    "activation/requested": {
+      "effects": ["session/activate"],
+      "requiresEffect": true
+    },
+    "goal/controlRequested": {
+      "effects": ["goal/control"],
+      "requiresEffect": true
+    },
+    "interaction/responseRequested": {
+      "effects": ["interaction/respond"],
+      "requiresEffect": true
+    },
+    "plan/decisionRequested": {
+      "effects": ["plan/submitDecision"],
+      "requiresEffect": true
+    },
+    "plan/feedbackRequested": {
+      "effects": ["queue/sendPrompt"],
+      "requiresEffect": false
+    },
+    "queue/enqueued": {
+      "effects": [],
+      "requiresEffect": false
+    },
+    "queue/removed": {
+      "effects": [],
+      "requiresEffect": false
+    },
+    "queue/resumed": {
+      "effects": [],
+      "requiresEffect": false
+    },
+    "queue/sendNowRequested": {
+      "effects": ["queue/sendPrompt", "turn/cancel"],
+      "requiresEffect": false
+    },
+    "queue/suspended": {
+      "effects": [],
+      "requiresEffect": false
+    },
+    "session/cancelRequested": {
+      "effects": ["turn/cancel"],
+      "requiresEffect": false
+    },
+    "session/stopRequested": {
+      "effects": ["turn/cancel"],
+      "requiresEffect": false
+    },
+    "session/settingsUpdateRequested": {
+      "effects": ["session/updateSettings"],
+      "requiresEffect": true
+    },
+    "submit/canceled": {
+      "effects": [],
+      "requiresEffect": false
+    },
+    "submit/requested": {
+      "effects": ["queue/sendPrompt", "session/activate", "turn/cancel"],
+      "requiresEffect": false
+    }
+  }
+}

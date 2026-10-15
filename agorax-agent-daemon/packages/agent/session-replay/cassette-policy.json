@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 7,
+  "blobManifestSchemaVersion": 1,
+  "limits": {
+    "maxProviderPayloadBytes": 8388608,
+    "maxProviderTapeBytes": 268435456,
+    "maxCassetteBytes": 402653184,
+    "maxPortableBlobBytes": 20971520
+  },
+  "files": {
+    "activityEvents": {
+      "path": "activity-events.jsonl",
+      "role": "activity-events",
+      "required": true
+    },
+    "checkpointPlan": {
+      "path": "checkpoint-plan.json",
+      "role": "checkpoint-plan",
+      "required": true
+    },
+    "initialState": {
+      "path": "initial-state.json",
+      "role": "semantic-initial-state",
+      "required": false
+    },
+    "providerManifest": {
+      "path": "provider/manifest.json",
+      "role": "provider-tape-manifest",
+      "required": true
+    },
+    "providerFrames": {
+      "path": "provider/frames.jsonl",
+      "role": "provider-tape-frames",
+      "required": true
+    },
+    "expectedState": {
+      "path": "expected-state.json",
+      "role": "semantic-expected-state",
+      "required": true
+    },
+    "blobManifest": {
+      "path": "blobs/manifest.json",
+      "role": "referenced-blob-manifest",
+      "required": true
+    },
+    "cassetteManifest": {
+      "path": "cassette.json",
+      "role": "cassette-manifest",
+      "required": false,
+      "inventory": false
+    }
+  }
+}

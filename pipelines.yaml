@@ -1,0 +1,150 @@
+version: 1
+# Pipeline templates — structure + optional runtime + stage prompt files.
+# Content: pipelines/<id>/stages/<key>.md (WORKFLOW-style Markdown templates).
+pipelines:
+  - id: rad
+    name: Research → Architect → Developer
+    workspaceMode: canonical
+    runtime:
+      maxConcurrentTasks: 4
+      maxRetryBackoffMs: 300000
+      stallTimeoutMs: 300000
+    stages:
+      - key: research
+        agent: researcher
+        dependsOn: []
+        promptFile: stages/research.md
+        skillRefs: [researcher-core]
+      - key: design
+        agent: architect
+        dependsOn: [research]
+        promptFile: stages/design.md
+        skillRefs: [architect-core]
+      - key: build
+        agent: developer
+        dependsOn: [design]
+        promptFile: stages/build.md
+        skillRefs: [test-driven-development, executing-plans]
+      - key: review
+        agent: architect
+        kind: review
+        reworkTarget: build
+        maxRework: 2
+        dependsOn: [build]
+        promptFile: stages/review.md
+        skillRefs: [architect-core, requesting-code-review]
+        outcomes:
+          - name: REVIEW_OUTCOME
+            values: [approved, changes_requested]
+      - key: harden
+        agent: architect
+        kind: review
+        reworkTarget: build
+        maxRework: 2
+        dependsOn: [review]
+        promptFile: stages/harden.md
+        skillRefs: [harden-gate]
+        outcomes:
+          - name: HARDEN_OUTCOME
+            values: [pass, fail]
+
+  - id: raw
+    name: Research → Architect → Writer
+    workspaceMode: canonical
+    runtime:
+      maxConcurrentTasks: 4
+    stages:
+      - key: research
+        agent: researcher
+        dependsOn: []
+        promptFile: stages/research.md
+        skillRefs: [researcher-core]
+      - key: design
+        agent: architect
+        dependsOn: [research]
+        promptFile: stages/design.md
+        skillRefs: [architect-core]
+      - key: draft
+        agent: writer
+        dependsOn: [design]
+        skillRefs: []
+      - key: review
+        agent: architect
+        kind: review
+        reworkTarget: draft
+        maxRework: 2
+        dependsOn: [draft]
+        promptFile: stages/review.md
+        skillRefs: [architect-core]
+        outcomes:
+          - name: REVIEW_OUTCOME
+            values: [approved, changes_requested]
+      - key: harden
+        agent: architect
+        kind: review
+        reworkTarget: draft
+        maxRework: 2
+        dependsOn: [review]
+        promptFile: stages/harden.md
+        skillRefs: [harden-gate]
+        outcomes:
+          - name: HARDEN_OUTCOME
+            values: [pass, fail]
+
+  - id: research-adversarial
+    name: Research → Architect Review
+    workspaceMode: canonical
+    stages:
+      - key: research
+        agent: researcher
+        dependsOn: []
+        promptFile: stages/research.md
+        skillRefs: [researcher-core]
+      - key: review
+        agent: architect
+        kind: review
+        reworkTarget: research
+        maxRework: 2
+        dependsOn: [research]
+        promptFile: stages/review.md
+        skillRefs: [architect-core]
+        outcomes:
+          - name: REVIEW_OUTCOME
+            values: [approved, changes_requested]
+
+  - id: design-implement
+    name: Architect → Developer
+    workspaceMode: canonical
+    stages:
+      - key: design
+        agent: architect
+        dependsOn: []
+        promptFile: stages/design.md
+        skillRefs: [architect-core]
+      - key: build
+        agent: developer
+        dependsOn: [design]
+        promptFile: stages/build.md
+        skillRefs: [test-driven-development, executing-plans]
+      - key: review
+        agent: architect
+        kind: review
+        reworkTarget: build
+        maxRework: 2
+        dependsOn: [build]
+        promptFile: stages/review.md
+        skillRefs: [architect-core]
+        outcomes:
+          - name: REVIEW_OUTCOME
+            values: [approved, changes_requested]
+      - key: harden
+        agent: architect
+        kind: review
+        reworkTarget: build
+        maxRework: 2
+        dependsOn: [review]
+        promptFile: stages/harden.md
+        skillRefs: [harden-gate]
+        outcomes:
+          - name: HARDEN_OUTCOME
+            values: [pass, fail]

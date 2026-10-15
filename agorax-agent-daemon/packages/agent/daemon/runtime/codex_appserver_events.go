@@ -1,0 +1,140 @@
+package agentruntime
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	activityshared "agorax.local/agent-daemon/packages/agent/daemon/activity/events"
+)
+
+// handleAppServerMessage routes codex app-server server->client traffic.
+// Server requests (approvals, user-input questions) register pending resolver
+// state and respond asynchronously; notifications are translated into activity
+// events through the shared ACP turn normalizer so the rest of the daemon sees
+// one event shape.
+func (a *CodexAppServerAdapter) handleAppServerMessage(
+	ctx context.Context,
+	client *codexAppServerClient,
+	session Session,
+	turnID string,
+	message acpMessage,
+	normalizer *acpTurnNormalizer,
+	emit EventSink,
+	emitCommands CommandSnapshotSink,
+) ([]activityshared.Event, error) {
+	if message.Method == "" {
+		return nil, nil
+	}
+	if len(message.ID) > 0 {
+		switch appServerServerRequestDispositionForMethod(message.Method) {
+		case appServerServerRequestInteractive:
+			return a.appServerServerRequest(ctx, client, session, turnID, message, normalizer, emit)
+		case appServerServerRequestUnsupportedBackground:
+			err := fmt.Errorf("server request method %q is not supported", message.Method)
+			// These requests are explicit initialize-time capabilities that this
+			// client does not advertise. Decline them without manufacturing a
+			// foreground failure card.
+			slog.Debug(
+				"agent session app-server declined background server request",
+				"agent_session_id", session.AgentSessionID,
+				"method", message.Method,
+			)
+			_ = client.Respond(ctx, message.ID, nil, &acpError{Code: -32601, Message: err.Error()})
+			return nil, nil
+		case appServerServerRequestUnsupportedForeground, appServerServerRequestUnknown:
+			err := fmt.Errorf("server request method %q is not supported", message.Method)
+			if emit != nil {
+				emit(appServerUnsupportedServerRequestEvents(session, turnID, message, err))
+			}
+			_ = client.Respond(ctx, message.ID, nil, &acpError{Code: -32601, Message: err.Error()})
+			return nil, nil
+		}
+	}
+	var processingTurn *codexAppServerActiveTurn
+	if appServerNotificationUsesNormalizer(message.Method) {
+		processingTurn = a.activeTurnForNormalizer(session.AgentSessionID, normalizer)
+		if processingTurn != nil {
+			processingTurn.processMu.Lock()
+			defer processingTurn.processMu.Unlock()
+		}
+	}
+	reduction := newCodexAppServerReducer(a).ReduceNotification(client, session, turnID, message, normalizer, emitCommands)
+	return reduction.Events, nil
+}
+
+type appServerServerRequestDisposition uint8
+
+const (
+	appServerServerRequestUnknown appServerServerRequestDisposition = iota
+	appServerServerRequestInteractive
+	appServerServerRequestUnsupportedBackground
+	appServerServerRequestUnsupportedForeground
+)
+
+func appServerServerRequestDispositionForMethod(method string) appServerServerRequestDisposition {
+	switch method {
+	case appServerMethodCommandApproval,
+		appServerMethodFileChangeApproval,
+		appServerMethodPermissionsApproval,
+		appServerMethodRequestUserInput,
+		appServerMethodMCPElicitation,
+		appServerMethodExecApprovalV1,
+		appServerMethodPatchApprovalV1:
+		return appServerServerRequestInteractive
+	case "account/chatgptAuthTokens/refresh", "attestation/generate":
+		return appServerServerRequestUnsupportedBackground
+	case "item/tool/call":
+		return appServerServerRequestUnsupportedForeground
+	default:
+		return appServerServerRequestUnknown
+	}
+}
+
+func appServerNotificationUsesNormalizer(method string) bool {
+	switch method {
+	case appServerNotifyAgentMessageDelta, appServerNotifyReasoningDelta, appServerNotifyReasoningSummary,
+		appServerNotifyItemStarted, appServerNotifyItemCompleted, appServerNotifyCommandOutputDelta,
+		appServerNotifyFileChangePatchUpdated, appServerNotifyPlanUpdated, appServerNotifyWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *CodexAppServerAdapter) activeTurnForNormalizer(agentSessionID string, normalizer *acpTurnNormalizer) *codexAppServerActiveTurn {
+	if a == nil || normalizer == nil {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	session := a.sessions[agentSessionID]
+	if session == nil || session.activeTurn == nil || session.activeTurn.normalizer != normalizer {
+		return nil
+	}
+	return session.activeTurn
+}
+
+// appServerNoticeItems maps review thread items to a one-line system-notice
+// banner. emitOnCompleted selects which lifecycle event carries the banner:
+// enteredReviewMode rides item/started (it always fires), while
+// exitedReviewMode rides the authoritative item/completed.
+var appServerNoticeItems = map[string]struct {
+	message         string
+	emitOnCompleted bool
+}{
+	"enteredReviewMode": {message: "Code review started.", emitOnCompleted: false},
+	"exitedReviewMode":  {message: "Code review finished.", emitOnCompleted: true},
+}
+
+const (
+	appServerCompactingContextTitle     = "Compacting context."
+	appServerContextCompactedTitle      = "Context compacted."
+	appServerCompactionInterruptedTitle = "Context compaction interrupted."
+	appServerCompactionAdvisoryMessage  = "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted."
+)
+
+// appServerCompactionNoticeEvent emits the compaction banner for both item
+// lifecycle events. Both banners share one messageId keyed to the thread item
+// so the "Context compacted." notice replaces the in-progress "Compacting
+// context." notice in place instead of appending a second transcript row.

@@ -1,0 +1,2136 @@
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ArrowExpand01Icon,
+  ArrowUp01Icon,
+  Robot01Icon,
+} from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+import {
+  getMessageTimestamp,
+  getToolCallsFromMessage,
+  textFromMessage,
+} from '../utils'
+import { collapseRecentDuplicateUserMessages } from '../chat-queries'
+import { MessageItem } from './message-item'
+import { normalizeToolCallArgs } from '@/lib/chat-message-parts'
+import { stableChatMessageKey } from '@/lib/chat-turn-identity'
+import { TuiActivityCard } from './tui-activity-card'
+import { ScrollToBottomButton } from './scroll-to-bottom-button'
+import { ResearchCard } from './research-card'
+import { ConversationOutline } from './conversation-outline'
+import type { ChatMessage } from '../types'
+import type { UseResearchCardResult } from '@/hooks/use-research-card'
+import {
+  ChatContainerContent,
+  ChatContainerRoot,
+  ChatContainerScrollAnchor,
+} from '@/components/prompt-kit/chat-container'
+import { AssistantAvatar } from '@/components/avatars'
+import { assistantHasWorkingSurface } from '@/lib/chat-message-parts'
+import { cn } from '@/lib/utils'
+import { hapticTap } from '@/lib/haptics'
+import { CHAT_OPEN_MESSAGE_SEARCH_EVENT } from '@/screens/chat/chat-events'
+import { useChatStore } from '@/stores/chat-store'
+import { useChatSettingsStore } from '@/hooks/use-chat-settings'
+
+const TOOL_EMOJIS: Record<string, string> = {
+  web_search: '🔍',
+  search: '🔍',
+  search_files: '🔍',
+  session_search: '🔍',
+  web_fetch: '🌐',
+  terminal: '💻',
+  exec: '💻',
+  shell: '💻',
+  bash: '💻',
+  Read: '📖',
+  read: '📖',
+  read_file: '📖',
+  file_read: '📖',
+  pdf: '📄',
+  Write: '✏️',
+  write: '✏️',
+  write_file: '✏️',
+  edit: '✏️',
+  Edit: '✏️',
+  memory: '🧠',
+  memory_search: '🧠',
+  memory_get: '🧠',
+  save_memory: '🧠',
+  browser: '🌐',
+  browser_navigate: '🌐',
+  navigate: '🌐',
+  image: '🖼️',
+  vision: '🖼️',
+  skill: '📦',
+  skill_view: '📦',
+  skill_load: '📦',
+  delegate: '🤖',
+  spawn: '🤖',
+  subagents: '🤖',
+  agents_list: '🤖',
+  todo: '✅',
+  cron: '⏰',
+  message: '💬',
+  voice_call: '📞',
+  canvas: '🎨',
+  nodes: '📱',
+  gateway: '⚙️',
+  lcm_grep: '🔍',
+  lcm_expand: '🔍',
+  lcm_describe: '🔍',
+  lcm_expand_query: '🔍',
+  sessions_send: '📤',
+  session_status: '📊',
+  sessions_yield: '⏸️',
+  tts: '🗣️',
+}
+
+function getToolEmoji(name: string): string {
+  if (TOOL_EMOJIS[name]) return TOOL_EMOJIS[name]
+  if (name.includes('search')) return '🔍'
+  if (name.includes('read') || name.includes('Read')) return '📖'
+  if (name.includes('write') || name.includes('Write') || name.includes('edit'))
+    return '✏️'
+  if (name.includes('exec') || name.includes('terminal')) return '💻'
+  if (name.includes('memory')) return '🧠'
+  if (name.includes('browser')) return '🌐'
+  if (name.includes('skill')) return '📦'
+  return '⚡'
+}
+
+function getToolVerb(name: string): string {
+  if (name.includes('search')) return 'Searching'
+  if (name.includes('read') || name.includes('Read')) return 'Reading'
+  if (name.includes('write') || name.includes('Write') || name.includes('edit'))
+    return 'Writing'
+  if (name.includes('exec') || name.includes('terminal')) return 'Executing'
+  if (name.includes('memory')) return 'Remembering'
+  if (name.includes('browser')) return 'Browsing'
+  if (name.includes('skill')) return 'Loading skill'
+  return 'Working'
+}
+
+function ToolCallCard({ name, phase }: { name: string; phase: string }) {
+  const isDone =
+    phase === 'done' || phase === 'complete' || phase === 'completed'
+  const isError = phase === 'error' || phase === 'failed'
+  const isRunning = !isDone && !isError
+
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (!isRunning) return
+    setElapsed(0)
+    const id = window.setInterval(() => setElapsed((s) => s + 1), 1000)
+    return () => window.clearInterval(id)
+  }, [isRunning])
+
+  const [dots, setDots] = useState(0)
+  useEffect(() => {
+    if (!isRunning) return
+    const id = window.setInterval(() => setDots((d) => (d + 1) % 4), 400)
+    return () => window.clearInterval(id)
+  }, [isRunning])
+
+  const elapsedLabel =
+    elapsed >= 60
+      ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+      : `${elapsed}s`
+  const emoji = getToolEmoji(name)
+  const verb = getToolVerb(name)
+  const displayName = name.replace(/_/g, ' ')
+
+  return (
+    <div
+      className="rounded-lg border border-primary-200 bg-primary-50 text-[11px] overflow-hidden"
+      style={{
+        borderLeftWidth: '3px',
+        borderLeftColor: isRunning ? '#6366f1' : isDone ? '#22c55e' : '#ef4444',
+        boxShadow: isRunning ? '0 0 8px rgba(99,102,241,0.12)' : 'none',
+      }}
+    >
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5">
+        <span className="text-sm leading-none">{emoji}</span>
+        <span className="font-mono font-semibold text-ink">{displayName}</span>
+        <span className="flex-1" />
+        {isRunning && (
+          <span className="text-[10px] tabular-nums text-primary-400">
+            {elapsedLabel}
+          </span>
+        )}
+        {isDone && <span className="text-xs text-green-500">✅</span>}
+        {isError && <span className="text-xs text-red-500">❌</span>}
+        {isRunning && (
+          <span className="size-1.5 rounded-full animate-pulse bg-indigo-500" />
+        )}
+      </div>
+      {isRunning && (
+        <div className="px-2.5 pb-1.5 text-[10px] text-primary-400">
+          {verb}
+          {'.'.repeat(dots)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+type ThinkingBubbleProps = {
+  activeToolCalls?: Array<{ id: string; name: string; phase: string; args?: unknown }>
+  liveToolActivity?: Array<{ name: string; timestamp: number }>
+  researchCard?: UseResearchCardResult
+  isCompacting?: boolean
+  /** When true, always show "Thinking…" regardless of activity. Used for the
+   * first 10s before the delayed activity feed appears. */
+  forceSimple?: boolean
+}
+
+/**
+ * Shows a thinking indicator with animated dots and a meaningful status
+ * label that reflects what's actually happening (tool calls, etc.).
+ * When forceSimple is true, suppresses all activity labels — just "Thinking…".
+ */
+function ThinkingBubble({
+  activeToolCalls = [],
+  liveToolActivity = [],
+  researchCard,
+  isCompacting = false,
+  forceSimple = false,
+}: ThinkingBubbleProps) {
+  // Fallback activity from heartbeat — shows last known agent activity
+  // when no tool calls are in flight (e.g. during pure reasoning)
+  const heartbeatActivity = useChatStore((s) => s.heartbeatActivity)
+
+  // Build a meaningful status label from live activity
+  const activeToolNames = activeToolCalls
+    .filter(
+      (tc) =>
+        tc.phase !== 'done' &&
+        tc.phase !== 'complete' &&
+        tc.phase !== 'completed',
+    )
+    .map((tc) => tc.name.replace(/_/g, ' '))
+  const liveToolNames = liveToolActivity.map((a) => a.name.replace(/_/g, ' '))
+  const uniqueNames = [...new Set([...activeToolNames, ...liveToolNames])]
+  const activityLabel =
+    uniqueNames.length > 0
+      ? `Using: ${uniqueNames.slice(0, 3).join(', ')}${uniqueNames.length > 3 ? ` +${uniqueNames.length - 3} more` : ''}`
+      : null
+  const statusLabel = isCompacting
+    ? 'Compacting context...'
+    : forceSimple
+      ? 'Thinking…'
+      : activityLabel || heartbeatActivity || 'Thinking…'
+
+  // Elapsed time counter — counts from bubble mount, not from last label change
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    const interval = window.setInterval(() => setElapsed((s) => s + 1), 1000)
+    return () => window.clearInterval(interval)
+  }, [])
+
+  const elapsedLabel =
+    elapsed >= 60
+      ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+      : `${elapsed}s`
+
+  const isStale = elapsed >= 30
+  const isVeryStale = elapsed >= 60
+  const canExpandResearch = Boolean(
+    researchCard && researchCard.steps.length > 0,
+  )
+  const expandedResearchCard = canExpandResearch ? researchCard : null
+  const completedResearchSteps = researchCard
+    ? researchCard.steps.filter((step) => step.status === 'done').length
+    : 0
+
+  // Track displayed label with a small delay so we fade between changes
+  const [displayedLabel, setDisplayedLabel] = useState(statusLabel)
+  const [visible, setVisible] = useState(true)
+  const prevLabelRef = useRef(statusLabel)
+
+  useEffect(() => {
+    if (statusLabel === prevLabelRef.current) return
+    // Fade out, swap, fade in
+    setVisible(false)
+    const swapTimer = window.setTimeout(() => {
+      setDisplayedLabel(statusLabel)
+      prevLabelRef.current = statusLabel
+      setVisible(true)
+    }, 150)
+    return () => window.clearTimeout(swapTimer)
+  }, [statusLabel])
+
+  // Keep the bottom thinking bubble visible while inline Hermes activity handles tool details.
+
+  return (
+    <div className="flex items-end gap-2">
+      {/* Glow on the avatar box — wrapper size-* drifts from the image. */}
+      <AssistantAvatar size={28} className="thinking-avatar-glow" />
+
+      {/* Chat bubble */}
+      <div className="relative max-w-[36rem] overflow-hidden rounded-2xl rounded-bl-sm border border-primary-200 dark:border-primary-200/20 bg-primary-100 dark:bg-primary-100 thinking-shimmer-bubble">
+        {/* Shimmer overlay */}
+        <div
+          className="thinking-shimmer-sweep pointer-events-none absolute inset-0"
+          aria-hidden="true"
+        />
+
+        <div className="relative flex flex-col gap-2 px-4 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                {isCompacting ? (
+                  <span
+                    className="inline-block size-3 rounded-full border border-primary-300 border-t-primary-500 animate-spin"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <>
+                    <span className="thinking-dot thinking-dot-1" />
+                    <span className="thinking-dot thinking-dot-2" />
+                    <span className="thinking-dot thinking-dot-3" />
+                  </>
+                )}
+                <span
+                  className={cn(
+                    'thinking-label ml-1.5 text-xs font-medium transition-opacity duration-300',
+                    isStale
+                      ? 'text-amber-500 dark:text-amber-400'
+                      : 'text-primary-500 dark:text-primary-500',
+                  )}
+                  style={{ opacity: visible ? 1 : 0 }}
+                >
+                  {displayedLabel}{' '}
+                  {elapsed >= 3 ? (
+                    <span className="text-[10px] opacity-60">
+                      {elapsedLabel}
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+              {canExpandResearch ? (
+                <div className="mt-1 flex items-center gap-2 text-[11px] text-primary-500 dark:text-primary-400">
+                  <span>
+                    {completedResearchSteps}/
+                    {expandedResearchCard?.steps.length ?? 0} tools
+                  </span>
+                  <span aria-hidden="true" className="opacity-40">
+                    •
+                  </span>
+                  <span>
+                    {expandedResearchCard?.isActive
+                      ? 'Live timeline'
+                      : 'Timeline ready'}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+            {canExpandResearch ? (
+              <button
+                type="button"
+                onClick={() =>
+                  expandedResearchCard?.setCollapsed(
+                    !expandedResearchCard.collapsed,
+                  )
+                }
+                className="relative z-10 inline-flex size-7 shrink-0 items-center justify-center rounded-full border border-primary-200/80 bg-primary-50/90 text-primary-500 transition-colors hover:bg-primary-100 dark:border-primary-800 dark:bg-primary-900/80 dark:text-primary-300 dark:hover:bg-primary-800"
+                aria-label={
+                  expandedResearchCard?.collapsed
+                    ? 'Expand research timeline'
+                    : 'Collapse research timeline'
+                }
+                title={
+                  expandedResearchCard?.collapsed
+                    ? 'Expand research timeline'
+                    : 'Collapse research timeline'
+                }
+              >
+                <HugeiconsIcon
+                  icon={
+                    expandedResearchCard?.collapsed
+                      ? ArrowExpand01Icon
+                      : ArrowUp01Icon
+                  }
+                  size={14}
+                  strokeWidth={1.8}
+                />
+              </button>
+            ) : null}
+          </div>
+
+          {isStale ? (
+            <span className="text-[11px] text-amber-500 dark:text-amber-400 animate-pulse">
+              {isVeryStale
+                ? 'Still thinking… this is taking a while'
+                : 'Taking longer than usual…'}
+            </span>
+          ) : null}
+        </div>
+
+        {expandedResearchCard && !expandedResearchCard.collapsed ? (
+          <ResearchCard researchCard={expandedResearchCard} />
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+const VIRTUAL_ROW_HEIGHT = 136
+const VIRTUAL_OVERSCAN = 8
+const NEAR_BOTTOM_THRESHOLD = 200
+// Pull-to-refresh constants removed
+
+const HIDDEN_SYSTEM_USER_PREFIXES = [
+  'Pre-compaction memory flush',
+  'Read HEARTBEAT.md',
+  'HEARTBEAT_OK',
+  'Execute your Session Startup sequence',
+  '[Queued messages',
+  'Heartbeat prompt',
+  '[Fri ',
+  '[Mon ',
+  '[Tue ',
+  '[Wed ',
+  '[Thu ',
+  '[Sat ',
+  '[Sun ',
+] as const
+
+function shouldHideSystemInjectedUserMessage(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed) return false
+  // Only hide messages that begin with known system-injected prompts. User
+  // context summaries may quote these phrases later in the message and must
+  // remain visible/persistent in the chat UI.
+  return HIDDEN_SYSTEM_USER_PREFIXES.some((prefix) =>
+    trimmed.startsWith(prefix),
+  )
+}
+
+function getChronologyRank(message: ChatMessage): number {
+  const role =
+    typeof message.role === 'string' ? message.role.toLowerCase() : ''
+  const content = Array.isArray(message.content) ? message.content : []
+  const hasToolCalls =
+    content.some((part) => part.type === 'toolCall') ||
+    (Array.isArray((message as any).streamToolCalls) &&
+      (message as any).streamToolCalls.length > 0) ||
+    (Array.isArray((message as any).__streamToolCalls) &&
+      (message as any).__streamToolCalls.length > 0)
+
+  if (role === 'user') return 0
+  if (role === 'assistant' && hasToolCalls) return 1
+  if (role === 'tool' || role === 'toolresult' || role === 'tool_result')
+    return 2
+  if (role === 'assistant') return 3
+  return 4
+}
+
+function sortMessagesChronologically(
+  messages: Array<ChatMessage>,
+): Array<ChatMessage> {
+  return messages
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      const leftTimestamp = getMessageTimestamp(left.message)
+      const rightTimestamp = getMessageTimestamp(right.message)
+      if (leftTimestamp !== rightTimestamp)
+        return leftTimestamp - rightTimestamp
+
+      const leftRank = getChronologyRank(left.message)
+      const rightRank = getChronologyRank(right.message)
+      if (leftRank !== rightRank) return leftRank - rightRank
+
+      const leftHistoryIndex =
+        typeof (left.message as any).__historyIndex === 'number'
+          ? (left.message as any).__historyIndex
+          : undefined
+      const rightHistoryIndex =
+        typeof (right.message as any).__historyIndex === 'number'
+          ? (right.message as any).__historyIndex
+          : undefined
+      if (
+        leftHistoryIndex !== undefined &&
+        rightHistoryIndex !== undefined &&
+        leftHistoryIndex !== rightHistoryIndex
+      ) {
+        return leftHistoryIndex - rightHistoryIndex
+      }
+
+      const leftRealtimeSequence =
+        typeof (left.message as any).__realtimeSequence === 'number'
+          ? (left.message as any).__realtimeSequence
+          : undefined
+      const rightRealtimeSequence =
+        typeof (right.message as any).__realtimeSequence === 'number'
+          ? (right.message as any).__realtimeSequence
+          : undefined
+      if (
+        leftRealtimeSequence !== undefined &&
+        rightRealtimeSequence !== undefined &&
+        leftRealtimeSequence !== rightRealtimeSequence
+      ) {
+        return leftRealtimeSequence - rightRealtimeSequence
+      }
+
+      return left.index - right.index
+    })
+    .map(({ message }) => message)
+}
+
+type MessageSearchMatch = {
+  stableId: string
+  messageIndex: number
+}
+
+type DisplayEntry = {
+  message: ChatMessage
+  sourceIndex: number
+  attachedToolMessages: Array<ChatMessage>
+}
+
+function isAssistantToolCallOnlyMessage(message: ChatMessage): boolean {
+  if (message.role !== 'assistant') return false
+  const hasToolCalls = getToolCallsFromMessage(message).length > 0
+  const text = textFromMessage(message)
+  return hasToolCalls && text.trim().length === 0
+}
+
+/**
+ * Managed ACP puts live text/thinking on the ChatMessage itself (optimistic
+ * overlay), not Hermes `streamingText` / `streamingThinking` props. The live
+ * wrapper must treat that content as visible — otherwise the streaming target
+ * stays `display:none` until the turn settles, which looks like Activity ended
+ * long before the reply bubble appears.
+ */
+export function streamingMessageHasVisibleContent(
+  message: ChatMessage,
+  options?: {
+    streamingText?: string
+    streamingThinking?: string
+    hasToolActivity?: boolean
+    /**
+     * When true, thinking/tools alone do not count as visible body — empty
+     * streaming shells still render via MessageItem avatar glow.
+     */
+    replyBodyOnly?: boolean
+  },
+): boolean {
+  if (options?.streamingText?.trim()) return true
+  // MessageItem reads `__streamingText`; visibility must match or replyBodyOnly
+  // keeps the bubble display:none while the host already has reply text.
+  const sidecarText =
+    typeof (message as { __streamingText?: unknown }).__streamingText ===
+    'string'
+      ? (
+          (message as { __streamingText?: string }).__streamingText ?? ''
+        ).trim()
+      : ''
+  if (sidecarText.length > 0) return true
+  if (textFromMessage(message).trim().length > 0) return true
+  if (options?.replyBodyOnly) return false
+  if (options?.hasToolActivity) return true
+  if (options?.streamingThinking?.trim()) return true
+  // Sidecar thinking/tools count so the MessageItem host stays visible.
+  if (assistantHasWorkingSurface(message)) return true
+  return false
+}
+
+export function buildDisplayEntries(
+  displayMessages: Array<ChatMessage>,
+): Array<DisplayEntry> {
+  const entries: Array<DisplayEntry> = []
+  let pendingAssistantToolMessages: Array<ChatMessage> = []
+
+  displayMessages.forEach((message, index) => {
+    if (isAssistantToolCallOnlyMessage(message)) {
+      pendingAssistantToolMessages.push(message)
+      return
+    }
+
+    if (message.role === 'tool' || message.role === 'toolResult') {
+      const previousEntry = entries[entries.length - 1]
+      if (previousEntry?.message.role === 'assistant') {
+        previousEntry.attachedToolMessages.push(message)
+      } else if (pendingAssistantToolMessages.length > 0) {
+        pendingAssistantToolMessages.push(message)
+      }
+      return
+    }
+
+    const entry: DisplayEntry = {
+      message,
+      sourceIndex: index,
+      attachedToolMessages: [],
+    }
+
+    if (
+      message.role === 'assistant' &&
+      pendingAssistantToolMessages.length > 0
+    ) {
+      entry.attachedToolMessages.push(...pendingAssistantToolMessages)
+      pendingAssistantToolMessages = []
+    }
+
+    entries.push(entry)
+  })
+
+  if (pendingAssistantToolMessages.length > 0) {
+    const previousEntry = entries[entries.length - 1]
+    // Only attach pending tool-only messages if the previous entry is a
+    // non-trailing assistant text reply. Trailing tool-only turns (i.e.
+    // the final messages in the thread are all tool-only) should NOT be
+    // attached — they will be summarised by getTrailingToolOnlyTurnSummary
+    // instead.
+    const allPendingAreToolOnly = pendingAssistantToolMessages.every((m) =>
+      isAssistantToolCallOnlyMessage(m),
+    )
+    if (previousEntry?.message.role === 'assistant' && !allPendingAreToolOnly) {
+      previousEntry.attachedToolMessages.push(...pendingAssistantToolMessages)
+    }
+  }
+
+  return entries
+}
+
+export type TrailingToolOnlyTurnSummary = {
+  count: number
+  toolNames: Array<string>
+  hasFinalAssistantText: boolean
+}
+
+export function getTrailingToolOnlyTurnSummary(
+  messages: Array<ChatMessage>,
+): TrailingToolOnlyTurnSummary | null {
+  if (messages.length === 0) return null
+
+  // Find last message with actual text from assistant
+  let lastTextAssistantIdx = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.role === 'assistant') {
+      const hasText = Array.isArray(msg.content)
+        ? msg.content.some(
+            (part: any) => part.type === 'text' && part.text?.trim(),
+          )
+        : typeof (msg as any).text === 'string' && (msg as any).text.trim()
+      if (hasText) {
+        lastTextAssistantIdx = i
+        break
+      }
+    }
+  }
+
+  // If thread ends with assistant text, no trailing tool-only turn
+  const lastMsg = messages[messages.length - 1]
+  if (lastMsg?.role === 'assistant') {
+    const hasText = Array.isArray(lastMsg.content)
+      ? lastMsg.content.some(
+          (part: any) => part.type === 'text' && part.text?.trim(),
+        )
+      : typeof (lastMsg as any).text === 'string' &&
+        (lastMsg as any).text.trim()
+    if (hasText) return null
+  }
+
+  if (lastTextAssistantIdx === -1) return null
+
+  // Collect trailing tool-only messages after the last text assistant message
+  const trailing = messages.slice(lastTextAssistantIdx + 1)
+  if (trailing.length === 0) return null
+
+  const toolNames = new Set<string>()
+  for (const msg of trailing) {
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      for (const part of msg.content as Array<any>) {
+        if (part.type === 'toolCall' && part.name) {
+          toolNames.add(part.name)
+        }
+      }
+    }
+    if (
+      (msg.role === 'tool' || msg.role === 'toolResult') &&
+      (msg as any).toolName
+    ) {
+      toolNames.add((msg as any).toolName)
+    }
+  }
+
+  return {
+    count: trailing.length,
+    toolNames: Array.from(toolNames),
+    hasFinalAssistantText: lastTextAssistantIdx >= 0,
+  }
+}
+
+function escapeAttributeSelector(value: string): string {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+    return CSS.escape(value)
+  }
+
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+type ChatMessageListProps = {
+  messages: Array<ChatMessage>
+  onRetryMessage?: (message: ChatMessage) => void
+  onEditMessage?: (message: ChatMessage) => void
+  onRegenerateMessage?: (message: ChatMessage) => void
+  onRefresh?: () => void | Promise<unknown>
+  loading: boolean
+  empty: boolean
+  emptyState?: React.ReactNode
+  notice?: React.ReactNode
+  noticePosition?: 'start' | 'end'
+  /** Busy turn — empty-gap chrome lives on the open MessageItem. */
+  turnBusy?: boolean
+  sessionKey?: string
+  pinToTop: boolean
+  pinGroupMinHeight: number
+  headerHeight: number
+  contentStyle?: React.CSSProperties
+  // Streaming support
+  streamingMessageId?: string | null
+  streamingText?: string
+  streamingThinking?: string
+  lifecycleEvents?: Array<{
+    text: string
+    emoji: string
+    timestamp: number
+    isError: boolean
+  }>
+  isStreaming?: boolean
+  bottomOffset?: number | string
+  activeToolCalls?: Array<{ id: string; name: string; phase: string; args?: unknown }>
+  liveToolActivity?: Array<{ name: string; timestamp: number }>
+  researchCard?: UseResearchCardResult
+  hideSystemMessages?: boolean
+  isCompacting?: boolean
+}
+
+function ChatMessageListComponent({
+  messages,
+  onRetryMessage,
+  onEditMessage,
+  onRegenerateMessage,
+  onRefresh: _onRefresh,
+  loading,
+  empty,
+  emptyState,
+  notice,
+  noticePosition = 'start',
+  turnBusy = false,
+  sessionKey,
+  pinToTop,
+  pinGroupMinHeight,
+  headerHeight,
+  contentStyle,
+  streamingMessageId,
+  streamingText,
+  streamingThinking,
+  lifecycleEvents = [],
+  isStreaming = false,
+  bottomOffset = 0,
+  activeToolCalls = [],
+  liveToolActivity = [],
+  researchCard,
+  hideSystemMessages = false,
+  isCompacting = false,
+}: ChatMessageListProps) {
+  const activityDisplayMode = useChatSettingsStore(
+    (s) => s.settings.chatActivityDisplayMode ?? 'compact',
+  )
+  const showConversationOutline = useChatSettingsStore(
+    (s) => s.settings.showConversationOutline === true,
+  )
+  const hideActivityCards = activityDisplayMode === 'hidden'
+  const streamActivityMode = activityDisplayMode === 'stream'
+  const anchorRef = useRef<HTMLDivElement | null>(null)
+  const lastUserRef = useRef<HTMLDivElement | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const prevSessionKeyRef = useRef<string | undefined>(sessionKey)
+  const stickToBottomRef = useRef(true)
+  const messageSignatureRef = useRef<Map<string, string>>(new Map())
+  const initialRenderRef = useRef(true)
+  const streamingTargetsClearRef = useRef<(() => void) | null>(null)
+  const [streamingCleared, setStreamingCleared] = useState(0)
+  streamingTargetsClearRef.current = () => setStreamingCleared((c) => c + 1)
+  const lastScrollTopRef = useRef(0)
+  const isNearBottomRef = useRef(true)
+  const [isNearBottom, setIsNearBottom] = useState(true)
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [expandAllToolSections, setExpandAllToolSections] = useState(false)
+
+  // Research/compact fallback ThinkingBubble stays simple for the first 10s.
+  const THINKING_ACTIVITY_DELAY_S = 10
+  const [thinkingElapsed, setThinkingElapsed] = useState(0)
+  const thinkingStartRef = useRef<number>(0)
+  const thinkingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false)
+  const [messageSearchValue, setMessageSearchValue] = useState('')
+  const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState(0)
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.matchMedia('(max-width: 767px)').matches
+  })
+  // Pull-to-refresh removed (was buggy on mobile)
+  const [scrollMetrics] = useState({
+    scrollTop: 0,
+    scrollHeight: 0,
+    clientHeight: 0,
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const media = window.matchMedia('(max-width: 767px)')
+    const updateIsMobile = () => setIsMobileViewport(media.matches)
+    updateIsMobile()
+    media.addEventListener('change', updateIsMobile)
+    return () => media.removeEventListener('change', updateIsMobile)
+  }, [])
+
+  // Pull-to-refresh handlers removed
+
+  // contentContainerStyle removed with pull-to-refresh
+
+  const chatContentStyle = useMemo<React.CSSProperties | undefined>(() => {
+    if (!isMobileViewport) return contentStyle
+    return {
+      ...contentStyle,
+      paddingBottom:
+        contentStyle?.paddingBottom ??
+        'calc(var(--chat-composer-height, 56px) + var(--safe-b) + 8px)',
+    }
+  }, [contentStyle, isMobileViewport])
+
+  // Simple scroll handler — only tracks if user is near bottom via refs (no state updates)
+  const handleUserScroll = useCallback(function handleUserScroll(metrics: {
+    scrollTop: number
+    scrollHeight: number
+    clientHeight: number
+  }) {
+    const distanceFromBottom =
+      metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight
+    const nearBottom = distanceFromBottom <= NEAR_BOTTOM_THRESHOLD
+    const wasScrollingUp = metrics.scrollTop < lastScrollTopRef.current - 5
+    lastScrollTopRef.current = metrics.scrollTop
+
+    // Bug #552: any user-initiated upward scroll releases stick-to-bottom
+    // (previously required >200px from bottom, which let streaming yank the
+    // viewport back down during near-bottom reading). Re-stick only when the
+    // user lands back at the bottom.
+    if (wasScrollingUp) {
+      stickToBottomRef.current = false
+      isNearBottomRef.current = false
+    } else if (nearBottom) {
+      stickToBottomRef.current = true
+      isNearBottomRef.current = true
+    }
+  }, [])
+
+  // Simple scroll to bottom — find viewport and scroll
+  const scrollToBottom = useCallback(function scrollToBottom(
+    behavior: ScrollBehavior = 'auto',
+  ) {
+    const anchor = anchorRef.current
+    if (!anchor) return
+    const viewport = anchor.closest('[data-chat-scroll-viewport]')
+    if (viewport) {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior })
+    }
+  }, [])
+
+  // Filter messages — toolResult handled by grouping into assistant bubble below
+  const displayMessages = useMemo(() => {
+    const filteredMessages = messages.filter((msg) => {
+      // Hide tool messages — rendered as pills on the assistant message instead
+      if (msg.role === 'tool') return false
+
+      const cleanedText = textFromMessage(msg).trim()
+
+      if (msg.role === 'assistant') {
+        if (cleanedText === 'HEARTBEAT_OK') return false
+        // Hide NO_REPLY messages (agent had nothing to say, or used message tool instead)
+        if (cleanedText === 'NO_REPLY') return false
+        // Hide truncated NO_REPLY variants (e.g. "NO_" or "NO")
+        if (/^NO_?(?:REPLY)?$/i.test(cleanedText)) return false
+        return true
+      }
+
+      if (msg.role === 'user') {
+        const rawText = (Array.isArray(msg.content) ? msg.content : [])
+          .map((part) => (part.type === 'text' ? String(part.text ?? '') : ''))
+          .join('')
+          .trim()
+        const hasAttachments =
+          Array.isArray((msg as any).attachments) &&
+          (msg as any).attachments.length > 0
+        const hasInlineImages =
+          Array.isArray((msg as any).inlineImages) &&
+          (msg as any).inlineImages.length > 0
+        const isPendingOptimisticUserMessage =
+          typeof (msg as any).__optimisticId === 'string' ||
+          msg.status === 'sending' ||
+          msg.status === 'queued'
+
+        // Keep optimistic/pending user messages visible for the whole response cycle,
+        // even if the server hasn't echoed normalized text content back yet.
+        if (cleanedText.length === 0 && !hasAttachments && !hasInlineImages) {
+          if (!isPendingOptimisticUserMessage) return false
+        }
+
+        const isSystemPrefixed = /^System:/i.test(rawText)
+        if (hideSystemMessages && isSystemPrefixed) return false
+        if (
+          hideSystemMessages &&
+          shouldHideSystemInjectedUserMessage(cleanedText)
+        ) {
+          return false
+        }
+        if (!isSystemPrefixed) return true
+
+        const normalizedText = cleanedText.toLowerCase()
+        const containsSystemFailure =
+          normalizedText.includes('exec failed') ||
+          normalizedText.includes('serverrestart') ||
+          normalizedText.includes('signal sigkill')
+        const matchesHeartbeatPrompt =
+          /read heartbeat\.md if it exists.*?reply heartbeat_ok\./is.test(
+            cleanedText,
+          )
+
+        if (containsSystemFailure || matchesHeartbeatPrompt) return false
+      }
+
+      return true
+    })
+
+    const seenMessageIds = new Set<string>()
+    const deduped = filteredMessages.filter((message) => {
+      const messageId =
+        (message as any).id ||
+        (message as any).messageId ||
+        (message as any).clientId ||
+        (message as any).client_id ||
+        (message as any).nonce ||
+        (message as any).__optimisticId
+      if (typeof messageId !== 'string' || messageId.trim().length === 0) {
+        return true
+      }
+      const scopedId = `${message.role}:${messageId.trim()}`
+      if (seenMessageIds.has(scopedId)) return false
+      seenMessageIds.add(scopedId)
+      return true
+    })
+    return sortMessagesChronologically(
+      collapseRecentDuplicateUserMessages(deduped),
+    )
+  }, [hideSystemMessages, messages])
+
+  const displayEntries = useMemo<Array<DisplayEntry>>(
+    () => buildDisplayEntries(displayMessages),
+    [displayMessages],
+  )
+
+  const normalizedMessageSearch = useMemo(
+    function getNormalizedMessageSearch() {
+      return messageSearchValue.trim().toLocaleLowerCase()
+    },
+    [messageSearchValue],
+  )
+
+  const isMessageSearchActive =
+    isMessageSearchOpen && normalizedMessageSearch.length > 0
+
+  const messageSearchMatches = useMemo<Array<MessageSearchMatch>>(
+    function getMessageSearchMatches() {
+      if (!isMessageSearchActive) return []
+
+      const matches: Array<MessageSearchMatch> = []
+      for (const [index, entry] of displayEntries.entries()) {
+        const message = entry.message
+        const messageText = textFromMessage(message).trim().toLocaleLowerCase()
+        if (!messageText.includes(normalizedMessageSearch)) continue
+        matches.push({
+          stableId: getStableMessageId(message, entry.sourceIndex),
+          messageIndex: index,
+        })
+      }
+      return matches
+    },
+    [displayEntries, isMessageSearchActive, normalizedMessageSearch],
+  )
+
+  const messageSearchMatchIndexById = useMemo(
+    function getMessageSearchMatchIndexById() {
+      const indexById = new Map<string, number>()
+      for (const [index, match] of messageSearchMatches.entries()) {
+        indexById.set(match.stableId, index)
+      }
+      return indexById
+    },
+    [messageSearchMatches],
+  )
+
+  const activeSearchMatch = messageSearchMatches[activeSearchMatchIndex] ?? null
+
+  const focusSearchInput = useCallback(function focusSearchInput() {
+    window.requestAnimationFrame(function focusSearchInputField() {
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    })
+  }, [])
+
+  const closeMessageSearch = useCallback(function closeMessageSearch() {
+    setIsMessageSearchOpen(false)
+    setMessageSearchValue('')
+    setActiveSearchMatchIndex(0)
+  }, [])
+
+  const openMessageSearch = useCallback(
+    function openMessageSearch() {
+      setIsMessageSearchOpen(true)
+      setActiveSearchMatchIndex(0)
+      focusSearchInput()
+    },
+    [focusSearchInput],
+  )
+
+  const jumpToPreviousMatch = useCallback(
+    function jumpToPreviousMatch() {
+      if (messageSearchMatches.length === 0) return
+      setActiveSearchMatchIndex(function setPreviousMatchIndex(currentIndex) {
+        return (
+          (currentIndex - 1 + messageSearchMatches.length) %
+          messageSearchMatches.length
+        )
+      })
+    },
+    [messageSearchMatches.length],
+  )
+
+  const jumpToNextMatch = useCallback(
+    function jumpToNextMatch() {
+      if (messageSearchMatches.length === 0) return
+      setActiveSearchMatchIndex(function setNextMatchIndex(currentIndex) {
+        return (currentIndex + 1) % messageSearchMatches.length
+      })
+    },
+    [messageSearchMatches.length],
+  )
+
+  const scrollToMessageById = useCallback(function scrollToMessageById(
+    messageId: string,
+    behavior: ScrollBehavior = 'smooth',
+  ) {
+    const anchor = anchorRef.current
+    if (!anchor) return
+
+    const viewport = anchor.closest('[data-chat-scroll-viewport]')
+    if (!viewport) return
+
+    const escapedMessageId = escapeAttributeSelector(messageId)
+    const selector = `[data-chat-message-id="${escapedMessageId}"]`
+    const target = viewport.querySelector(selector)
+    if (!target) return
+
+    stickToBottomRef.current = false
+    isNearBottomRef.current = false
+    setIsNearBottom(false)
+    target.scrollIntoView({ behavior, block: 'center', inline: 'nearest' })
+  }, [])
+
+  const toolResultsByCallId = useMemo(() => {
+    const map = new Map<string, ChatMessage>()
+    for (const message of messages) {
+      if (message.role !== 'toolResult') continue
+      const toolCallId = message.toolCallId
+      if (typeof toolCallId === 'string' && toolCallId.trim().length > 0) {
+        map.set(toolCallId, message)
+      }
+    }
+    return map
+  }, [messages])
+
+  const hasUserVisibleTextMessages = useMemo(() => {
+    return displayEntries.some(({ message }) => {
+      const role = message.role || 'assistant'
+      if (role !== 'user' && role !== 'assistant') return false
+      return textFromMessage(message).trim().length > 0
+    })
+  }, [displayEntries])
+
+  const allVisibleEntries = useMemo<Array<DisplayEntry>>(
+    function getVisibleEntries() {
+      if (!isMessageSearchActive) return displayEntries
+
+      return displayEntries.filter((entry) =>
+        textFromMessage(entry.message)
+          .trim()
+          .toLocaleLowerCase()
+          .includes(normalizedMessageSearch),
+      )
+    },
+    [displayEntries, isMessageSearchActive, normalizedMessageSearch],
+  )
+
+  // Soft windowing + progressive mount: first paint only recent messages,
+  // then grow on rAF so markdown/prism work doesn't hitch the history reveal.
+  // Show enough of a typical session on first paint; grow for longer threads.
+  const INITIAL_RENDER_WINDOW = 24
+  const MESSAGE_RENDER_WINDOW = 64
+  const RENDER_GROW_STEP = 16
+  const [earlierPages, setEarlierPages] = useState(0)
+  const [renderBudget, setRenderBudget] = useState(INITIAL_RENDER_WINDOW)
+  const transcriptEpoch = useMemo(() => {
+    const first = displayEntries[0]?.message as
+      | { id?: string | number }
+      | undefined
+    const last = displayEntries[displayEntries.length - 1]?.message as
+      | { id?: string | number }
+      | undefined
+    return `${displayEntries.length}:${String(first?.id ?? '')}:${String(last?.id ?? '')}`
+  }, [displayEntries])
+  useEffect(() => {
+    setEarlierPages(0)
+    setRenderBudget(INITIAL_RENDER_WINDOW)
+  }, [sessionKey])
+
+  const maxWindow = MESSAGE_RENDER_WINDOW * (1 + earlierPages)
+  useEffect(() => {
+    if (isMessageSearchActive) return
+    const target = Math.min(maxWindow, allVisibleEntries.length)
+    if (renderBudget >= target) return
+    const frameId = window.requestAnimationFrame(() => {
+      setRenderBudget((budget) => Math.min(target, budget + RENDER_GROW_STEP))
+    })
+    return () => window.cancelAnimationFrame(frameId)
+  }, [
+    allVisibleEntries.length,
+    isMessageSearchActive,
+    maxWindow,
+    renderBudget,
+    transcriptEpoch,
+  ])
+
+  const visibleEntries = useMemo(() => {
+    if (isMessageSearchActive) return allVisibleEntries
+    const limit = Math.min(
+      allVisibleEntries.length,
+      Math.max(renderBudget, earlierPages > 0 ? maxWindow : renderBudget),
+    )
+    if (allVisibleEntries.length <= limit) return allVisibleEntries
+    return allVisibleEntries.slice(allVisibleEntries.length - limit)
+  }, [
+    allVisibleEntries,
+    earlierPages,
+    isMessageSearchActive,
+    maxWindow,
+    renderBudget,
+  ])
+  const hiddenEarlierCount = allVisibleEntries.length - visibleEntries.length
+
+  const toolInteractionCount = useMemo(() => {
+    const seenToolCallIds = new Set<string>()
+    let count = 0
+
+    for (const message of messages) {
+      const toolCalls = getToolCallsFromMessage(message)
+      for (const toolCall of toolCalls) {
+        const toolCallId = (toolCall.id || '').trim()
+        if (toolCallId.length > 0) {
+          if (seenToolCallIds.has(toolCallId)) continue
+          seenToolCallIds.add(toolCallId)
+        }
+        count += 1
+      }
+
+      if (message.role !== 'toolResult') continue
+      const toolCallId = (message.toolCallId || '').trim()
+      if (toolCallId.length > 0 && seenToolCallIds.has(toolCallId)) continue
+      if (toolCallId.length > 0) {
+        seenToolCallIds.add(toolCallId)
+      }
+      count += 1
+    }
+
+    return count
+  }, [messages])
+
+  const showToolOnlyNotice =
+    !isMessageSearchActive &&
+    !loading &&
+    !empty &&
+    visibleEntries.length > 0 &&
+    !hasUserVisibleTextMessages &&
+    toolInteractionCount > 0
+
+  const streamingState = useMemo(() => {
+    const nextSignatures = new Map<string, string>()
+    const isInitialRender = initialRenderRef.current
+
+    displayEntries.forEach(({ message, sourceIndex }) => {
+      const stableId = getStableMessageId(message, sourceIndex)
+      const text = textFromMessage(message)
+      const timestamp = getMessageTimestamp(message)
+      const streamingStatus = message.__streamingStatus ?? 'idle'
+      const signature = `${streamingStatus}:${timestamp}:${text.length}:${text.slice(-48)}`
+      nextSignatures.set(stableId, signature)
+    })
+
+    messageSignatureRef.current = nextSignatures
+    if (isInitialRender) {
+      initialRenderRef.current = false
+      return {
+        streamingTargets: new Set<string>(),
+        signatureById: nextSignatures,
+      }
+    }
+
+    // Typewriter disabled — messages just fade in via CSS animation
+    // toStream stays empty, no streaming targets
+
+    return {
+      streamingTargets: new Set<string>(),
+      signatureById: nextSignatures,
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayEntries, streamingCleared])
+
+  const lastAssistantIndex = visibleEntries
+    .filter(({ message }) => message.role === 'assistant')
+    .map(({ sourceIndex }) => sourceIndex)
+    .pop()
+  const lastUserIndex = visibleEntries
+    .map(({ message, sourceIndex }, index) => ({ message, sourceIndex, index }))
+    .filter(({ message }) => message.role === 'user')
+    .map(({ index }) => index)
+    .pop()
+  const showResearchCard = Boolean(
+    researchCard && researchCard.steps.length > 0,
+  )
+
+  // Busy chrome lives on the open-turn MessageItem (avatar glow → Activity →
+  // bubble). No list-footer TurnActivityHost — that was a second Working host.
+  const thinkingAreaVisible =
+    turnBusy || showResearchCard || isCompacting
+
+  // Track how long the thinking area has been visible to gate the delayed
+  // activity feed (10s threshold).
+  useEffect(() => {
+    if (thinkingAreaVisible) {
+      if (thinkingStartRef.current === 0) {
+        thinkingStartRef.current = Date.now()
+        setThinkingElapsed(0)
+      }
+      if (!thinkingTimerRef.current) {
+        thinkingTimerRef.current = setInterval(() => {
+          setThinkingElapsed(
+            Math.floor((Date.now() - thinkingStartRef.current) / 1000),
+          )
+        }, 250)
+      }
+    } else {
+      if (thinkingTimerRef.current) {
+        clearInterval(thinkingTimerRef.current)
+        thinkingTimerRef.current = null
+      }
+      thinkingStartRef.current = 0
+      setThinkingElapsed(0)
+    }
+    return () => {
+      if (thinkingTimerRef.current) {
+        clearInterval(thinkingTimerRef.current)
+        thinkingTimerRef.current = null
+      }
+    }
+  }, [thinkingAreaVisible])
+
+  const showActivityFeed =
+    !hideActivityCards &&
+    (thinkingElapsed >= THINKING_ACTIVITY_DELAY_S ||
+      activeToolCalls.length > 0 ||
+      liveToolActivity.length > 0 ||
+      Boolean(streamingThinking && streamingThinking.trim().length > 0))
+
+  const outlineEntries = useMemo(() => {
+    const next: Array<{ id: string; excerpt: string }> = []
+    messages.forEach((message, index) => {
+      if (message.role !== 'user') return
+      const id = getStableMessageId(message, index)
+      const text = textFromMessage(message).replace(/\s+/g, ' ').trim()
+      next.push({
+        id,
+        excerpt: text
+          ? text.length > 72
+            ? `${text.slice(0, 72)}…`
+            : text
+          : '(empty message)',
+      })
+    })
+    return next
+  }, [messages])
+
+  const shouldBottomPin =
+    visibleEntries.length > 0 ||
+    showToolOnlyNotice ||
+    showResearchCard ||
+    turnBusy ||
+    isCompacting
+
+  const normalizedStreamingToolCalls = useMemo<
+    Array<{
+      id: string
+      name: string
+      phase: 'calling' | 'running' | 'done' | 'error'
+      args?: unknown
+      preview?: string
+      result?: string
+    }>
+  >(() => {
+    if (activeToolCalls.length > 0) {
+      return activeToolCalls.map((toolCall) => {
+        const tcAny = toolCall as unknown as Record<string, unknown>
+        return {
+          id: toolCall.id,
+          name: toolCall.name,
+          phase:
+            toolCall.phase === 'complete' || toolCall.phase === 'completed'
+              ? 'done'
+              : toolCall.phase === 'start'
+                ? 'calling'
+                : toolCall.phase === 'failed' || toolCall.phase === 'error'
+                  ? 'error'
+                  : toolCall.phase === 'calling' ||
+                      toolCall.phase === 'running' ||
+                      toolCall.phase === 'waiting_approval' ||
+                      toolCall.phase === 'awaiting_approval' ||
+                      toolCall.phase === 'waiting_input' ||
+                      toolCall.phase === 'waiting'
+                    ? toolCall.phase === 'calling'
+                      ? 'calling'
+                      : 'running'
+                    : 'calling',
+          args: normalizeToolCallArgs(tcAny.args) ?? tcAny.args,
+          preview:
+            typeof tcAny.preview === 'string' ? tcAny.preview : undefined,
+          result: typeof tcAny.result === 'string' ? tcAny.result : undefined,
+        }
+      })
+    }
+
+    return liveToolActivity.map((entry, index) => ({
+      id: `live-${entry.name}-${index}`,
+      name: entry.name,
+      phase: 'running' as const,
+    }))
+  }, [activeToolCalls, liveToolActivity])
+
+  // Pin the last user+assistant group without adding bottom padding.
+  const groupStartIndex = typeof lastUserIndex === 'number' ? lastUserIndex : -1
+  const hasGroup = pinToTop && groupStartIndex >= 0
+  const shouldVirtualize = false // Disabled — causes scroll glitches
+
+  const virtualRange = useMemo(() => {
+    if (!shouldVirtualize || scrollMetrics.clientHeight <= 0) {
+      return {
+        startIndex: 0,
+        endIndex: visibleEntries.length,
+        topSpacerHeight: 0,
+        bottomSpacerHeight: 0,
+      }
+    }
+
+    const startIndex = Math.max(
+      0,
+      Math.floor(scrollMetrics.scrollTop / VIRTUAL_ROW_HEIGHT) -
+        VIRTUAL_OVERSCAN,
+    )
+    const visibleCount = Math.ceil(
+      scrollMetrics.clientHeight / VIRTUAL_ROW_HEIGHT,
+    )
+    const endIndex = Math.min(
+      visibleEntries.length,
+      startIndex + visibleCount + VIRTUAL_OVERSCAN * 2,
+    )
+
+    return {
+      startIndex,
+      endIndex,
+      topSpacerHeight: startIndex * VIRTUAL_ROW_HEIGHT,
+      bottomSpacerHeight:
+        (visibleEntries.length - endIndex) * VIRTUAL_ROW_HEIGHT,
+    }
+  }, [scrollMetrics, shouldVirtualize, visibleEntries.length])
+
+  function isMessageStreaming(message: ChatMessage, index: number) {
+    if (!isStreaming || !streamingMessageId) return false
+    const messageId =
+      message.__optimisticId ||
+      (message as { messageId?: unknown }).messageId ||
+      (message as { id?: unknown }).id
+    if (messageId === streamingMessageId) return true
+    // Fallback only while the streaming turn hasn't been assigned an id yet.
+    // Once a message has a stable id, it must NOT match by index, otherwise
+    // sending a new user message re-streams the previous assistant turn.
+    if (
+      !messageId &&
+      message.role === 'assistant' &&
+      index === lastAssistantIndex
+    ) {
+      return true
+    }
+    return false
+  }
+
+  function renderMessage(entry: DisplayEntry, entryIndex: number) {
+    const chatMessage = entry.message
+    const realIndex = entry.sourceIndex
+    const messageIsStreaming = isMessageStreaming(chatMessage, realIndex)
+    const stableId = getStableMessageId(chatMessage, realIndex)
+    const signature = streamingState.signatureById.get(stableId)
+    const simulateStreaming =
+      !messageIsStreaming && streamingState.streamingTargets.has(stableId)
+    const spacingClass = cn(
+      getMessageSpacingClass(visibleEntries, entryIndex),
+      getToolGroupClass(visibleEntries, entryIndex),
+    )
+    const forceActionsVisible =
+      typeof lastAssistantIndex === 'number' && realIndex === lastAssistantIndex
+    const hasToolCalls =
+      chatMessage.role === 'assistant' &&
+      (getToolCallsFromMessage(chatMessage).length > 0 ||
+        entry.attachedToolMessages.length > 0)
+
+    const searchMatchIndex = messageSearchMatchIndexById.get(stableId)
+    const isSearchMatch = typeof searchMatchIndex === 'number'
+    const isActiveMatch =
+      isSearchMatch && searchMatchIndex === activeSearchMatchIndex
+
+    // If this is a user message and an assistant reply exists after it,
+    // the send obviously succeeded — never show Retry.
+    const hasAssistantReply =
+      chatMessage.role === 'user' &&
+      entryIndex + 1 < visibleEntries.length &&
+      visibleEntries[entryIndex + 1]?.message.role === 'assistant'
+    const effectiveOnRetry = hasAssistantReply ? undefined : onRetryMessage
+
+    return (
+      <div
+        key={stableId}
+        className="flex flex-col gap-1 md:gap-1.5"
+        data-live-turn-group={messageIsStreaming ? '' : undefined}
+      >
+        <MessageItem
+          message={chatMessage}
+          attachedToolMessages={entry.attachedToolMessages}
+          onRetryMessage={effectiveOnRetry}
+          onEditMessage={
+            entryIndex === lastUserIndex ? onEditMessage : undefined
+          }
+          onRegenerateMessage={
+            entryIndex === lastAssistantIndex
+              ? onRegenerateMessage
+              : undefined
+          }
+          toolResultsByCallId={
+            hasToolCalls ? toolResultsByCallId : undefined
+          }
+          forceActionsVisible={forceActionsVisible}
+          isLastAssistant={forceActionsVisible}
+          wrapperClassName={spacingClass}
+          wrapperDataMessageId={stableId}
+          bubbleClassName={
+            isActiveMatch
+              ? 'ring-2 ring-amber-400 bg-amber-50/50'
+              : isSearchMatch
+                ? 'bg-amber-50/30'
+                : undefined
+          }
+          toolCalls={
+            messageIsStreaming ? normalizedStreamingToolCalls : undefined
+          }
+          isStreaming={messageIsStreaming}
+          streamingText={messageIsStreaming ? streamingText : undefined}
+          streamingThinking={
+            messageIsStreaming ? streamingThinking : undefined
+          }
+          lifecycleEvents={
+            messageIsStreaming ? lifecycleEvents : undefined
+          }
+          simulateStreaming={simulateStreaming}
+          streamingKey={signature}
+          expandAllToolSections={expandAllToolSections || streamActivityMode}
+          hideActivityCard={hideActivityCards}
+        />
+      </div>
+    )
+  }
+
+  // Sync near-bottom ref to state every 500ms for button visibility
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setIsNearBottom((prev) => {
+        const current = isNearBottomRef.current
+        return prev === current ? prev : current
+      })
+    }, 500)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  // Auto-scroll only when live content *grows*. Settle clears streamingText /
+  // thinking / toolCalls / lifecycle — those shrinks used to re-fire
+  // scrollToBottom and felt like a post-stream page refresh.
+  const scrollGrowthRef = useRef({
+    text: 0,
+    thinking: 0,
+    tools: 0,
+    messages: 0,
+    lifecycle: 0,
+  })
+  useEffect(() => {
+    if (loading) return
+    let frameId: number | null = null
+    const sessionChanged = prevSessionKeyRef.current !== sessionKey
+    prevSessionKeyRef.current = sessionKey
+
+    const text = (streamingText ?? '').length
+    const thinking = (streamingThinking ?? '').length
+    const tools = activeToolCalls.length
+    const messages = visibleEntries.length
+    const lifecycle = lifecycleEvents.length
+    const prev = scrollGrowthRef.current
+    const grew =
+      text > prev.text ||
+      thinking > prev.thinking ||
+      tools > prev.tools ||
+      messages > prev.messages ||
+      lifecycle > prev.lifecycle
+    scrollGrowthRef.current = { text, thinking, tools, messages, lifecycle }
+
+    if (sessionChanged) {
+      stickToBottomRef.current = true
+      frameId = window.requestAnimationFrame(() => scrollToBottom('auto'))
+      return () => {
+        if (frameId !== null) window.cancelAnimationFrame(frameId)
+      }
+    }
+
+    if (!grew) return
+
+    if (isNearBottomRef.current) {
+      frameId = window.requestAnimationFrame(() => scrollToBottom('auto'))
+    }
+
+    return () => {
+      if (frameId !== null) window.cancelAnimationFrame(frameId)
+    }
+  }, [
+    loading,
+    visibleEntries.length,
+    sessionKey,
+    scrollToBottom,
+    streamingText,
+    streamingThinking,
+    activeToolCalls.length,
+    lifecycleEvents.length,
+  ])
+
+  useEffect(() => {
+    setExpandAllToolSections(false)
+  }, [sessionKey])
+
+  useEffect(() => {
+    if (!isMessageSearchOpen) return
+
+    function handleSearchShortcuts(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing) return
+      if (event.altKey) return
+
+      const hasCommand = event.metaKey || event.ctrlKey
+      if (hasCommand && !event.shiftKey && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        event.stopPropagation()
+        openMessageSearch()
+        return
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        closeMessageSearch()
+        return
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.shiftKey) {
+          jumpToPreviousMatch()
+          return
+        }
+        jumpToNextMatch()
+        return
+      }
+
+      const isInputFocused = document.activeElement === searchInputRef.current
+      if (!isInputFocused) return
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        event.stopPropagation()
+        jumpToPreviousMatch()
+        return
+      }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        event.stopPropagation()
+        jumpToNextMatch()
+      }
+    }
+
+    window.addEventListener('keydown', handleSearchShortcuts, true)
+    return () => {
+      window.removeEventListener('keydown', handleSearchShortcuts, true)
+    }
+  }, [
+    closeMessageSearch,
+    isMessageSearchOpen,
+    jumpToNextMatch,
+    jumpToPreviousMatch,
+    openMessageSearch,
+  ])
+
+  useEffect(() => {
+    function handleOpenMessageSearch() {
+      openMessageSearch()
+    }
+
+    window.addEventListener(
+      CHAT_OPEN_MESSAGE_SEARCH_EVENT,
+      handleOpenMessageSearch,
+    )
+    return () => {
+      window.removeEventListener(
+        CHAT_OPEN_MESSAGE_SEARCH_EVENT,
+        handleOpenMessageSearch,
+      )
+    }
+  }, [openMessageSearch])
+
+  useEffect(() => {
+    function handleOpenSearchShortcut(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing) return
+      if (event.altKey || event.shiftKey) return
+      if (!(event.metaKey || event.ctrlKey)) return
+      if (event.key.toLowerCase() !== 'f') return
+
+      event.preventDefault()
+      event.stopPropagation()
+      openMessageSearch()
+    }
+
+    window.addEventListener('keydown', handleOpenSearchShortcut, true)
+    return () => {
+      window.removeEventListener('keydown', handleOpenSearchShortcut, true)
+    }
+  }, [openMessageSearch])
+
+  useEffect(() => {
+    if (!isMessageSearchActive) {
+      setActiveSearchMatchIndex(0)
+      return
+    }
+
+    setActiveSearchMatchIndex(function clampActiveMatchIndex(currentIndex) {
+      if (messageSearchMatches.length === 0) return 0
+      return Math.min(currentIndex, messageSearchMatches.length - 1)
+    })
+  }, [isMessageSearchActive, messageSearchMatches.length])
+
+  useEffect(() => {
+    if (!activeSearchMatch) return
+
+    const frameId = window.requestAnimationFrame(
+      function scrollToActiveMatch() {
+        scrollToMessageById(activeSearchMatch.stableId, 'smooth')
+      },
+    )
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+    }
+  }, [activeSearchMatch, scrollToMessageById])
+
+  const handleScrollToBottom = useCallback(
+    function handleScrollToBottom() {
+      stickToBottomRef.current = true
+      isNearBottomRef.current = true
+      setIsNearBottom(true)
+      setUnreadCount(0)
+      // Haptic feedback on mobile scroll-to-bottom tap
+      if (isMobileViewport) hapticTap()
+      scrollToBottom('smooth')
+    },
+    [isMobileViewport, scrollToBottom],
+  )
+
+  const scrollToBottomOverlay = useMemo(() => {
+    const isVisible = !isNearBottom && displayEntries.length > 0
+    const hasVisibleEntries = visibleEntries.length > 0
+    const overlayGap = isMobileViewport ? 8 : 24
+    const overlayBottom =
+      typeof bottomOffset === 'number'
+        ? `${bottomOffset + overlayGap}px`
+        : `calc(${bottomOffset} + ${overlayGap}px)`
+    return (
+      <div
+        className="pointer-events-none absolute z-40 left-1/2 -translate-x-1/2 md:left-1/2 md:-translate-x-1/2 max-md:left-auto max-md:translate-x-0 max-md:right-4"
+        style={{ bottom: overlayBottom }}
+      >
+        <ScrollToBottomButton
+          isVisible={isVisible && hasVisibleEntries}
+          unreadCount={unreadCount}
+          onClick={handleScrollToBottom}
+        />
+      </div>
+    )
+  }, [
+    bottomOffset,
+    displayEntries.length,
+    handleScrollToBottom,
+    visibleEntries.length,
+    isMobileViewport,
+    isNearBottom,
+    unreadCount,
+  ])
+
+  return (
+    // mt-2 is to fix the prompt-input cut off
+    <div className="flex h-full min-h-0 flex-1">
+      <ChatContainerRoot
+        className="h-full flex-1 min-h-0"
+        stickToBottom={stickToBottomRef.current}
+        onUserScroll={handleUserScroll}
+        overlay={scrollToBottomOverlay}
+      >
+        <div className="w-full">
+          {isMessageSearchOpen && (
+            <div className="sticky top-0 z-30 flex items-center gap-2 border-b border-primary-200 bg-primary-50/95 px-3 py-2 backdrop-blur-sm">
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={messageSearchValue}
+                onChange={(e) => setMessageSearchValue(e.target.value)}
+                placeholder="Search messages..."
+                className="min-w-0 flex-1 rounded-md border border-primary-200 bg-primary-50 px-2.5 py-1.5 text-sm text-primary-900 outline-none placeholder:text-primary-400 focus:border-primary-400 focus:ring-1 focus:ring-primary-400"
+              />
+              {isMessageSearchActive && (
+                <span className="shrink-0 text-xs text-primary-500 dark:text-neutral-400">
+                  {messageSearchMatches.length > 0
+                    ? `${activeSearchMatchIndex + 1} of ${messageSearchMatches.length}`
+                    : 'No matches'}
+                </span>
+              )}
+              <div className="flex shrink-0 items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={jumpToPreviousMatch}
+                  disabled={messageSearchMatches.length === 0}
+                  className="rounded p-1 text-primary-500 dark:text-neutral-400 hover:bg-primary-200 dark:hover:bg-primary-800 hover:text-primary-700 dark:hover:text-neutral-200 disabled:opacity-30"
+                  aria-label="Previous match"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="M4 10l4-4 4 4"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={jumpToNextMatch}
+                  disabled={messageSearchMatches.length === 0}
+                  className="rounded p-1 text-primary-500 dark:text-neutral-400 hover:bg-primary-200 dark:hover:bg-primary-800 hover:text-primary-700 dark:hover:text-neutral-200 disabled:opacity-30"
+                  aria-label="Next match"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="M4 6l4 4 4-4"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={closeMessageSearch}
+                  className="rounded p-1 text-primary-500 dark:text-neutral-400 hover:bg-primary-200 dark:hover:bg-primary-800 hover:text-primary-700 dark:hover:text-neutral-200"
+                  aria-label="Close search"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="M4 4l8 8M12 4l-8 8"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+          <ChatContainerContent
+            className="pt-2.5 md:pt-6 flex min-h-full flex-col"
+            style={chatContentStyle}
+          >
+            {notice && noticePosition === 'start' ? notice : null}
+            {shouldBottomPin ? (
+              <div className="flex-1" aria-hidden="true" />
+            ) : null}
+            {showToolOnlyNotice ? (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <HugeiconsIcon
+                      icon={Robot01Icon}
+                      size={20}
+                      strokeWidth={1.5}
+                      className="mt-0.5 shrink-0 text-amber-600"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-amber-800 text-balance">
+                        This session contains{' '}
+                        <span className="tabular-nums">
+                          {toolInteractionCount}
+                        </span>{' '}
+                        tool interactions
+                      </p>
+                      <p className="mt-1 text-sm text-amber-700 text-pretty">
+                        Most content is AI agent tool usage (file reads, code
+                        execution, etc.)
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setExpandAllToolSections(true)}
+                    disabled={expandAllToolSections}
+                    className={cn(
+                      'shrink-0 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+                      expandAllToolSections
+                        ? 'border-amber-300 bg-amber-100 text-amber-700 cursor-default'
+                        : 'border-amber-300 bg-amber-100/80 text-amber-800 hover:bg-amber-200 dark:hover:bg-amber-900/30 hover:border-amber-400',
+                    )}
+                    aria-label={
+                      expandAllToolSections
+                        ? 'All tool sections expanded'
+                        : 'Expand all tool sections'
+                    }
+                  >
+                    {expandAllToolSections ? '✓ Expanded' : 'Show All'}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {loading && displayEntries.length === 0 ? (
+              <div className="flex flex-col gap-4 animate-pulse">
+                <div className="flex gap-3">
+                  <div className="size-6 rounded-full bg-primary-200" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 bg-primary-200 rounded w-3/4" />
+                    <div className="h-4 bg-primary-200 rounded w-1/2" />
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="size-6 rounded-full bg-primary-200" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 bg-primary-200 rounded w-2/3" />
+                    <div className="h-4 bg-primary-200 rounded w-5/6" />
+                    <div className="h-4 bg-primary-200 rounded w-1/3" />
+                  </div>
+                </div>
+              </div>
+            ) : empty && !notice && !isMessageSearchActive ? (
+              (emptyState ?? <div aria-hidden></div>)
+            ) : isMessageSearchActive && visibleEntries.length === 0 ? (
+              <div className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-6 text-sm text-primary-600">
+                No messages match “{messageSearchValue.trim()}”.
+              </div>
+            ) : hasGroup ? (
+              <>
+                {hiddenEarlierCount > 0 ? (
+                  <div className="mb-3 flex justify-center">
+                    <button
+                      type="button"
+                      className="rounded-md border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 hover:bg-primary-100"
+                      onClick={() => {
+                        setEarlierPages((pages) => {
+                          const next = pages + 1
+                          setRenderBudget(MESSAGE_RENDER_WINDOW * (1 + next))
+                          return next
+                        })
+                      }}
+                    >
+                      Show {Math.min(MESSAGE_RENDER_WINDOW, hiddenEarlierCount)}{' '}
+                      earlier messages
+                      {hiddenEarlierCount > MESSAGE_RENDER_WINDOW
+                        ? ` (${hiddenEarlierCount} hidden)`
+                        : ''}
+                    </button>
+                  </div>
+                ) : null}
+                {visibleEntries.slice(0, groupStartIndex).map(renderMessage)}
+                {/* // Keep the last exchange pinned without extra tail gap. // Account
+              for space-y-6 (24px) when pinning. */}
+                <div
+                  className="my-2 flex flex-col gap-2 md:my-3 md:gap-3"
+                  style={{
+                    minHeight: `${Math.max(0, pinGroupMinHeight - 12)}px`,
+                  }}
+                >
+                  {visibleEntries.slice(groupStartIndex).map((entry, index) => {
+                    const chatMessage = entry.message
+                    const realIndex = entry.sourceIndex
+                    const entryIndex = groupStartIndex + index
+                    const messageIsStreaming = isMessageStreaming(
+                      chatMessage,
+                      realIndex,
+                    )
+                    const stableId = getStableMessageId(chatMessage, realIndex)
+                    const signature = streamingState.signatureById.get(stableId)
+                    const simulateStreaming =
+                      !messageIsStreaming &&
+                      streamingState.streamingTargets.has(stableId)
+                    const forceActionsVisible =
+                      typeof lastAssistantIndex === 'number' &&
+                      realIndex === lastAssistantIndex
+                    const wrapperRef =
+                      entryIndex === lastUserIndex ? lastUserRef : undefined
+                    const wrapperClassName = cn(
+                      getMessageSpacingClass(visibleEntries, entryIndex),
+                      getToolGroupClass(visibleEntries, entryIndex),
+                      entryIndex === lastUserIndex ? 'scroll-mt-0' : '',
+                    )
+                    const wrapperScrollMarginTop =
+                      entryIndex === lastUserIndex ? headerHeight : undefined
+                    const hasToolCalls =
+                      chatMessage.role === 'assistant' &&
+                      (getToolCallsFromMessage(chatMessage).length > 0 ||
+                        entry.attachedToolMessages.length > 0)
+                    return (
+                      <MessageItem
+                        key={stableId}
+                        message={chatMessage}
+                        attachedToolMessages={entry.attachedToolMessages}
+                        onRetryMessage={onRetryMessage}
+                        onEditMessage={
+                          entryIndex === lastUserIndex
+                            ? onEditMessage
+                            : undefined
+                        }
+                        onRegenerateMessage={
+                          entryIndex === lastAssistantIndex
+                            ? onRegenerateMessage
+                            : undefined
+                        }
+                        toolResultsByCallId={
+                          hasToolCalls ? toolResultsByCallId : undefined
+                        }
+                        forceActionsVisible={forceActionsVisible}
+                        wrapperRef={wrapperRef}
+                        wrapperClassName={wrapperClassName}
+                        wrapperScrollMarginTop={wrapperScrollMarginTop}
+                        isStreaming={messageIsStreaming}
+                        streamingText={
+                          messageIsStreaming ? streamingText : undefined
+                        }
+                        streamingThinking={
+                          messageIsStreaming ? streamingThinking : undefined
+                        }
+                        lifecycleEvents={
+                          messageIsStreaming ? lifecycleEvents : undefined
+                        }
+                        simulateStreaming={simulateStreaming}
+                        streamingKey={signature}
+                        expandAllToolSections={
+                          expandAllToolSections || streamActivityMode
+                        }
+                        hideActivityCard={hideActivityCards}
+                        isLastAssistant={forceActionsVisible}
+                      />
+                    )
+                  })}
+                </div>
+              </>
+            ) : (
+              <>
+                {hiddenEarlierCount > 0 ? (
+                  <div className="mb-3 flex justify-center">
+                    <button
+                      type="button"
+                      className="rounded-md border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 hover:bg-primary-100"
+                      onClick={() => {
+                        setEarlierPages((pages) => {
+                          const next = pages + 1
+                          setRenderBudget(MESSAGE_RENDER_WINDOW * (1 + next))
+                          return next
+                        })
+                      }}
+                    >
+                      Show {Math.min(MESSAGE_RENDER_WINDOW, hiddenEarlierCount)}{' '}
+                      earlier messages
+                      {hiddenEarlierCount > MESSAGE_RENDER_WINDOW
+                        ? ` (${hiddenEarlierCount} hidden)`
+                        : ''}
+                    </button>
+                  </div>
+                ) : null}
+                {shouldVirtualize && virtualRange.topSpacerHeight > 0 ? (
+                  <div
+                    aria-hidden="true"
+                    style={{ height: `${virtualRange.topSpacerHeight}px` }}
+                  />
+                ) : null}
+                {visibleEntries
+                  .slice(virtualRange.startIndex, virtualRange.endIndex)
+                  .map((entry, index) =>
+                    renderMessage(entry, virtualRange.startIndex + index),
+                  )}
+                {shouldVirtualize && virtualRange.bottomSpacerHeight > 0 ? (
+                  <div
+                    aria-hidden="true"
+                    style={{ height: `${virtualRange.bottomSpacerHeight}px` }}
+                  />
+                ) : null}
+              </>
+            )}
+            {!turnBusy && (showResearchCard || isCompacting) ? (
+              <div
+                className="flex flex-col gap-1 py-1.5 px-1 animate-in fade-in duration-300 md:gap-1.5 md:py-2"
+                role="status"
+                aria-live="polite"
+              >
+                <ThinkingBubble
+                  activeToolCalls={activeToolCalls}
+                  liveToolActivity={liveToolActivity}
+                  researchCard={researchCard}
+                  isCompacting={isCompacting}
+                  forceSimple={!showActivityFeed}
+                />
+              </div>
+            ) : null}
+            {notice && noticePosition === 'end' ? notice : null}
+            <ChatContainerScrollAnchor ref={anchorRef} />
+          </ChatContainerContent>
+        </div>
+      </ChatContainerRoot>
+      {showConversationOutline ? (
+        <ConversationOutline
+          entries={outlineEntries}
+          onJump={scrollToMessageById}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function getMessageSpacingClass(
+  messages: Array<ChatMessage>,
+  index: number,
+): string {
+  if (index === 0) return 'mt-0'
+  const currentRole = messages[index]?.role ?? 'assistant'
+  const previousRole = messages[index - 1]?.role ?? 'assistant'
+  if (currentRole === previousRole) {
+    return 'mt-1 md:mt-1.5'
+  }
+  if (currentRole === 'assistant') {
+    return 'mt-2 md:mt-2.5'
+  }
+  return 'mt-2 md:mt-2.5'
+}
+
+function getToolGroupClass(
+  messages: Array<ChatMessage>,
+  index: number,
+): string {
+  const message = messages[index]
+  if (!message || message.role !== 'assistant') return ''
+  const hasToolCalls = getToolCallsFromMessage(message).length > 0
+  if (!hasToolCalls) return ''
+
+  let previousUserIndex = -1
+  for (let i = index - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'user') {
+      previousUserIndex = i
+      break
+    }
+  }
+
+  let nextUserIndex = -1
+  for (let i = index + 1; i < messages.length; i += 1) {
+    if (messages[i]?.role === 'user') {
+      nextUserIndex = i
+      break
+    }
+  }
+
+  if (previousUserIndex === -1 || nextUserIndex === -1) return ''
+  return 'border-l border-primary-200/70 pl-3'
+}
+
+function getStableMessageId(message: ChatMessage, index: number): string {
+  // Single chokepoint with chat-turn-identity — prefer durable id over
+  // body fingerprint so settle / history stamp does not remount the row.
+  return stableChatMessageKey(message, index, textFromMessage)
+}
+
+function areChatMessageListEqual(
+  prev: ChatMessageListProps,
+  next: ChatMessageListProps,
+) {
+  return (
+    prev.messages === next.messages &&
+    prev.onRetryMessage === next.onRetryMessage &&
+    prev.onEditMessage === next.onEditMessage &&
+    prev.onRegenerateMessage === next.onRegenerateMessage &&
+    prev.onRefresh === next.onRefresh &&
+    prev.loading === next.loading &&
+    prev.empty === next.empty &&
+    prev.emptyState === next.emptyState &&
+    prev.notice === next.notice &&
+    prev.noticePosition === next.noticePosition &&
+    prev.turnBusy === next.turnBusy &&
+    prev.sessionKey === next.sessionKey &&
+    prev.pinToTop === next.pinToTop &&
+    prev.pinGroupMinHeight === next.pinGroupMinHeight &&
+    prev.headerHeight === next.headerHeight &&
+    prev.contentStyle === next.contentStyle &&
+    prev.streamingMessageId === next.streamingMessageId &&
+    prev.streamingText === next.streamingText &&
+    prev.streamingThinking === next.streamingThinking &&
+    prev.lifecycleEvents === next.lifecycleEvents &&
+    prev.isStreaming === next.isStreaming &&
+    prev.bottomOffset === next.bottomOffset &&
+    prev.activeToolCalls === next.activeToolCalls &&
+    prev.liveToolActivity === next.liveToolActivity &&
+    prev.researchCard === next.researchCard &&
+    prev.hideSystemMessages === next.hideSystemMessages &&
+    prev.isCompacting === next.isCompacting
+  )
+}
+
+const MemoizedChatMessageList = memo(
+  ChatMessageListComponent,
+  areChatMessageListEqual,
+)
+
+export { MemoizedChatMessageList as ChatMessageList }

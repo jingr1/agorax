@@ -1,0 +1,12 @@
+go 1.25
+
+use (
+	./packages/agent/activity-replication
+	./packages/agent/daemon
+	./packages/agent/host
+	./packages/agent/session-replay
+	./packages/agent/store-sqlite
+	./packages/agent/store-sqlite/canonical
+	./packages/connector/daemon/core
+	./packages/events/stream-go
+)

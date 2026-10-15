@@ -1,0 +1,10 @@
+{
+  "state": "idle",
+  "checkpointStatus": "done",
+  "orchestratorProcessedRaw": "STATE: DONE\nFILES_CHANGED: /home/ramon.jing/hermes-workspace/memory/swarm/missions/lg-msivu8iz/writer/hermes-tech-share-slides-deck.md\nCOMMANDS_RUN: none\nRESULT: 已根据 architect 的幻灯片结构规格生成可直接演讲的 Markdown slide deck，共 23 页",
+  "lastCheckpointRoute": "orchestrator",
+  "phase": "done",
+  "lastOutputAt": 1723056060000,
+  "missionId": "lg-msivu8iz",
+  "needsHuman": false
+}

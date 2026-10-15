@@ -1,0 +1,607 @@
+package agentruntime
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"agorax.local/agent-daemon/packages/agent/daemon/providerregistry"
+)
+
+func newOpenCodeTestAdapter(transport ProcessTransport) *standardACPAdapter {
+	descriptor, ok := providerregistry.Find(ProviderOpenCode)
+	if !ok {
+		panic("opencode provider descriptor is missing")
+	}
+	return newOpenCodeAdapterFromProviderDescriptor(
+		descriptor,
+		transport,
+		LegacyHostMetadata(),
+		nil,
+	)
+}
+
+func TestOpenCodeAdapterUsesOfficialACPCommand(t *testing.T) {
+	t.Parallel()
+
+	adapter := newOpenCodeTestAdapter(nil)
+	if adapter.config.provider != ProviderOpenCode {
+		t.Fatalf("provider = %q, want %q", adapter.config.provider, ProviderOpenCode)
+	}
+	if len(adapter.config.command) != 2 || adapter.config.command[0] != "opencode" || adapter.config.command[1] != "acp" {
+		t.Fatalf("command = %#v, want opencode acp", adapter.config.command)
+	}
+	if adapter.config.planModeRuntimeID != "plan" || adapter.config.planModeDisabledRuntimeID != "build" {
+		t.Fatalf("plan mode ids = %q/%q, want plan/build", adapter.config.planModeRuntimeID, adapter.config.planModeDisabledRuntimeID)
+	}
+	for _, permissionModeID := range []string{"read-only", "ask", "full-access"} {
+		if got := adapter.config.permissionModeID(permissionModeID); got != "" {
+			t.Fatalf("permission mode %q mapped to ACP mode %q", permissionModeID, got)
+		}
+	}
+}
+
+func TestOpenCodeAdapterRejectsSparkNoneBeforePrompt(t *testing.T) {
+	t.Parallel()
+
+	transport := newStandardACPTransport("OpenCode", "opencode-spark-session")
+	transport.conn.configOptions = []map[string]any{
+		{
+			"id": "model",
+			"options": []any{
+				map[string]any{"name": "GPT-5.3 Codex Spark", "value": openCodeSparkModelID},
+			},
+		},
+		{
+			"id":           "effort",
+			"currentValue": "none",
+			"options": []any{
+				map[string]any{"name": "Off", "value": "none"},
+				map[string]any{"name": "Low", "value": "low"},
+			},
+		},
+	}
+	adapter := newOpenCodeTestAdapter(transport)
+	session := standardTestSession(ProviderOpenCode)
+	session.Settings = &SessionSettings{Model: openCodeSparkModelID, ReasoningEffort: "none"}
+
+	if _, err := adapter.Start(context.Background(), session); err == nil ||
+		!strings.Contains(err.Error(), `does not support reasoning effort "none"`) {
+		t.Fatalf("Start error = %v, want actionable Spark capability error", err)
+	}
+	if calls := transport.conn.setConfigOptionCalls(); len(calls) != 0 {
+		t.Fatalf("startup config calls = %#v, want none after preflight rejection", calls)
+	}
+	if transport.conn.promptCallCount != 0 {
+		t.Fatalf("prompt call count = %d, want no prompt after preflight rejection", transport.conn.promptCallCount)
+	}
+}
+
+func TestOpenCodeACPEnvInjectsPermissionConfigWithoutBakingModel(t *testing.T) {
+	t.Parallel()
+
+	session := standardTestSession(ProviderOpenCode)
+	session.Settings = &SessionSettings{Model: "anthropic/claude-sonnet-4-5"}
+
+	adapter := newOpenCodeTestAdapter(nil)
+	env, err := adapter.config.finalizeEnv(adapter.config.env(session), session)
+	if err != nil {
+		t.Fatalf("finalize OpenCode env: %v", err)
+	}
+	found := false
+	for _, item := range env {
+		if strings.HasPrefix(item, "OPENCODE_CONFIG_CONTENT=") {
+			found = true
+			var config map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(item, "OPENCODE_CONFIG_CONTENT=")), &config); err != nil {
+				t.Fatalf("decode OPENCODE_CONFIG_CONTENT: %v", err)
+			}
+			// Model is applied only through ACP config options after session/new
+			// advertises the live set — baking it here caused provider.invalid-request.
+			if _, ok := config["model"]; ok {
+				t.Fatalf("model must not be baked into OPENCODE_CONFIG_CONTENT: %#v", config["model"])
+			}
+			permission, _ := config["permission"].(map[string]any)
+			if permission["*"] != "ask" || permission["glob"] != "allow" {
+				t.Fatalf("permission config = %#v", permission)
+			}
+			read, _ := permission["read"].(map[string]any)
+			if read["*.env"] != "deny" || read["*.env.example"] != "allow" {
+				t.Fatalf("read permission config = %#v", read)
+			}
+			agents, _ := config["agent"].(map[string]any)
+			plan, _ := agents["plan"].(map[string]any)
+			planPermission, _ := plan["permission"].(map[string]any)
+			if planPermission["edit"] != "deny" {
+				t.Fatalf("plan permission config = %#v", planPermission)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("env = %#v, want OPENCODE_CONFIG_CONTENT", env)
+	}
+}
+
+func TestOpenCodeACPEnvMergesUserConfigBeforeApplyingAuthoritativePermissions(t *testing.T) {
+	t.Parallel()
+
+	descriptor, ok := providerregistry.Find(ProviderOpenCode)
+	if !ok {
+		t.Fatal("opencode provider descriptor is missing")
+	}
+	session := standardTestSession(ProviderOpenCode)
+	session.Settings = &SessionSettings{Model: "openai/gpt-5"}
+	base := `{"theme":"system","model":"user/model","permission":{"bash":"allow"},"agent":{"plan":{"temperature":0.2,"permission":{"bash":"ask"}}}}`
+	env, err := openCodeFinalEnv(
+		descriptor.Runtime.StandardACP.SettingsEnvironment,
+		session,
+		`{"theme":"inherited"}`,
+		[]string{"KEEP=1", `OPENCODE_PERMISSION={"bash":"allow"}`, "OPENCODE_CONFIG_CONTENT=" + base},
+	)
+	if err != nil {
+		t.Fatalf("openCodeFinalEnv: %v", err)
+	}
+	if len(env) != 3 || env[0] != "KEEP=1" || env[1] != "OPENCODE_PERMISSION={}" || !strings.HasPrefix(env[2], "OPENCODE_CONFIG_CONTENT=") {
+		t.Fatalf("env = %#v, want neutral permission override and one final OpenCode config entry", env)
+	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(env[2], "OPENCODE_CONFIG_CONTENT=")), &config); err != nil {
+		t.Fatalf("decode final OpenCode config: %v", err)
+	}
+	if config["theme"] != "system" {
+		t.Fatalf("preserved/generated config = %#v", config)
+	}
+	if _, ok := config["model"]; ok {
+		t.Fatalf("model must not be baked into OPENCODE_CONFIG_CONTENT: %#v", config["model"])
+	}
+	permission, _ := config["permission"].(map[string]any)
+	if permission["*"] != "ask" || permission["bash"] == "allow" {
+		t.Fatalf("authoritative permission config = %#v", permission)
+	}
+	agents, _ := config["agent"].(map[string]any)
+	plan, _ := agents["plan"].(map[string]any)
+	planPermission, _ := plan["permission"].(map[string]any)
+	if plan["temperature"] != 0.2 || planPermission["bash"] != "ask" || planPermission["edit"] != "deny" {
+		t.Fatalf("merged plan config = %#v", plan)
+	}
+}
+
+func TestOpenCodeACPEnvRejectsInvalidUserConfig(t *testing.T) {
+	t.Parallel()
+
+	descriptor, ok := providerregistry.Find(ProviderOpenCode)
+	if !ok {
+		t.Fatal("opencode provider descriptor is missing")
+	}
+	_, err := openCodeFinalEnv(
+		descriptor.Runtime.StandardACP.SettingsEnvironment,
+		standardTestSession(ProviderOpenCode),
+		"",
+		[]string{"OPENCODE_CONFIG_CONTENT={invalid"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "decode OPENCODE_CONFIG_CONTENT") {
+		t.Fatalf("invalid config error = %v", err)
+	}
+}
+
+func TestOpenCodePermissionTiersResolveACPRequestsIndependentlyFromPlanMode(t *testing.T) {
+	t.Parallel()
+
+	adapter := newOpenCodeTestAdapter(nil)
+	if got := adapter.config.automaticPermissionDecision("read-only"); got != "denied" {
+		t.Fatalf("read-only decision = %q, want denied", got)
+	}
+	if got := adapter.config.automaticPermissionDecision("ask"); got != "" {
+		t.Fatalf("ask decision = %q, want prompt", got)
+	}
+	if got := adapter.config.automaticPermissionDecision("full-access"); got != "approved" {
+		t.Fatalf("full-access decision = %q, want approved", got)
+	}
+	if got := adapter.effectiveModeID(Session{PermissionModeID: "full-access", Settings: &SessionSettings{PlanMode: false}}); got != "build" {
+		t.Fatalf("build workflow mode = %q, want build", got)
+	}
+	if got := adapter.effectiveModeID(Session{PermissionModeID: "read-only", Settings: &SessionSettings{PlanMode: true}}); got != "plan" {
+		t.Fatalf("plan workflow mode = %q, want plan", got)
+	}
+}
+
+func TestOpenCodeAskPermissionOptionsExcludeIrrevocableAlwaysAllow(t *testing.T) {
+	t.Parallel()
+
+	options := openCodePermissionOptions([]map[string]any{
+		{"optionId": "once", "kind": "allow_once"},
+		{"optionId": "always", "kind": "allow_always"},
+		{"optionId": "reject", "kind": "reject_once"},
+	})
+	if len(options) != 2 || options[0]["optionId"] != "once" || options[1]["optionId"] != "reject" {
+		t.Fatalf("permission options = %#v, want once/reject", options)
+	}
+}
+
+func TestOpenCodeFullAccessSelectsOneShotApproval(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{"options":[{"optionId":"always","kind":"allow_always"},{"optionId":"once","kind":"allow_once"}]}`)
+	optionID, ok := acpPermissionRequestDecisionOptionID(raw, "approved", openCodePermissionOptions)
+	if !ok || optionID != "once" {
+		t.Fatalf("automatic approval = %q/%t, want once/true", optionID, ok)
+	}
+}
+
+func TestOpenCodeAutomaticPermissionTiersResolveWithoutPrompt(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name     string
+		tier     string
+		optionID string
+	}{
+		{name: "read-only denies", tier: "read-only", optionID: "reject"},
+		{name: "full-access approves", tier: "full-access", optionID: "allow"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			transport := newStandardACPTransport("OpenCode", "opencode-session-automatic-permission")
+			transport.conn.promptPermission = true
+			adapter := newOpenCodeTestAdapter(transport)
+			session := standardTestSession(ProviderOpenCode)
+			session.PermissionModeID = testCase.tier
+			if _, err := adapter.Start(context.Background(), session); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			session.ProviderSessionID = "opencode-session-automatic-permission"
+
+			execDone := make(chan error, 1)
+			go func() {
+				_, err := adapter.Exec(context.Background(), session, textPrompt("run the build"), "", "turn-1", nil, nil)
+				execDone <- err
+			}()
+			select {
+			case err := <-execDone:
+				if err != nil {
+					t.Fatalf("Exec: %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatalf("Exec did not finish for %s", testCase.tier)
+			}
+			if got := transport.conn.permissionOptionID(); got != testCase.optionID {
+				t.Fatalf("permission option id = %q, want %q", got, testCase.optionID)
+			}
+		})
+	}
+}
+
+func TestOpenCodeDoesNotRequireNewSessionForModelSettings(t *testing.T) {
+	t.Parallel()
+
+	adapter := newOpenCodeTestAdapter(nil)
+	model := "openai/gpt-5"
+	if adapter.RequiresNewSessionForSettings(Session{}, SessionSettingsPatch{Model: &model}) {
+		t.Fatal("model patch required a new session")
+	}
+	if adapter.RequiresNewSessionForSettings(Session{}, SessionSettingsPatch{}) {
+		t.Fatal("empty patch required a new session")
+	}
+	if !adapter.config.restartForUnadvertisedModel {
+		t.Fatal("OpenCode must restart when a free model is absent from ACP options")
+	}
+}
+
+func TestOpenCodeUsesZenAuthOverlayForFreeModels(t *testing.T) {
+	t.Parallel()
+	if !openCodeUsesZenAuthOverlay("") {
+		t.Fatal("empty model should prefer zen overlay")
+	}
+	if !openCodeUsesZenAuthOverlay("opencode/exo-free") {
+		t.Fatal("opencode/* model should use zen overlay")
+	}
+	if openCodeUsesZenAuthOverlay("github-copilot/claude-haiku-5.5") {
+		t.Fatal("github-copilot models must keep stored Copilot auth")
+	}
+}
+
+func TestOpenCodeFinalEnvInjectsZenAuthOverlayForFreeModel(t *testing.T) {
+	overlayRoot := t.TempDir()
+	t.Setenv("AGORAX_OPENCODE_ZEN_AUTH_OVERLAY", overlayRoot)
+	resetOpenCodeZenAuthOverlayForTest()
+	t.Cleanup(resetOpenCodeZenAuthOverlayForTest)
+
+	descriptor, ok := providerregistry.Find(ProviderOpenCode)
+	if !ok {
+		t.Fatal("opencode provider missing")
+	}
+	session := standardTestSession(ProviderOpenCode)
+	session.Settings = &SessionSettings{Model: "opencode/exo-free"}
+	env, err := openCodeFinalEnv(
+		descriptor.Runtime.StandardACP.SettingsEnvironment,
+		session,
+		"",
+		[]string{"KEEP=1", "XDG_DATA_HOME=/tmp/should-be-replaced"},
+	)
+	if err != nil {
+		t.Fatalf("openCodeFinalEnv: %v", err)
+	}
+	foundOverlay := false
+	for _, item := range env {
+		if strings.HasPrefix(item, "XDG_DATA_HOME=") {
+			foundOverlay = true
+			if item == "XDG_DATA_HOME=/tmp/should-be-replaced" {
+				t.Fatalf("zen overlay did not replace inherited XDG_DATA_HOME: %q", item)
+			}
+			overlay := strings.TrimPrefix(item, "XDG_DATA_HOME=")
+			authPath := filepath.Join(overlay, "opencode", "auth.json")
+			data, readErr := os.ReadFile(authPath)
+			if readErr != nil {
+				t.Fatalf("read zen auth overlay: %v", readErr)
+			}
+			if strings.TrimSpace(string(data)) != "{}" {
+				t.Fatalf("zen auth overlay = %q, want {}", string(data))
+			}
+		}
+	}
+	if !foundOverlay {
+		t.Fatalf("env = %#v, want XDG_DATA_HOME zen overlay", env)
+	}
+}
+
+func TestOpenCodeAdapterStartAppliesPlanMode(t *testing.T) {
+	t.Parallel()
+
+	transport := newStandardACPTransport("OpenCode", "opencode-session-plan")
+	adapter := newOpenCodeTestAdapter(transport)
+	session := standardTestSession(ProviderOpenCode)
+	session.Settings = &SessionSettings{PlanMode: true}
+
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if transport.conn.lastModeID() != "plan" {
+		t.Fatalf("mode id = %q, want plan", transport.conn.lastModeID())
+	}
+}
+
+func TestOpenCodeAdapterApplySessionSettingsTogglesPlanMode(t *testing.T) {
+	t.Parallel()
+
+	transport := newStandardACPTransport("OpenCode", "opencode-session-plan-toggle")
+	adapter := newOpenCodeTestAdapter(transport)
+	session := standardTestSession(ProviderOpenCode)
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if transport.conn.lastModeID() != "build" {
+		t.Fatalf("initial mode id = %q, want build", transport.conn.lastModeID())
+	}
+
+	planMode := true
+	session.ProviderSessionID = "opencode-session-plan-toggle"
+	session.Settings = &SessionSettings{PlanMode: planMode}
+	if err := adapter.ApplySessionSettings(context.Background(), session, SessionSettingsPatch{
+		PlanMode: &planMode,
+	}); err != nil {
+		t.Fatalf("ApplySessionSettings plan on: %v", err)
+	}
+	if transport.conn.lastModeID() != "plan" {
+		t.Fatalf("mode id = %q, want plan", transport.conn.lastModeID())
+	}
+
+	planMode = false
+	session.Settings.PlanMode = planMode
+	if err := adapter.ApplySessionSettings(context.Background(), session, SessionSettingsPatch{
+		PlanMode: &planMode,
+	}); err != nil {
+		t.Fatalf("ApplySessionSettings plan off: %v", err)
+	}
+	if transport.conn.lastModeID() != "build" {
+		t.Fatalf("mode id = %q, want build", transport.conn.lastModeID())
+	}
+}
+
+func TestOpenCodePermissionChangeDoesNotChangeACPWorkflowMode(t *testing.T) {
+	t.Parallel()
+
+	transport := newStandardACPTransport("OpenCode", "opencode-session-permission")
+	adapter := newOpenCodeTestAdapter(transport)
+	session := standardTestSession(ProviderOpenCode)
+	session.PermissionModeID = "ask"
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if transport.conn.lastModeID() != "build" {
+		t.Fatalf("initial mode id = %q, want build", transport.conn.lastModeID())
+	}
+
+	transport.conn.setModeError = &acpError{Code: -32000, Message: "session/set_mode must not be called"}
+	session.ProviderSessionID = "opencode-session-permission"
+	session.PermissionModeID = "full-access"
+	if err := adapter.ApplyPermissionMode(context.Background(), session); err != nil {
+		t.Fatalf("ApplyPermissionMode called ACP session/set_mode: %v", err)
+	}
+	if got := adapter.automaticPermissionDecision(session.AgentSessionID); got != "approved" {
+		t.Fatalf("live permission decision = %q, want approved", got)
+	}
+	if transport.conn.lastModeID() != "build" {
+		t.Fatalf("workflow mode changed to %q, want build", transport.conn.lastModeID())
+	}
+}
+
+func TestOpenCodeApplySessionSettingsSendsLiveModelAndEffortConfigOptions(t *testing.T) {
+	t.Parallel()
+
+	transport := newStandardACPTransport("OpenCode", "opencode-session-1")
+	transport.conn.configOptions = []map[string]any{
+		{
+			"id": "model",
+			"options": []any{
+				map[string]any{"name": "GPT-5.3 Codex Spark", "value": "openai/gpt-5.3-codex-spark"},
+			},
+		},
+		{
+			"id": "effort",
+			"options": []any{
+				map[string]any{"name": "High", "value": "high"},
+			},
+		},
+	}
+	adapter := newOpenCodeTestAdapter(transport)
+	session := standardTestSession(ProviderOpenCode)
+
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	session.Settings = &SessionSettings{
+		Model:           "openai/gpt-5.3-codex-spark",
+		ReasoningEffort: "high",
+	}
+	if err := adapter.ApplySessionSettings(context.Background(), session, SessionSettingsPatch{
+		Model:           stringPtr("openai/gpt-5.3-codex-spark"),
+		ReasoningEffort: stringPtr("high"),
+	}); err != nil {
+		t.Fatalf("ApplySessionSettings: %v", err)
+	}
+
+	calls := transport.conn.setConfigOptionCalls()
+	if len(calls) != 2 {
+		t.Fatalf("config option calls = %#v, want model + effort", calls)
+	}
+	if got, _ := calls[0]["configId"].(string); got != "model" {
+		t.Fatalf("first config id = %q, want model", got)
+	}
+	if got, _ := calls[0]["value"].(string); got != "openai/gpt-5.3-codex-spark" {
+		t.Fatalf("first config value = %q, want openai/gpt-5.3-codex-spark", got)
+	}
+	if got, _ := calls[1]["configId"].(string); got != "effort" {
+		t.Fatalf("second config id = %q, want effort", got)
+	}
+	if got, _ := calls[1]["value"].(string); got != "high" {
+		t.Fatalf("second config value = %q, want high", got)
+	}
+}
+
+func TestOpenCodeApplySessionSettingsRejectsUnadvertisedEffortBeforeACPCall(t *testing.T) {
+	t.Parallel()
+
+	transport := newStandardACPTransport("OpenCode", "opencode-big-pickle-session")
+	transport.conn.configOptions = []map[string]any{{
+		"id": "model",
+		"options": []any{
+			map[string]any{"name": "Big Pickle", "value": "opencode/big-pickle"},
+		},
+	}}
+	adapter := newOpenCodeTestAdapter(transport)
+	session := standardTestSession(ProviderOpenCode)
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	err := adapter.ApplySessionSettings(context.Background(), session, SessionSettingsPatch{
+		ReasoningEffort: stringPtr("high"),
+	})
+	if err == nil || !strings.Contains(err.Error(), `effort "high" is not advertised`) {
+		t.Fatalf("ApplySessionSettings error = %v", err)
+	}
+	if calls := transport.conn.setConfigOptionCalls(); len(calls) != 0 {
+		t.Fatalf("config option calls = %#v, want none", calls)
+	}
+}
+
+func TestOpenCodeApplySessionSettingsRejectsSparkNoneBeforeACPCall(t *testing.T) {
+	t.Parallel()
+
+	transport := newStandardACPTransport("OpenCode", "opencode-spark-live-session")
+	transport.conn.configOptions = []map[string]any{
+		{
+			"id": "model",
+			"options": []any{
+				map[string]any{"name": "GPT-5.3 Codex Spark", "value": openCodeSparkModelID},
+			},
+		},
+		{
+			"id": "effort",
+			"options": []any{
+				map[string]any{"name": "Off", "value": "none"},
+				map[string]any{"name": "Low", "value": "low"},
+			},
+		},
+	}
+	adapter := newOpenCodeTestAdapter(transport)
+	session := standardTestSession(ProviderOpenCode)
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	model := openCodeSparkModelID
+	effort := "none"
+	patch := SessionSettingsPatch{Model: &model, ReasoningEffort: &effort}
+	if err := adapter.ValidateSessionSettings(session, patch); err == nil || !strings.Contains(err.Error(), "does not support") {
+		t.Fatalf("ValidateSessionSettings error = %v, want Spark none rejection", err)
+	}
+	if err := adapter.ApplySessionSettings(context.Background(), session, patch); err == nil || !strings.Contains(err.Error(), "does not support") {
+		t.Fatalf("ApplySessionSettings error = %v, want Spark none rejection", err)
+	}
+	if calls := transport.conn.setConfigOptionCalls(); len(calls) != 0 {
+		t.Fatalf("config option calls = %#v, want none", calls)
+	}
+}
+
+func TestOpenCodeSessionStateFiltersSparkNoneFromRuntimeContext(t *testing.T) {
+	t.Parallel()
+
+	transport := newStandardACPTransport("OpenCode", "opencode-spark-context-session")
+	transport.conn.configOptions = []map[string]any{
+		{
+			"id":           "model",
+			"currentValue": openCodeSparkModelID,
+			"options": []any{
+				map[string]any{
+					"name":             "GPT-5.3 Codex Spark",
+					"value":            openCodeSparkModelID,
+					"reasoningEffort":  "none",
+					"reasoningEfforts": []any{map[string]any{"value": "none"}, map[string]any{"value": "low"}},
+				},
+			},
+		},
+		{
+			"id":           "effort",
+			"currentValue": "none",
+			"options": []any{
+				map[string]any{"name": "Off", "value": "none"},
+				map[string]any{"name": "Low", "value": "low"},
+			},
+		},
+	}
+	adapter := newOpenCodeTestAdapter(transport)
+	session := standardTestSession(ProviderOpenCode)
+	session.Settings = &SessionSettings{Model: openCodeSparkModelID, ReasoningEffort: "low"}
+	if _, err := adapter.Start(context.Background(), session); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	state := adapter.SessionState(session)
+	descriptors, ok := state.RuntimeContext["configOptions"].([]map[string]any)
+	if !ok {
+		t.Fatalf("runtime configOptions = %#v, want descriptors", state.RuntimeContext["configOptions"])
+	}
+	for _, descriptor := range descriptors {
+		for _, option := range configOptionEntries(descriptor["options"]) {
+			if strings.EqualFold(asString(option["value"]), "none") {
+				t.Fatalf("runtime descriptor %q exposes Spark-incompatible none: %#v", descriptor["id"], descriptor)
+			}
+			for _, effort := range configOptionEntries(option["reasoningEfforts"]) {
+				if strings.EqualFold(asString(effort["value"]), "none") {
+					t.Fatalf("runtime model descriptor exposes Spark-incompatible none: %#v", descriptor)
+				}
+			}
+		}
+	}
+	if got := state.RuntimeContext["reasoningEffort"]; strings.EqualFold(asString(got), "none") {
+		t.Fatalf("runtime context exposes Spark-incompatible reasoning effort: %#v", state.RuntimeContext)
+	}
+	if state.Settings != nil && strings.EqualFold(state.Settings.ReasoningEffort, "none") {
+		t.Fatalf("session settings expose Spark-incompatible reasoning effort: %#v", state.Settings)
+	}
+}

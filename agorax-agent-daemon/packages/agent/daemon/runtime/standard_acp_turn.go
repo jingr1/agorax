@@ -1,0 +1,721 @@
+package agentruntime
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	activityshared "agorax.local/agent-daemon/packages/agent/daemon/activity/events"
+)
+
+func (a *standardACPAdapter) Exec(
+	ctx context.Context,
+	session Session,
+	content []PromptContentBlock,
+	displayPrompt string,
+	turnID string,
+	emit EventSink,
+	emitCommands CommandSnapshotSink,
+) ([]activityshared.Event, error) {
+	acpSession := a.getUsableSession(session.AgentSessionID)
+	if acpSession == nil || acpSession.client == nil {
+		return []activityshared.Event{standardACPRootProviderTurnCompletedEvent(
+			session,
+			turnID,
+			activityshared.TurnOutcomeFailed,
+			map[string]any{"error": ErrSessionDisconnected.Error()},
+		)}, ErrSessionDisconnected
+	}
+	session.ProviderSessionID = acpSession.providerSessionID
+	explicitDisplayPrompt, visibleText := explicitAndVisiblePromptText(content, displayPrompt)
+	mentionRoutingApplied, mentionRoutingSkills := agoraxMentionRoutingSkills(visibleText)
+	a.rememberSessionTurn(session.AgentSessionID, turnID)
+	normalizer := newACPTurnNormalizer()
+	var events []activityshared.Event
+	var eventsMu sync.Mutex
+	emitEvents := func(next []activityshared.Event) {
+		if len(next) == 0 {
+			return
+		}
+		eventsMu.Lock()
+		defer eventsMu.Unlock()
+		next = a.inputUnits.stamp(session.AgentSessionID, next)
+		next = a.stampTurnLifecycleSnapshots(acpSession, next)
+		events = append(events, next...)
+		if emit != nil {
+			emit(next)
+		}
+	}
+	snapshotEvents := func() []activityshared.Event {
+		eventsMu.Lock()
+		defer eventsMu.Unlock()
+		return append([]activityshared.Event(nil), events...)
+	}
+	if a.config.localToolBridge != nil {
+		deactivate := a.config.localToolBridge.ActivateTurn(session, turnID, emitEvents)
+		if deactivate != nil {
+			defer deactivate()
+		}
+	}
+	// Emit Finish snapshots and root_provider_turn.completed separately so
+	// assistant text is not held behind the durable terminal barrier. Also
+	// flush prompt-result text that never streamed as live message deltas.
+	emitTurnTerminal := func(finishEvents []activityshared.Event, completed activityshared.Event) {
+		emitEvents(normalizer.FlushUnstreamedAssistantText(session, turnID))
+		if len(finishEvents) > 0 {
+			emitEvents(finishEvents)
+		}
+		emitEvents([]activityshared.Event{completed})
+	}
+
+	startEvents := []activityshared.Event{
+		newUserPromptActivityEvent(ctx, session, content, explicitDisplayPrompt, visibleText, turnID, nil),
+		newTurnActivityEvent(session, EventTurnStarted, turnID, SessionStatusWorking, "", "", nil),
+		standardACPRootProviderTurnStartedEvent(session, turnID),
+	}
+	emitEvents(startEvents)
+
+	providerContent, err := materializeProviderPromptImagesAtBoundary(ctx, content, a.promptImageMaterializer)
+	if err != nil {
+		outcome := activityshared.TurnOutcomeFailed
+		terminalEvents := normalizer.FinishFailed(session, turnID)
+		if errors.Is(err, context.Canceled) || errors.Is(err, errPermissionRequestCanceled) {
+			outcome = activityshared.TurnOutcomeCanceled
+			terminalEvents = normalizer.FinishInterrupted(session, turnID, "interrupted")
+		}
+		emitTurnTerminal(terminalEvents, standardACPRootProviderTurnCompletedEvent(
+			session,
+			turnID,
+			outcome,
+			map[string]any{"error": err.Error()},
+		))
+		// Standard ACP reports provider failures through lifecycle events. Return
+		// nil so the controller does not replay the already-emitted event batch.
+		return events, nil
+	}
+	acpPromptContent := promptContentForACP(providerContent)
+	if mentionRoutingApplied {
+		acpPromptContent = appendAgoraxMentionRoutingPrompt(acpPromptContent, mentionRoutingSkills)
+	}
+	initialPromptContext := a.pendingInitialPromptContext(acpSession)
+	if initialPromptContext != "" {
+		acpPromptContent = append(acpPromptContent, map[string]any{
+			"type": "text",
+			"text": initialPromptContext,
+		})
+	}
+	// ACP v1 has no developer/system or synthetic-message channel. Keep the
+	// canonical Agorax-owned context in the provider-only prompt payload; the
+	// activity event above is still projected exclusively from the original
+	// user content.
+	acpPromptContent = appendAgoraxModeHostContextPrompt(
+		acpPromptContent,
+		agoraxModeTurnSnapshotFromContext(ctx),
+	)
+	slog.Info("agent session ACP exec started",
+		"event", "agent_session.acp.exec.start",
+		"provider", a.config.provider,
+		"adapter", a.config.adapterName,
+		"room_id", session.RoomID,
+		"agent_session_id", session.AgentSessionID,
+		"provider_session_id", session.ProviderSessionID,
+		"turn_id", turnID,
+		"prompt_length", len(visibleText),
+		"mention_uri_count", len(extractMentionURIs(visibleText)),
+		"mention_routing_applied", mentionRoutingApplied,
+		"mention_routing_skills", mentionRoutingSkills,
+	)
+	if mentionRoutingApplied {
+		slog.Info("agent session ACP mention routing applied",
+			"event", "agent_session.acp.mention_routing.applied",
+			"provider", a.config.provider,
+			"adapter", a.config.adapterName,
+			"room_id", session.RoomID,
+			"agent_session_id", session.AgentSessionID,
+			"provider_session_id", session.ProviderSessionID,
+			"turn_id", turnID,
+			"mention_routing_skills", mentionRoutingSkills,
+			"prompt_length", len(visibleText),
+		)
+	}
+
+	promptParams := acpPromptContent
+	autoContinueAttempts := 0
+	activePrompt := a.beginStandardACPPrompt(acpSession)
+	defer a.finishStandardACPPrompt(acpSession, activePrompt)
+execLoop:
+	for {
+		result, err := acpSession.client.Call(ctx, acpMethodPrompt, map[string]any{
+			"sessionId": acpSession.providerSessionID,
+			"prompt":    promptParams,
+		}, func(ctx context.Context, message acpMessage) error {
+			endInputUnit := a.inputUnits.begin(ctx, session.AgentSessionID)
+			defer endInputUnit()
+			slog.Debug("agent session ACP exec received message",
+				"event", "agent_session.acp.exec.message",
+				"provider", a.config.provider,
+				"adapter", a.config.adapterName,
+				"room_id", session.RoomID,
+				"agent_session_id", session.AgentSessionID,
+				"provider_session_id", session.ProviderSessionID,
+				"turn_id", turnID,
+				"message_method", message.Method,
+				"message_id", rawMessageLogValue(message.ID),
+			)
+			next, err := a.handleACPMessage(ctx, acpSession.client, session, turnID, message, normalizer, emitEvents, emitCommands)
+			if slog.Default().Enabled(ctx, slog.LevelDebug) {
+				slog.Debug("agent session ACP exec handled message",
+					"event", "agent_session.acp.exec.message_handled",
+					"provider", a.config.provider,
+					"adapter", a.config.adapterName,
+					"room_id", session.RoomID,
+					"agent_session_id", session.AgentSessionID,
+					"provider_session_id", session.ProviderSessionID,
+					"turn_id", turnID,
+					"message_method", message.Method,
+					"event_count", len(next),
+					"event_type_counts", activityEventTypeCounts(next),
+					"error", errString(err),
+				)
+			}
+			emitEvents(next)
+			if err != nil {
+				return err
+			}
+			return nil
+		})
+		cancelRequested := a.standardACPPromptCancelRequested(acpSession, activePrompt)
+		if err != nil {
+			emittedEvents := snapshotEvents()
+			slog.Warn("agent session ACP exec call failed",
+				"event", "agent_session.acp.exec.call_failed",
+				"provider", a.config.provider,
+				"adapter", a.config.adapterName,
+				"room_id", session.RoomID,
+				"agent_session_id", session.AgentSessionID,
+				"provider_session_id", session.ProviderSessionID,
+				"turn_id", turnID,
+				"emitted_event_count", len(emittedEvents),
+				"emitted_event_type_counts", activityEventTypeCounts(emittedEvents),
+				"error", err.Error(),
+			)
+			if cancelRequested || errors.Is(err, context.Canceled) || errors.Is(err, errPermissionRequestCanceled) {
+				terminalEvents := normalizer.FinishInterrupted(session, turnID, "interrupted")
+				completed := standardACPRootProviderTurnCompletedEvent(session, turnID, activityshared.TurnOutcomeCanceled, map[string]any{
+					"error": err.Error(),
+				})
+				stamped := stampProviderInputUnitFromError(err, append(append([]activityshared.Event{}, terminalEvents...), completed))
+				emitTurnTerminal(stamped[:len(terminalEvents)], stamped[len(terminalEvents)])
+			} else if planLimitMessage, ok := acpProviderPlanLimitMessage(err); ok {
+				// Match cursor-agent's soft plan-gate path: show the provider
+				// copy as a warning notice and settle the turn successfully so
+				// the next send is not a scary red turn-failed card.
+				if notice, ok := acpPlanLimitNoticeEvent(session, turnID, planLimitMessage); ok {
+					emitEvents([]activityshared.Event{notice})
+				}
+				terminalEvents := normalizer.FinishCompleted(session, turnID)
+				completed := standardACPRootProviderTurnCompletedEvent(session, turnID, activityshared.TurnOutcomeCompleted, map[string]any{
+					"stopReason": "end_turn",
+					"planLimit":  true,
+				})
+				stamped := stampProviderInputUnitFromError(err, append(append([]activityshared.Event{}, terminalEvents...), completed))
+				emitTurnTerminal(stamped[:len(terminalEvents)], stamped[len(terminalEvents)])
+				slog.Info("agent session ACP exec settled plan-limit without failure card",
+					"event", "agent_session.acp.exec.plan_limit",
+					"provider", a.config.provider,
+					"adapter", a.config.adapterName,
+					"room_id", session.RoomID,
+					"agent_session_id", session.AgentSessionID,
+					"provider_session_id", session.ProviderSessionID,
+					"turn_id", turnID,
+					"plan_limit_message", planLimitMessage,
+				)
+			} else {
+				terminalEvents := normalizer.FinishFailed(session, turnID)
+				completed := standardACPRootProviderTurnCompletedEvent(session, turnID, activityshared.TurnOutcomeFailed, map[string]any{
+					"error": err.Error(),
+				})
+				stamped := stampProviderInputUnitFromError(err, append(append([]activityshared.Event{}, terminalEvents...), completed))
+				emitTurnTerminal(stamped[:len(terminalEvents)], stamped[len(terminalEvents)])
+			}
+			return snapshotEvents(), nil
+		}
+		if initialPromptContext != "" {
+			a.consumeInitialPromptContext(acpSession)
+			initialPromptContext = ""
+		}
+
+		stopReason := acpStopReason(result)
+		normalizer.ApplyAssistantFinalText(acpPromptResultAssistantText(result))
+		emittedEvents := snapshotEvents()
+		slog.Info("agent session ACP exec call completed",
+			"event", "agent_session.acp.exec.call_completed",
+			"provider", a.config.provider,
+			"adapter", a.config.adapterName,
+			"room_id", session.RoomID,
+			"agent_session_id", session.AgentSessionID,
+			"provider_session_id", session.ProviderSessionID,
+			"turn_id", turnID,
+			"stop_reason", firstNonEmpty(stopReason, "end_turn"),
+			"auto_continue_attempts", autoContinueAttempts,
+			"emitted_event_count", len(emittedEvents),
+			"emitted_event_type_counts", activityEventTypeCounts(emittedEvents),
+		)
+		if cancelRequested {
+			emitTurnTerminal(
+				normalizer.FinishInterrupted(session, turnID, "canceled"),
+				standardACPRootProviderTurnCompletedEvent(session, turnID, activityshared.TurnOutcomeCanceled, map[string]any{
+					"stopReason": firstNonEmpty(stopReason, "canceled"),
+				}),
+			)
+			break execLoop
+		}
+		if a.config.autoContinueRetriableTurnError && acpStopReasonEndsTurnNormally(stopReason) {
+			assistantText := normalizer.CurrentAssistantText()
+			if errLine, ok := acpRetriableTurnTailError(assistantText); ok {
+				if autoContinueAttempts < acpAutoContinueMaxAttempts {
+					autoContinueAttempts++
+					hasUsefulProgress := acpAutoContinueHasUsefulProgress(assistantText, normalizer.SeenToolCallCount())
+					// Close out the error-text segment so the continuation
+					// streams into a fresh message instead of appending to it.
+					emitEvents(normalizer.FlushUnstreamedAssistantText(session, turnID))
+					emitEvents(normalizer.Finish(session, turnID, messageStreamStateCompleted))
+					if notice, ok := acpAutoContinueNoticeEvent(session, turnID, errLine, autoContinueAttempts); ok {
+						emitEvents([]activityshared.Event{notice})
+					}
+					slog.Warn("agent session ACP auto-continue after retriable turn error",
+						"event", "agent_session.acp.exec.auto_continue",
+						"provider", a.config.provider,
+						"adapter", a.config.adapterName,
+						"room_id", session.RoomID,
+						"agent_session_id", session.AgentSessionID,
+						"provider_session_id", session.ProviderSessionID,
+						"turn_id", turnID,
+						"attempt", autoContinueAttempts,
+						"max_attempts", acpAutoContinueMaxAttempts,
+						"error_line", errLine,
+						"has_useful_progress", hasUsefulProgress,
+					)
+					promptParams = acpAutoContinuePromptContent(hasUsefulProgress)
+					continue execLoop
+				}
+				// The retries were cut short too: surface the turn as failed
+				// instead of a silent "completed" that strands the conversation.
+				emitTurnTerminal(
+					normalizer.FinishFailed(session, turnID),
+					standardACPRootProviderTurnCompletedEvent(session, turnID, activityshared.TurnOutcomeFailed, map[string]any{
+						"error":      errLine,
+						"stopReason": firstNonEmpty(stopReason, "end_turn"),
+					}),
+				)
+				slog.Warn("agent session ACP auto-continue attempts exhausted",
+					"event", "agent_session.acp.exec.auto_continue_exhausted",
+					"provider", a.config.provider,
+					"adapter", a.config.adapterName,
+					"room_id", session.RoomID,
+					"agent_session_id", session.AgentSessionID,
+					"provider_session_id", session.ProviderSessionID,
+					"turn_id", turnID,
+					"attempts", autoContinueAttempts,
+					"error_line", errLine,
+				)
+				break execLoop
+			}
+		}
+		switch stopReason {
+		case "canceled":
+			emitTurnTerminal(
+				normalizer.FinishInterrupted(session, turnID, stopReason),
+				standardACPRootProviderTurnCompletedEvent(session, turnID, activityshared.TurnOutcomeCanceled, map[string]any{
+					"stopReason": stopReason,
+				}),
+			)
+		case "refusal", "max_tokens", "max_turn_requests":
+			emitTurnTerminal(
+				normalizer.FinishFailed(session, turnID),
+				standardACPRootProviderTurnCompletedEvent(session, turnID, activityshared.TurnOutcomeFailed, map[string]any{
+					"stopReason": stopReason,
+				}),
+			)
+		default:
+			if !normalizer.HasObservableOutput() {
+				const emptyResponseError = "provider_empty_response: ACP agent ended the turn without assistant output or tool activity"
+				emitTurnTerminal(
+					normalizer.FinishFailed(session, turnID),
+					standardACPRootProviderTurnCompletedEvent(session, turnID, activityshared.TurnOutcomeFailed, map[string]any{
+						"error":      emptyResponseError,
+						"stopReason": firstNonEmpty(stopReason, "end_turn"),
+					}),
+				)
+				slog.Warn("agent session ACP turn ended without observable output",
+					"event", "agent_session.acp.exec.empty_response",
+					"provider", a.config.provider,
+					"adapter", a.config.adapterName,
+					"room_id", session.RoomID,
+					"agent_session_id", session.AgentSessionID,
+					"provider_session_id", session.ProviderSessionID,
+					"turn_id", turnID,
+					"stop_reason", firstNonEmpty(stopReason, "end_turn"),
+				)
+				break
+			}
+			emitTurnTerminal(
+				normalizer.FinishCompleted(session, turnID),
+				standardACPRootProviderTurnCompletedEvent(session, turnID, activityshared.TurnOutcomeCompleted, map[string]any{
+					"stopReason": firstNonEmpty(stopReason, "end_turn"),
+				}),
+			)
+		}
+		break execLoop
+	}
+	finalEvents := snapshotEvents()
+	slog.Info("agent session ACP exec finished",
+		"event", "agent_session.acp.exec.finished",
+		"provider", a.config.provider,
+		"adapter", a.config.adapterName,
+		"room_id", session.RoomID,
+		"agent_session_id", session.AgentSessionID,
+		"provider_session_id", session.ProviderSessionID,
+		"turn_id", turnID,
+		"final_event_count", len(finalEvents),
+		"final_event_type_counts", activityEventTypeCounts(finalEvents),
+	)
+	return finalEvents, nil
+}
+
+func (a *standardACPAdapter) Cancel(ctx context.Context, session Session, _ string) ([]activityshared.Event, error) {
+	acpSession := a.getSession(session.AgentSessionID)
+	if acpSession == nil || acpSession.client == nil {
+		return nil, ErrSessionNoActiveTurn
+	}
+	activePrompt := a.beginStandardACPPromptCancelDelivery(acpSession)
+	if err := acpSession.client.Notify(ctx, acpMethodCancel, map[string]any{
+		"sessionId": acpSession.providerSessionID,
+	}); err != nil {
+		a.finishStandardACPPromptCancelDelivery(acpSession, activePrompt, false)
+		return nil, err
+	}
+	a.finishStandardACPPromptCancelDelivery(acpSession, activePrompt, true)
+	a.rejectPendingApprovals(session.AgentSessionID, errPermissionRequestCanceled)
+	if activePrompt == nil {
+		return nil, nil
+	}
+	if a.waitForStandardACPPromptDrain(ctx, activePrompt, standardACPCancelDrainTimeout) {
+		return nil, nil
+	}
+
+	// A provider that acknowledges session/cancel without settling the active
+	// session/prompt must not receive another prompt on the same process. Drop
+	// only the transport (never session/close, which could destroy resumable
+	// history); the next Host command will restore the provider session on a
+	// fresh process.
+	if err := a.releaseCanceledStandardACPSession(session, acpSession); err != nil {
+		return nil, err
+	}
+	_ = a.waitForStandardACPPromptDrain(context.Background(), activePrompt, acpCloseGraceTimeout)
+	return nil, nil
+}
+
+func (a *standardACPAdapter) beginStandardACPPrompt(session *standardACPSession) *standardACPActivePrompt {
+	active := &standardACPActivePrompt{done: make(chan struct{})}
+	a.mu.Lock()
+	if session != nil {
+		session.activePrompt = active
+	}
+	a.mu.Unlock()
+	return active
+}
+
+func (a *standardACPAdapter) finishStandardACPPrompt(session *standardACPSession, active *standardACPActivePrompt) {
+	if active == nil {
+		return
+	}
+	a.mu.Lock()
+	if session != nil && session.activePrompt == active {
+		session.activePrompt = nil
+	}
+	close(active.done)
+	a.mu.Unlock()
+}
+
+func (a *standardACPAdapter) beginStandardACPPromptCancelDelivery(session *standardACPSession) *standardACPActivePrompt {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if session == nil || session.activePrompt == nil {
+		return nil
+	}
+	active := session.activePrompt
+	if active.cancelDeliveryDone == nil {
+		active.cancelDeliveryDone = make(chan struct{})
+	}
+	return active
+}
+
+func (a *standardACPAdapter) finishStandardACPPromptCancelDelivery(
+	session *standardACPSession,
+	active *standardACPActivePrompt,
+	accepted bool,
+) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if session == nil || active == nil || session.activePrompt != active {
+		return
+	}
+	active.cancelRequested = accepted
+	if active.cancelDeliveryDone != nil {
+		close(active.cancelDeliveryDone)
+		active.cancelDeliveryDone = nil
+	}
+}
+
+func (a *standardACPAdapter) standardACPPromptCancelRequested(session *standardACPSession, active *standardACPActivePrompt) bool {
+	for {
+		a.mu.Lock()
+		if session == nil || session.activePrompt != active || active == nil {
+			a.mu.Unlock()
+			return false
+		}
+		deliveryDone := active.cancelDeliveryDone
+		cancelRequested := active.cancelRequested
+		a.mu.Unlock()
+		if deliveryDone == nil {
+			return cancelRequested
+		}
+		<-deliveryDone
+	}
+}
+
+func (*standardACPAdapter) waitForStandardACPPromptDrain(ctx context.Context, active *standardACPActivePrompt, timeout time.Duration) bool {
+	if active == nil {
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-active.done:
+		return true
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
+	}
+}
+
+func (a *standardACPAdapter) releaseCanceledStandardACPSession(session Session, acpSession *standardACPSession) error {
+	if acpSession == nil || acpSession.client == nil {
+		return nil
+	}
+	agentSessionID := strings.TrimSpace(session.AgentSessionID)
+	a.mu.Lock()
+	if a.sessions[agentSessionID] != acpSession {
+		a.mu.Unlock()
+		return nil
+	}
+	acpSession.releasing = true
+	acpSession.client.SetMessageHandler(nil)
+	a.mu.Unlock()
+
+	if err := acpSession.client.Close(); err != nil {
+		a.mu.Lock()
+		if a.sessions[agentSessionID] == acpSession {
+			acpSession.releasing = false
+			acpSession.releaseFailed = true
+		}
+		a.mu.Unlock()
+		a.logACPCloseDiagnostics("cancel_drain.transport_close.failed", session, acpSession, err)
+		return err
+	}
+	acpSession.releaseLocalTools()
+	a.mu.Lock()
+	if a.sessions[agentSessionID] == acpSession {
+		delete(a.sessions, agentSessionID)
+	}
+	a.mu.Unlock()
+	a.logACPCloseDiagnostics("cancel_drain.transport_close.succeeded", session, acpSession, nil)
+	return nil
+}
+
+func standardACPRootProviderTurnStartedEvent(session Session, rootTurnID string) activityshared.Event {
+	rootTurnID = strings.TrimSpace(rootTurnID)
+	ctx, ok := activityEventContext(session, "standard-acp:provider-turn-started:"+rootTurnID, rootTurnID)
+	if !ok {
+		return activityshared.Event{}
+	}
+	return activityshared.NewRootProviderTurnStarted(ctx, rootTurnID, rootTurnID)
+}
+
+func standardACPRootProviderTurnCompletedEvent(
+	session Session,
+	rootTurnID string,
+	outcome activityshared.TurnOutcome,
+	metadata map[string]any,
+) activityshared.Event {
+	rootTurnID = strings.TrimSpace(rootTurnID)
+	ctx, ok := activityEventContext(session, "standard-acp:provider-turn-completed:"+rootTurnID, rootTurnID)
+	if !ok {
+		return activityshared.Event{}
+	}
+	event := activityshared.NewRootProviderTurnCompleted(ctx, rootTurnID, rootTurnID, outcome)
+	event.Payload.Metadata = clonePayload(metadata)
+	return event
+}
+
+func (a *standardACPAdapter) submitPermissionOption(ctx context.Context, session Session, input PermissionOptionInput) (string, error) {
+	requestID := strings.TrimSpace(input.RequestID)
+	optionID := strings.TrimSpace(input.OptionID)
+	if requestID == "" {
+		return "", fmt.Errorf("%w: permission request id is required", ErrInteractiveResponseInvalid)
+	}
+	if optionID == "" {
+		return "", fmt.Errorf("%w: permission option id is required", ErrInteractiveResponseInvalid)
+	}
+	pending := a.getPendingApproval(session.AgentSessionID, input.TurnID, requestID)
+	if pending == nil {
+		return "", fmt.Errorf("%w: permission request %q", ErrInteractiveRequestNotLive, requestID)
+	}
+	if pending.callType != "approval" {
+		return "", fmt.Errorf("%w: request %q requires interactive submission", ErrInteractiveResponseInvalid, requestID)
+	}
+	resolvedOptionID, ok := pending.resolvePermissionOptionID(optionID)
+	if !ok {
+		return "", fmt.Errorf(
+			"%w: permission option %q is not available for request %q",
+			ErrInteractiveResponseInvalid,
+			optionID,
+			requestID,
+		)
+	}
+	if _, err := pending.dispatchResponse(ctx, pendingInteractiveResponse{
+		optionID: resolvedOptionID,
+		result:   acpPermissionResponseResult(resolvedOptionID),
+	}); err != nil {
+		return "", err
+	}
+	if state, err := pending.waitForDisposition(ctx); err != nil {
+		return "", err
+	} else if state != pendingInteractiveRequestStateAnswered {
+		return "", interactiveDispositionError(requestID, state)
+	}
+	return resolvedOptionID, nil
+}
+
+func (a *standardACPAdapter) SubmitInteractive(ctx context.Context, session Session, input SubmitInteractiveInput) (SubmitInteractiveResult, error) {
+	turnID := strings.TrimSpace(input.TurnID)
+	if turnID == "" {
+		return SubmitInteractiveResult{}, fmt.Errorf("%w: interactive turn id is required", ErrInteractiveResponseInvalid)
+	}
+	requestID := strings.TrimSpace(input.RequestID)
+	if requestID == "" {
+		return SubmitInteractiveResult{}, fmt.Errorf("%w: interactive request id is required", ErrInteractiveResponseInvalid)
+	}
+	pending := a.getPendingApproval(session.AgentSessionID, turnID, requestID)
+	if pending == nil {
+		return SubmitInteractiveResult{}, fmt.Errorf("%w: %q", ErrInteractiveRequestNotLive, requestID)
+	}
+	if pending.callType == "approval" {
+		optionID := interactiveApprovalOptionID(input)
+		if optionID == "" {
+			return SubmitInteractiveResult{}, fmt.Errorf("%w: interactive option id is required", ErrInteractiveResponseInvalid)
+		}
+		resolvedOptionID, err := a.submitPermissionOption(ctx, session, PermissionOptionInput{
+			RoomID:         input.RoomID,
+			AgentSessionID: input.AgentSessionID,
+			TurnID:         turnID,
+			RequestID:      requestID,
+			OptionID:       optionID,
+		})
+		if err != nil {
+			return SubmitInteractiveResult{}, err
+		}
+		return SubmitInteractiveResult{
+			AgentSessionID: session.AgentSessionID,
+			RequestID:      requestID,
+			Accepted:       true,
+			OptionID:       resolvedOptionID,
+			Disposition:    InteractiveDispositionAnswered,
+		}, nil
+	}
+	optionID := strings.TrimSpace(input.OptionID)
+	action := strings.TrimSpace(input.Action)
+	payload := clonePayload(input.Payload)
+	if pending.providerMethod != "" {
+		result, resolvedOptionID, err := cursorNativeInteractiveResult(pending, action, optionID, payload)
+		if err != nil {
+			pending.supersede(err)
+			return SubmitInteractiveResult{
+				AgentSessionID: session.AgentSessionID,
+				RequestID:      requestID,
+				Disposition:    InteractiveDispositionSuperseded,
+			}, err
+		}
+		optionID = resolvedOptionID
+		if _, err := pending.dispatchResponse(ctx, pendingInteractiveResponse{
+			optionID: optionID,
+			action:   action,
+			payload:  payload,
+			result:   result,
+		}); err != nil {
+			return SubmitInteractiveResult{}, err
+		}
+		if state, err := pending.waitForDisposition(ctx); err != nil {
+			return SubmitInteractiveResult{}, err
+		} else if state != pendingInteractiveRequestStateAnswered {
+			return SubmitInteractiveResult{}, interactiveDispositionError(requestID, state)
+		}
+		return SubmitInteractiveResult{
+			AgentSessionID: session.AgentSessionID,
+			RequestID:      requestID,
+			Accepted:       true,
+			OptionID:       optionID,
+			Disposition:    InteractiveDispositionAnswered,
+		}, nil
+	}
+	result := acpInteractiveResponseResult(action, optionID, payload)
+	if err := ctx.Err(); err != nil {
+		return SubmitInteractiveResult{}, err
+	}
+	if pending.kind == "ask-user" && len(pending.options) > 0 {
+		resolvedOptionID, err := acpAskUserPermissionOptionID(pending, optionID, action, payload)
+		if err != nil {
+			err = fmt.Errorf("%w: %v", ErrInteractiveResponseInvalid, err)
+			pending.supersede(err)
+			return SubmitInteractiveResult{
+				AgentSessionID: session.AgentSessionID,
+				RequestID:      requestID,
+				Disposition:    InteractiveDispositionSuperseded,
+			}, err
+		}
+		optionID = resolvedOptionID
+		result = acpPermissionResponseResult(resolvedOptionID)
+	}
+	if _, err := pending.dispatchResponse(ctx, pendingInteractiveResponse{
+		optionID: optionID,
+		action:   action,
+		payload:  payload,
+		result:   result,
+	}); err != nil {
+		return SubmitInteractiveResult{}, err
+	}
+	if state, err := pending.waitForDisposition(ctx); err != nil {
+		return SubmitInteractiveResult{}, err
+	} else if state != pendingInteractiveRequestStateAnswered {
+		return SubmitInteractiveResult{}, interactiveDispositionError(requestID, state)
+	}
+	return SubmitInteractiveResult{
+		AgentSessionID: session.AgentSessionID,
+		RequestID:      requestID,
+		Accepted:       true,
+		Disposition:    InteractiveDispositionAnswered,
+	}, nil
+}
+
+func (a *standardACPAdapter) InteractiveDisposition(session Session, turnID string, requestID string) InteractiveDisposition {
+	if pending := a.getPendingApproval(session.AgentSessionID, turnID, requestID); pending != nil {
+		return runtimeInteractiveDisposition(pending)
+	}
+	return a.terminalInteractiveDisposition(session.AgentSessionID, turnID, requestID)
+}

@@ -1,0 +1,154 @@
+package providerregistry
+
+import (
+	"strings"
+
+	canonical "agorax.local/agent-daemon/packages/agent/store-sqlite/canonical"
+)
+
+const (
+	OpenCodeProviderID   = canonical.OpenCodeProviderID
+	OpenCodeTargetID     = "local:opencode"
+	OpenCodeSparkModelID = "openai/gpt-5.3-codex-spark"
+)
+
+// OpenCodeModelSupportsReasoningEffort describes the provider-specific model
+// capability that is narrower than the generic ACP descriptor.
+func OpenCodeModelSupportsReasoningEffort(modelID string, effort string) bool {
+	return !strings.EqualFold(strings.TrimSpace(modelID), OpenCodeSparkModelID) ||
+		!strings.EqualFold(strings.TrimSpace(effort), "none")
+}
+
+func openCodeDescriptor() ProviderDescriptor {
+	return ProviderDescriptor{
+		Identity: canonicalProviderIdentity(OpenCodeProviderID),
+		Runtime: RuntimeDescriptor{
+			Kind:                RuntimeKindStandardACP,
+			Name:                "opencode-acp",
+			Command:             []string{"opencode", "acp"},
+			AuthRequiredMessage: "OpenCode ACP requires authentication; run `opencode auth login` on the host, then retry this session.",
+			Endpoint: RuntimeEndpointDescriptor{
+				ModelPlanProtocol:        ModelPlanProtocolOpenAI,
+				ModelPlanModelAddressing: ModelPlanModelAddressingProviderPrefixed,
+			},
+			StandardACP: StandardACPRuntimeDescriptor{
+				AdapterStrategy:           StandardACPAdapterStrategyOpenCode,
+				PlanModeRuntimeID:         "plan",
+				PlanModeDisabledRuntimeID: "build",
+				SettingsEnvironment: RuntimeSettingsEnvironmentDescriptor{
+					Variable: "OPENCODE_CONFIG_CONTENT",
+					JSONFields: []RuntimeSettingsJSONFieldDescriptor{
+						{Setting: RuntimeSettingFieldModel, JSONKey: "model"},
+					},
+				},
+				DeriveCapabilitiesFromCommands: []string{CapabilityCompact, CapabilityReview},
+			},
+		},
+		Status: StatusDescriptor{
+			Kind:                   StatusKindOpenCodeCLI,
+			AuthOutputParserKind:   AuthOutputParserKindOpenCode,
+			AuthMarkerParserKind:   AuthMarkerParserKindOpenCode,
+			AuthCommandRunnerKind:  AuthCommandRunnerKindGeneric,
+			StaticSpecResolverKind: StaticSpecResolverKindGeneric,
+			BinaryNames:            []string{"opencode"},
+			AuthStatusCommand:      []string{"auth", "list"},
+			AuthMarkerPaths:        []string{"~/.local/share/opencode/auth.json"},
+			CustomConfigEnvVars: []string{
+				"OPENCODE_CONFIG",
+				"OPENCODE_CONFIG_DIR",
+				"OPENCODE_CONFIG_CONTENT",
+				"OPENCODE_PERMISSION",
+			},
+			Install: InstallerDescriptor{
+				Kind:            InstallerKindOfficialScript,
+				DisplayCommand:  "curl -fsSL https://opencode.ai/v2/install | bash",
+				// Pin VERSION from @opencode/cli (current scope). The legacy
+				// opencode-ai meta package can publish ahead of platform
+				// tarballs (@opencode-ai/cli-linux-x64), which makes
+				// install.sh fail with "Version X is not available for …".
+				PackageName:     "@opencode/cli",
+				BinaryName:      "opencode",
+				ScriptURL:       "https://opencode.ai/v2/install",
+				ScriptShell:     "bash",
+				WindowsFallback: InstallerWindowsFallbackManagedNPM,
+			},
+			Update: UpdateDescriptor{
+				Capability:        UpdateCapabilityUnsupported,
+				UnsupportedReason: UpdateUnsupportedReasonOfficialScript,
+			},
+			LoginArgs: []string{"auth", "login"},
+			AuthWatch: AuthWatchDescriptor{
+				Sources: []AuthWatchSourceDescriptor{
+					{PathEnvVars: []string{"OPENCODE_CONFIG"}},
+					{
+						RootCandidates: []AuthWatchRootCandidateDescriptor{
+							{EnvVar: "OPENCODE_CONFIG_DIR"},
+							{EnvVar: "XDG_CONFIG_HOME", Suffix: "opencode"},
+						},
+						DefaultRoot: "~/.config/opencode",
+						Paths:       []string{"opencode.json", "config.json"},
+					},
+					{
+						RootCandidates: []AuthWatchRootCandidateDescriptor{
+							{EnvVar: "XDG_DATA_HOME", Suffix: "opencode"},
+						},
+						DefaultRoot: "~/.local/share/opencode",
+						Paths:       []string{"auth.json"},
+					},
+				},
+				ContentFingerprint: AuthWatchContentFingerprintFullFile,
+			},
+		},
+		ComposerProfile: ComposerProfileDescriptor{
+			ModelSelection:         true,
+			ModelCatalog:           ModelCatalogKindOpenCodeCLI,
+			ReasoningEffort:        true,
+			ReasoningEffortOptions: ReasoningEffortOptionsStrictModelCatalog,
+			Capabilities: []string{
+				CapabilityImageInput,
+				CapabilityModelImageInputRequired,
+				CapabilityPlanMode,
+				CapabilityInterrupt,
+				CapabilityPermissionModeChangeDuringTurn,
+				CapabilityModelSwitch,
+				CapabilityModelPlanBinding,
+			},
+			PermissionConfigurable:  true,
+			DefaultPermissionModeID: "ask",
+			PermissionModes: []PermissionModeDescriptor{
+				{ID: "read-only", Semantic: "locked-down"},
+				{ID: "ask", Semantic: "ask-before-write"},
+				{ID: "full-access", Semantic: "full-access"},
+			},
+			ConfigOptionIDs: ComposerConfigOptionIDs{
+				Model:     "model",
+				Reasoning: "effort",
+			},
+			Behavior: ComposerBehaviorDescriptor{
+				RefreshModelOptionsAfterSettings: true,
+			},
+			Skills: SkillDescriptor{Kind: SkillKindOpenCode, Invocation: SkillInvocationTextTrigger, ConfigDirSuffix: "opencode"},
+			SlashCommandPolicy: SlashCommandPolicyDescriptor{
+				FallbackCommands: []string{"compact", "review"},
+				CommandEffects: []SlashCommandEffectDescriptor{
+					{Command: "compact", Effect: SlashCommandEffectSubmitImmediate},
+					{Command: "review", Effect: SlashCommandEffectShowReviewPicker},
+					{Command: "plan", Effect: SlashCommandEffectTogglePlanMode},
+				},
+			},
+		},
+		Target: TargetDescriptor{
+			ID:            OpenCodeTargetID,
+			LaunchRefType: TargetLaunchRefTypeLocalCLI,
+			Enabled:       true,
+			SortOrder:     50,
+		},
+		Events: EventsDescriptor{
+			Enabled:                 true,
+			Aliases:                 []string{"open-code", "opencode-ai", "opencode_ai"},
+			TurnLifecycleProjection: TurnLifecycleProjectionExplicit,
+		},
+		Sidecar: SidecarDescriptor{ExecutionEnvironment: SidecarExecutionEnvironmentLocalIPC},
+		Desktop: DesktopIntegrationDescriptor{Managed: true, ManagedOrder: 5, StatusProbePriority: 5, DefaultProviderEligible: true, DefaultProviderPriority: 5},
+	}
+}

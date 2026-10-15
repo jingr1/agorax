@@ -1,0 +1,692 @@
+package agentruntime
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+
+	activityshared "agorax.local/agent-daemon/packages/agent/daemon/activity/events"
+	"agorax.local/agent-daemon/packages/agent/daemon/httpx"
+)
+
+var ErrPromptImageUnsupported = errors.New("agent prompt image input is unsupported")
+
+const clientSubmitUserMessageIDPrefix = "client-submit:user:"
+const turnUserMessageIDPrefix = "turn-user:"
+
+const maxProviderPromptImageBytes int64 = 20 << 20
+
+var runtimeConnectorKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,127}$`)
+
+type canonicalSubmitFactContextKey struct{}
+
+type promptActivityMessageIDContextKey struct{}
+
+type canonicalPromptContentContextKey struct{}
+
+type canonicalSubmitFact struct {
+	clientSubmitID   string
+	messageID        string
+	occurredAtUnixMS int64
+}
+
+func newCanonicalSubmitFact(clientSubmitID string, occurredAtUnixMS int64) (canonicalSubmitFact, error) {
+	clientSubmitID = strings.TrimSpace(clientSubmitID)
+	if clientSubmitID == "" {
+		if occurredAtUnixMS > 0 {
+			return canonicalSubmitFact{}, errors.New("canonical submit occurrence requires a client submit id")
+		}
+		return canonicalSubmitFact{}, nil
+	}
+	if occurredAtUnixMS <= 0 {
+		return canonicalSubmitFact{}, errors.New("canonical submit occurrence time is required")
+	}
+	return canonicalSubmitFact{
+		clientSubmitID:   clientSubmitID,
+		messageID:        userPromptActivityMessageIDFromClientSubmitID(clientSubmitID),
+		occurredAtUnixMS: occurredAtUnixMS,
+	}, nil
+}
+
+func withCanonicalSubmitFact(ctx context.Context, fact canonicalSubmitFact) context.Context {
+	if fact.clientSubmitID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, canonicalSubmitFactContextKey{}, fact)
+}
+
+func canonicalSubmitFactFromContext(ctx context.Context) canonicalSubmitFact {
+	if ctx == nil {
+		return canonicalSubmitFact{}
+	}
+	fact, _ := ctx.Value(canonicalSubmitFactContextKey{}).(canonicalSubmitFact)
+	return fact
+}
+
+func withPromptActivityMessageID(ctx context.Context, messageID string) context.Context {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, promptActivityMessageIDContextKey{}, messageID)
+}
+
+func promptActivityMessageIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	messageID, _ := ctx.Value(promptActivityMessageIDContextKey{}).(string)
+	return strings.TrimSpace(messageID)
+}
+
+func withCanonicalPromptContent(ctx context.Context, content []PromptContentBlock) context.Context {
+	if len(content) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, canonicalPromptContentContextKey{}, append([]PromptContentBlock(nil), content...))
+}
+
+func canonicalPromptContentFromContext(ctx context.Context) []PromptContentBlock {
+	if ctx == nil {
+		return nil
+	}
+	content, _ := ctx.Value(canonicalPromptContentContextKey{}).([]PromptContentBlock)
+	return append([]PromptContentBlock(nil), content...)
+}
+
+type providerPromptImageMaterializer func(context.Context, []PromptContentBlock) ([]PromptContentBlock, error)
+
+func normalizeRuntimePromptContent(content []PromptContentBlock) []PromptContentBlock {
+	out := make([]PromptContentBlock, 0, len(content))
+	for _, block := range content {
+		switch strings.TrimSpace(block.Type) {
+		case "text":
+			text := strings.TrimSpace(block.Text)
+			if text == "" {
+				continue
+			}
+			out = append(out, PromptContentBlock{Type: "text", Text: text})
+		case "image":
+			mimeType := strings.TrimSpace(block.MimeType)
+			data := strings.TrimSpace(block.Data)
+			imageURL := strings.TrimSpace(block.URL)
+			attachmentID := strings.TrimSpace(block.AttachmentID)
+			if !runtimePromptImageMimeTypeSupported(mimeType) ||
+				(data == "" && imageURL == "" && attachmentID == "") ||
+				(data != "" && imageURL != "") ||
+				(imageURL != "" && !runtimePromptImageURLSafe(imageURL)) {
+				continue
+			}
+			out = append(out, PromptContentBlock{
+				Type:         "image",
+				MimeType:     mimeType,
+				Data:         data,
+				URL:          imageURL,
+				AttachmentID: attachmentID,
+				Name:         strings.TrimSpace(block.Name),
+			})
+		case "skill", "mention":
+			name := strings.TrimSpace(block.Name)
+			path := strings.TrimSpace(block.Path)
+			if name == "" || path == "" {
+				continue
+			}
+			out = append(out, PromptContentBlock{
+				Type: strings.TrimSpace(block.Type),
+				Name: name,
+				Path: path,
+			})
+		case "connector":
+			connectorKey := strings.TrimSpace(block.ConnectorKey)
+			if !runtimeConnectorKeyPattern.MatchString(connectorKey) {
+				continue
+			}
+			out = append(out, PromptContentBlock{Type: "connector", ConnectorKey: connectorKey})
+		}
+	}
+	return out
+}
+
+func normalizeRuntimePromptContentForValidation(content []PromptContentBlock) []PromptContentBlock {
+	out := make([]PromptContentBlock, 0, len(content))
+	for _, block := range content {
+		switch strings.TrimSpace(block.Type) {
+		case "text":
+			text := strings.TrimSpace(block.Text)
+			if text == "" {
+				continue
+			}
+			out = append(out, PromptContentBlock{Type: "text", Text: text})
+		case "image":
+			mimeType := strings.TrimSpace(block.MimeType)
+			data := strings.TrimSpace(block.Data)
+			imageURL := strings.TrimSpace(block.URL)
+			attachmentID := strings.TrimSpace(block.AttachmentID)
+			path := strings.TrimSpace(block.Path)
+			if !runtimePromptImageMimeTypeSupported(mimeType) ||
+				(data == "" && imageURL == "" && attachmentID == "" && path == "") ||
+				(data != "" && imageURL != "") ||
+				(imageURL != "" && !runtimePromptImageURLSafe(imageURL)) {
+				continue
+			}
+			out = append(out, PromptContentBlock{
+				Type:         "image",
+				MimeType:     mimeType,
+				Data:         data,
+				URL:          imageURL,
+				AttachmentID: attachmentID,
+				Name:         strings.TrimSpace(block.Name),
+				Path:         path,
+			})
+		case "skill", "mention":
+			name := strings.TrimSpace(block.Name)
+			path := strings.TrimSpace(block.Path)
+			if name == "" || path == "" {
+				continue
+			}
+			out = append(out, PromptContentBlock{
+				Type: strings.TrimSpace(block.Type),
+				Name: name,
+				Path: path,
+			})
+		case "connector":
+			connectorKey := strings.TrimSpace(block.ConnectorKey)
+			if !runtimeConnectorKeyPattern.MatchString(connectorKey) {
+				continue
+			}
+			out = append(out, PromptContentBlock{Type: "connector", ConnectorKey: connectorKey})
+		}
+	}
+	return out
+}
+
+func projectRuntimeConnectorPromptContent(content []PromptContentBlock, announced []string, skipDelta bool) (projected []PromptContentBlock, next []string) {
+	current := uniqueRuntimeConnectorKeys(content)
+	providerContent := make([]PromptContentBlock, 0, len(content)+1)
+	for _, block := range content {
+		if block.Type != "connector" {
+			providerContent = append(providerContent, block)
+		}
+	}
+	if skipDelta {
+		return providerContent, announced
+	}
+	enabled, disabled := diffRuntimeConnectorKeys(announced, current)
+	next = append([]string(nil), current...)
+	if len(enabled) == 0 && len(disabled) == 0 {
+		return providerContent, next
+	}
+	return append([]PromptContentBlock{{
+		Type: "text",
+		Text: formatRuntimeConnectorDeltaInstruction(enabled, disabled),
+	}}, providerContent...), next
+}
+
+func uniqueRuntimeConnectorKeys(content []PromptContentBlock) []string {
+	keys := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, block := range content {
+		if block.Type != "connector" {
+			continue
+		}
+		key := strings.TrimSpace(block.ConnectorKey)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func diffRuntimeConnectorKeys(announced, current []string) (enabled, disabled []string) {
+	announcedSet := make(map[string]struct{}, len(announced))
+	for _, key := range announced {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		announcedSet[key] = struct{}{}
+	}
+	currentSet := make(map[string]struct{}, len(current))
+	for _, key := range current {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		currentSet[key] = struct{}{}
+		if _, ok := announcedSet[key]; !ok {
+			enabled = append(enabled, key)
+		}
+	}
+	for _, key := range announced {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := currentSet[key]; !ok {
+			disabled = append(disabled, key)
+		}
+	}
+	sort.Strings(enabled)
+	sort.Strings(disabled)
+	return enabled, disabled
+}
+
+func formatRuntimeConnectorDeltaInstruction(enabled, disabled []string) string {
+	parts := make([]string, 0, 2)
+	if len(enabled) > 0 {
+		parts = append(parts, fmt.Sprintf("Connector(s) enabled: %s.", strings.Join(enabled, ", ")))
+	}
+	if len(disabled) > 0 {
+		parts = append(parts, fmt.Sprintf("Connector(s) disabled: %s.", strings.Join(disabled, ", ")))
+	}
+	return strings.Join(parts, " ")
+}
+
+// prependConnectorRoutingUpdate renders a provider-only notice that the
+// connector alias index changed after this session's instructions were
+// materialized. Callers must keep the update out of canonical prompt content.
+func prependConnectorRoutingUpdate(content []PromptContentBlock, update *string) []PromptContentBlock {
+	if update == nil {
+		return content
+	}
+	var instruction string
+	if index := strings.TrimSpace(*update); index == "" {
+		instruction = fmt.Sprintf(
+			"Connector routing update: no Agorax connectors are currently available. This supersedes the connector alias index in earlier instructions. Confirm availability with `%s connector available --json` before invoking any connector.",
+			agoraxCLICommandName(),
+		)
+	} else {
+		instruction = fmt.Sprintf(
+			"Connector routing update: aliases `%s`. This supersedes the connector alias index in earlier instructions. On an alias or `连接器`/`connector`, run `%s connector available --json` to discover native interfaces; connectors absent from this index are no longer available.",
+			index, agoraxCLICommandName(),
+		)
+	}
+	return append([]PromptContentBlock{{Type: "text", Text: instruction}}, content...)
+}
+
+func validatePromptContentImagesForPreflight(content []PromptContentBlock) error {
+	return validatePromptContentImages(content, true)
+}
+
+func validateRuntimePromptContentImages(content []PromptContentBlock) error {
+	return validatePromptContentImages(content, false)
+}
+
+func validatePromptContentImages(content []PromptContentBlock, allowPathOnly bool) error {
+	for _, block := range content {
+		if strings.TrimSpace(block.Type) != "image" {
+			continue
+		}
+		data := strings.TrimSpace(block.Data)
+		imageURL := strings.TrimSpace(block.URL)
+		attachmentID := strings.TrimSpace(block.AttachmentID)
+		path := strings.TrimSpace(block.Path)
+		hasSource := data != "" || imageURL != "" || attachmentID != "" || (allowPathOnly && path != "")
+		if !runtimePromptImageMimeTypeSupported(block.MimeType) ||
+			!hasSource ||
+			(data != "" && imageURL != "") ||
+			(imageURL != "" && !runtimePromptImageURLSafe(imageURL)) {
+			return ErrPromptImageUnsupported
+		}
+	}
+	return nil
+}
+
+func runtimePromptImageURLSafe(value string) bool {
+	parsed, err := url.ParseRequestURI(strings.TrimSpace(value))
+	return err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil && parsed.Opaque == ""
+}
+
+func runtimePromptImageMimeTypeSupported(mimeType string) bool {
+	switch strings.TrimSpace(mimeType) {
+	case "image/png", "image/jpeg", "image/webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func promptDisplayText(content []PromptContentBlock) string {
+	textParts := make([]string, 0, len(content))
+	imageCount := 0
+	for _, block := range content {
+		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
+			textParts = append(textParts, strings.TrimSpace(block.Text))
+		}
+		if block.Type == "image" {
+			imageCount++
+		}
+	}
+	if len(textParts) > 0 {
+		return strings.Join(textParts, "\n")
+	}
+	if imageCount == 1 {
+		return "[Image]"
+	}
+	if imageCount > 1 {
+		return "[Images]"
+	}
+	return ""
+}
+
+func explicitAndVisiblePromptText(content []PromptContentBlock, displayPrompt string) (string, string) {
+	explicitDisplayPrompt := strings.TrimSpace(displayPrompt)
+	if explicitDisplayPrompt != "" {
+		return explicitDisplayPrompt, explicitDisplayPrompt
+	}
+	return "", promptDisplayText(content)
+}
+
+func userPromptActivityPayload(content []PromptContentBlock, displayPrompt string, extra map[string]any) map[string]any {
+	payload := map[string]any{
+		"content": promptContentForActivity(content),
+	}
+	for key, value := range extra {
+		payload[key] = value
+	}
+	if explicitDisplayPrompt := strings.TrimSpace(displayPrompt); explicitDisplayPrompt != "" {
+		payload["displayPrompt"] = explicitDisplayPrompt
+	}
+	return payload
+}
+
+func newUserPromptActivityEvent(
+	ctx context.Context,
+	session Session,
+	content []PromptContentBlock,
+	explicitDisplayPrompt string,
+	visibleText string,
+	turnID string,
+	extra map[string]any,
+) activityshared.Event {
+	payloadExtra := userPromptActivityPayloadExtraFromExecMetadata(ctx, extra)
+	fact := canonicalSubmitFactFromContext(ctx)
+	activityContent := canonicalPromptContentFromContext(ctx)
+	if len(activityContent) > 0 {
+		content = activityContent
+		if strings.TrimSpace(explicitDisplayPrompt) == "" {
+			_, visibleText = explicitAndVisiblePromptText(content, "")
+		}
+	}
+	if fact.clientSubmitID == "" {
+		fact.messageID = promptActivityMessageIDFromContext(ctx)
+	}
+	return newUserPromptActivityEventWithFact(
+		session,
+		content,
+		explicitDisplayPrompt,
+		visibleText,
+		turnID,
+		fact,
+		payloadExtra,
+	)
+}
+
+func newUserPromptActivityEventWithFact(
+	session Session,
+	content []PromptContentBlock,
+	explicitDisplayPrompt string,
+	visibleText string,
+	turnID string,
+	fact canonicalSubmitFact,
+	extra map[string]any,
+) activityshared.Event {
+	eventID := newID()
+	occurredAtUnixMS := int64(0)
+	if fact.clientSubmitID != "" {
+		eventID = fact.messageID
+		occurredAtUnixMS = fact.occurredAtUnixMS
+		extra = clonePayload(extra)
+		if extra == nil {
+			extra = map[string]any{}
+		}
+		extra["clientSubmitId"] = fact.clientSubmitID
+		extra["messageId"] = fact.messageID
+	} else if fact.messageID != "" {
+		eventID = fact.messageID
+		extra = clonePayload(extra)
+		if extra == nil {
+			extra = map[string]any{}
+		}
+		extra["messageId"] = fact.messageID
+	}
+	return newTurnActivityEventWithIDAt(
+		session,
+		eventID,
+		EventMessage,
+		turnID,
+		"",
+		RoleUser,
+		visibleText,
+		userPromptActivityPayload(content, explicitDisplayPrompt, extra),
+		occurredAtUnixMS,
+	)
+}
+
+func userPromptActivityPayloadExtraFromExecMetadata(ctx context.Context, extra map[string]any) map[string]any {
+	return userPromptActivityPayloadExtraFromMetadata(execMetadataFromContext(ctx), extra)
+}
+
+func userPromptActivityPayloadExtraFromMetadata(metadata map[string]any, extra map[string]any) map[string]any {
+	clientSubmitID := metadataString(metadata, "clientSubmitId")
+	if clientSubmitID == "" {
+		return clonePayload(extra)
+	}
+	payload := clonePayload(extra)
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["clientSubmitId"] = clientSubmitID
+	if submittedAtUnixMS := metadataInt64(metadata, "clientSubmittedAtUnixMs"); submittedAtUnixMS > 0 {
+		payload["clientSubmittedAtUnixMs"] = submittedAtUnixMS
+	}
+	if strings.TrimSpace(payloadString(payload, "messageId")) == "" {
+		payload["messageId"] = userPromptActivityMessageIDFromClientSubmitID(clientSubmitID)
+	}
+	return payload
+}
+
+func userPromptActivityMessageIDFromClientSubmitID(clientSubmitID string) string {
+	normalized := strings.TrimSpace(clientSubmitID)
+	if normalized == "" {
+		return ""
+	}
+	return clientSubmitUserMessageIDPrefix + normalized
+}
+
+func newTurnUserPromptActivityMessageID() string {
+	return turnUserMessageIDPrefix + newID()
+}
+
+func promptContentForACP(content []PromptContentBlock) []map[string]any {
+	out := make([]map[string]any, 0, len(content))
+	for _, block := range content {
+		switch block.Type {
+		case "text":
+			out = append(out, map[string]any{
+				"type": "text",
+				"text": block.Text,
+			})
+		case "image":
+			out = append(out, map[string]any{
+				"type":     "image",
+				"mimeType": block.MimeType,
+				"data":     block.Data,
+			})
+		}
+	}
+	return out
+}
+
+// materializeProviderPromptImagesWithClient converts remote HTTPS image references at
+// the provider boundary, immediately before Codex app-server or ACP receives
+// the prompt. Current Codex and Claude transports reject remote image URLs and
+// require inline image data. AgentGUI and durable activity state intentionally
+// keep the uploaded URL; when a provider gains native URL support, only its
+// final adapter needs to stop calling this compatibility conversion.
+func materializeProviderPromptImages(ctx context.Context, content []PromptContentBlock) ([]PromptContentBlock, error) {
+	return materializeProviderPromptImagesWithClient(ctx, content, newProviderPromptImageHTTPClient(30*time.Second))
+}
+
+func materializeProviderPromptImagesAtBoundary(
+	ctx context.Context,
+	content []PromptContentBlock,
+	materializer providerPromptImageMaterializer,
+) ([]PromptContentBlock, error) {
+	if materializer == nil {
+		materializer = materializeProviderPromptImages
+	}
+	return materializer(ctx, content)
+}
+
+func newProviderPromptImageHTTPClient(timeout time.Duration) *http.Client {
+	return httpx.NewClient(timeout)
+}
+
+func materializeProviderPromptImagesWithClient(ctx context.Context, content []PromptContentBlock, client *http.Client) ([]PromptContentBlock, error) {
+	requestClient := *client
+	existingRedirectCheck := client.CheckRedirect
+	requestClient.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		request.Header.Del("Referer")
+		if !runtimePromptImageURLSafe(request.URL.String()) {
+			return ErrPromptImageUnsupported
+		}
+		if existingRedirectCheck != nil {
+			return existingRedirectCheck(request, via)
+		}
+		return nil
+	}
+	out := append([]PromptContentBlock(nil), content...)
+	for index := range out {
+		block := out[index]
+		imageURL := strings.TrimSpace(block.URL)
+		if block.Type != "image" || imageURL == "" {
+			continue
+		}
+		if !runtimePromptImageURLSafe(imageURL) {
+			return nil, ErrPromptImageUnsupported
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("prepare remote prompt image: %w", err)
+		}
+		response, err := requestClient.Do(request)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			return nil, errors.New("download remote prompt image: request failed")
+		}
+		data, readErr := readProviderPromptImage(response, block.MimeType)
+		if closeErr := response.Body.Close(); readErr == nil && closeErr != nil {
+			readErr = closeErr
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+		block.Data = base64.StdEncoding.EncodeToString(data)
+		block.URL = ""
+		out[index] = block
+	}
+	return out, nil
+}
+
+func readProviderPromptImage(response *http.Response, expectedMimeType string) ([]byte, error) {
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("download remote prompt image: unexpected HTTP status %d", response.StatusCode)
+	}
+	if response.ContentLength > maxProviderPromptImageBytes {
+		return nil, fmt.Errorf("download remote prompt image: image exceeds %d bytes", maxProviderPromptImageBytes)
+	}
+	if contentType := strings.TrimSpace(response.Header.Get("Content-Type")); contentType != "" {
+		mediaType, _, err := mime.ParseMediaType(contentType)
+		if err != nil || mediaType != strings.TrimSpace(expectedMimeType) {
+			return nil, ErrPromptImageUnsupported
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxProviderPromptImageBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("download remote prompt image: %w", err)
+	}
+	if len(data) == 0 || int64(len(data)) > maxProviderPromptImageBytes {
+		return nil, fmt.Errorf("download remote prompt image: invalid image size %d", len(data))
+	}
+	return data, nil
+}
+
+func promptContentForActivity(content []PromptContentBlock) []map[string]any {
+	out := make([]map[string]any, 0, len(content))
+	for _, block := range content {
+		switch block.Type {
+		case "text":
+			out = append(out, map[string]any{
+				"type": "text",
+				"text": block.Text,
+			})
+		case "image":
+			item := map[string]any{
+				"type":         "image",
+				"mimeType":     block.MimeType,
+				"attachmentId": block.AttachmentID,
+			}
+			if imageURL := strings.TrimSpace(block.URL); imageURL != "" {
+				item["url"] = imageURL
+			}
+			if strings.TrimSpace(block.Name) != "" {
+				item["name"] = strings.TrimSpace(block.Name)
+			}
+			out = append(out, item)
+		case "connector":
+			out = append(out, map[string]any{
+				"type":         "connector",
+				"connectorKey": block.ConnectorKey,
+			})
+		}
+	}
+	return out
+}
+
+func promptContentHasImage(content []PromptContentBlock) bool {
+	for _, block := range content {
+		if block.Type == "image" {
+			return true
+		}
+	}
+	return false
+}
+
+func acpPromptImageSupported(raw json.RawMessage) bool {
+	var result map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &result) != nil {
+		return false
+	}
+	return truthyNested(result, "promptCapabilities", "image") ||
+		truthyNested(result, "agentCapabilities", "promptImage") ||
+		truthyNested(result, "agentCapabilities", "image") ||
+		acpAgentCapabilitiesPromptImageSupported(result)
+}
+
+// acpAgentCapabilitiesPromptImageSupported reads the standard ACP initialize
+// shape: agentCapabilities.promptCapabilities.image.
+func acpAgentCapabilitiesPromptImageSupported(result map[string]any) bool {
+	agentCapabilities, ok := result["agentCapabilities"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return truthyNested(agentCapabilities, "promptCapabilities", "image")
+}

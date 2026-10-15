@@ -1,0 +1,635 @@
+diff --git a/src/lib/agent-status.ts b/src/lib/agent-status.ts
+index 767b5572..36d7bc73 100644
+--- a/src/lib/agent-status.ts
++++ b/src/lib/agent-status.ts
+@@ -135,10 +135,6 @@ export function deriveUnifiedStatus(
+   // Configuration health wins everything: an unconfigured agent is unusable.
+   if (input.hasModel === false) return 'needsSetup'
+ 
+-  // Hard connectivity: a failed gateway/runtime probe wins over sticky
+-  // group-chat "online" bits and zombie runtime.json states.
+-  if (input.probeAvailable === false) return 'offline'
+-
+   // Explicit human gate / blocked.
+   if (input.runtimeNeedsHuman) return 'blocked'
+   if (state === 'blocked' || state === 'needs_human' || state === 'needs_human_approval') {
+diff --git a/src/routeTree.gen.ts b/src/routeTree.gen.ts
+index fd1d27ac..64f50f00 100644
+--- a/src/routeTree.gen.ts
++++ b/src/routeTree.gen.ts
+@@ -216,6 +216,7 @@ import { Route as ApiMcpHubSourcesIdRouteImport } from './routes/api/mcp/hub-sou
+ import { Route as ApiMcpNameLogsRouteImport } from './routes/api/mcp/$name.logs'
+ import { Route as ApiHermesworldReservationsConfirmRouteImport } from './routes/api/hermesworld/reservations/confirm'
+ import { Route as ApiAgentsAgentIdSessionsRouteImport } from './routes/api/agents/$agentId/sessions'
++import { Route as ApiAgentsAgentIdChatRouteImport } from './routes/api/agents/$agentId/chat'
+ import { Route as ApiAgentsAgentIdSessionsIndexRouteImport } from './routes/api/agents/$agentId/sessions/index'
+ import { Route as ApiRunsSessionKeyRunIdAbandonRouteImport } from './routes/api/runs/$sessionKey.$runId.abandon'
+ import { Route as ApiRoomsRoomIdParticipantsParticipantIdRouteImport } from './routes/api/rooms/$roomId/participants/$participantId'
+@@ -1275,6 +1276,11 @@ const ApiAgentsAgentIdSessionsRoute =
+     path: '/api/agents/$agentId/sessions',
+     getParentRoute: () => rootRouteImport,
+   } as any)
++const ApiAgentsAgentIdChatRoute = ApiAgentsAgentIdChatRouteImport.update({
++  id: '/api/agents/$agentId/chat',
++  path: '/api/agents/$agentId/chat',
++  getParentRoute: () => rootRouteImport,
++} as any)
+ const ApiAgentsAgentIdSessionsIndexRoute =
+   ApiAgentsAgentIdSessionsIndexRouteImport.update({
+     id: '/',
+@@ -1508,6 +1514,7 @@ export interface FileRoutesByFullPath {
+   '/settings/agents/$agentId': typeof SettingsAgentsAgentIdRoute
+   '/api/agents/': typeof ApiAgentsIndexRoute
+   '/api/tasks/': typeof ApiTasksIndexRoute
++  '/api/agents/$agentId/chat': typeof ApiAgentsAgentIdChatRoute
+   '/api/agents/$agentId/sessions': typeof ApiAgentsAgentIdSessionsRouteWithChildren
+   '/api/hermesworld/reservations/confirm': typeof ApiHermesworldReservationsConfirmRoute
+   '/api/mcp/$name/logs': typeof ApiMcpNameLogsRoute
+@@ -1721,6 +1728,7 @@ export interface FileRoutesByTo {
+   '/settings/agents/$agentId': typeof SettingsAgentsAgentIdRoute
+   '/api/agents': typeof ApiAgentsIndexRoute
+   '/api/tasks': typeof ApiTasksIndexRoute
++  '/api/agents/$agentId/chat': typeof ApiAgentsAgentIdChatRoute
+   '/api/hermesworld/reservations/confirm': typeof ApiHermesworldReservationsConfirmRoute
+   '/api/mcp/$name/logs': typeof ApiMcpNameLogsRoute
+   '/api/mcp/hub-sources/$id': typeof ApiMcpHubSourcesIdRoute
+@@ -1936,6 +1944,7 @@ export interface FileRoutesById {
+   '/settings/agents/$agentId': typeof SettingsAgentsAgentIdRoute
+   '/api/agents/': typeof ApiAgentsIndexRoute
+   '/api/tasks/': typeof ApiTasksIndexRoute
++  '/api/agents/$agentId/chat': typeof ApiAgentsAgentIdChatRoute
+   '/api/agents/$agentId/sessions': typeof ApiAgentsAgentIdSessionsRouteWithChildren
+   '/api/hermesworld/reservations/confirm': typeof ApiHermesworldReservationsConfirmRoute
+   '/api/mcp/$name/logs': typeof ApiMcpNameLogsRoute
+@@ -2153,6 +2162,7 @@ export interface FileRouteTypes {
+     | '/settings/agents/$agentId'
+     | '/api/agents/'
+     | '/api/tasks/'
++    | '/api/agents/$agentId/chat'
+     | '/api/agents/$agentId/sessions'
+     | '/api/hermesworld/reservations/confirm'
+     | '/api/mcp/$name/logs'
+@@ -2366,6 +2376,7 @@ export interface FileRouteTypes {
+     | '/settings/agents/$agentId'
+     | '/api/agents'
+     | '/api/tasks'
++    | '/api/agents/$agentId/chat'
+     | '/api/hermesworld/reservations/confirm'
+     | '/api/mcp/$name/logs'
+     | '/api/mcp/hub-sources/$id'
+@@ -2580,6 +2591,7 @@ export interface FileRouteTypes {
+     | '/settings/agents/$agentId'
+     | '/api/agents/'
+     | '/api/tasks/'
++    | '/api/agents/$agentId/chat'
+     | '/api/agents/$agentId/sessions'
+     | '/api/hermesworld/reservations/confirm'
+     | '/api/mcp/$name/logs'
+@@ -2763,6 +2775,7 @@ export interface RootRouteChildren {
+   ChatAgentAgentIdRoute: typeof ChatAgentAgentIdRoute
+   ApiAgentsIndexRoute: typeof ApiAgentsIndexRoute
+   ApiTasksIndexRoute: typeof ApiTasksIndexRoute
++  ApiAgentsAgentIdChatRoute: typeof ApiAgentsAgentIdChatRoute
+   ApiAgentsAgentIdSessionsRoute: typeof ApiAgentsAgentIdSessionsRouteWithChildren
+   ApiRunsRunIdSteerRoute: typeof ApiRunsRunIdSteerRoute
+   ApiRunsSessionKeyRunIdAbandonRoute: typeof ApiRunsSessionKeyRunIdAbandonRoute
+@@ -4219,6 +4232,13 @@ declare module '@tanstack/react-router' {
+       preLoaderRoute: typeof ApiAgentsAgentIdSessionsRouteImport
+       parentRoute: typeof rootRouteImport
+     }
++    '/api/agents/$agentId/chat': {
++      id: '/api/agents/$agentId/chat'
++      path: '/api/agents/$agentId/chat'
++      fullPath: '/api/agents/$agentId/chat'
++      preLoaderRoute: typeof ApiAgentsAgentIdChatRouteImport
++      parentRoute: typeof rootRouteImport
++    }
+     '/api/agents/$agentId/sessions/': {
+       id: '/api/agents/$agentId/sessions/'
+       path: '/'
+@@ -4763,6 +4783,7 @@ const rootRouteChildren: RootRouteChildren = {
+   ChatAgentAgentIdRoute: ChatAgentAgentIdRoute,
+   ApiAgentsIndexRoute: ApiAgentsIndexRoute,
+   ApiTasksIndexRoute: ApiTasksIndexRoute,
++  ApiAgentsAgentIdChatRoute: ApiAgentsAgentIdChatRoute,
+   ApiAgentsAgentIdSessionsRoute: ApiAgentsAgentIdSessionsRouteWithChildren,
+   ApiRunsRunIdSteerRoute: ApiRunsRunIdSteerRoute,
+   ApiRunsSessionKeyRunIdAbandonRoute: ApiRunsSessionKeyRunIdAbandonRoute,
+diff --git a/src/screens/chat/agent-workspace.tsx b/src/screens/chat/agent-workspace.tsx
+index de6c3716..5220febf 100644
+--- a/src/screens/chat/agent-workspace.tsx
++++ b/src/screens/chat/agent-workspace.tsx
+@@ -1,14 +1,57 @@
+ 'use client'
+ 
++import { useEffect, useState } from 'react'
+ import { ChatWorkspace } from './components/chat-workspace'
++import { ChatSessionSidebar } from './components/chat-session-sidebar'
+ import { useAgentWorkspace } from './hooks/use-agent-workspace'
++import { useAgentStore } from '@/stores/agent-store'
+ 
+ export function AgentWorkspace() {
+   useAgentWorkspace()
+ 
++  const activeAgentId = useAgentStore((s) => s.activeAgentId)
++  const sessionsByAgentId = useAgentStore((s) => s.sessionsByAgentId)
++  const sessionsLoading = useAgentStore((s) =>
++    activeAgentId ? s.sessionsLoading.has(activeAgentId) : false,
++  )
++  const sessionsError = useAgentStore((s) => s.agentsError)
++  const setActiveSessionId = useAgentStore((s) => s.setActiveSessionId)
++
++  const sessions = activeAgentId
++    ? (sessionsByAgentId.get(activeAgentId) ?? []).map((s) => ({
++        key: s.sessionId,
++        friendlyId: s.sessionId,
++        title: s.title,
++        updatedAt: new Date(s.lastMessageAt).getTime(),
++        lastMessage: null,
++      }))
++    : []
++
++  // SidebarSessions expects a stable reference; avoid remapping every render.
++  const [stableSessions, setStableSessions] = useState(sessions)
++  useEffect(() => {
++    setStableSessions(sessions)
++  }, [sessions])
++
+   return (
+     <div className="flex h-full w-full overflow-hidden">
+-      <ChatWorkspace />
++      <ChatSessionSidebar
++        activeFriendlyId={useAgentStore((s) => s.activeSessionId ?? 'new')}
++        sessions={stableSessions}
++        sessionsLoading={sessionsLoading}
++        sessionsFetching={false}
++        sessionsError={sessionsError}
++        onRetrySessions={() => {
++          // Re-trigger by clearing the cached sessions for the active agent.
++          if (!activeAgentId) return
++          useAgentStore.getState().setSessions(activeAgentId, [])
++        }}
++        onNewChat={() => setActiveSessionId(null)}
++        onActiveSessionDelete={() => setActiveSessionId(null)}
++      />
++      <div className="flex min-w-0 flex-1 flex-col">
++        <ChatWorkspace />
++      </div>
+     </div>
+   )
+ }
+diff --git a/src/screens/chat/components/chat-workspace.tsx b/src/screens/chat/components/chat-workspace.tsx
+index 98def61b..b7d1d999 100644
+--- a/src/screens/chat/components/chat-workspace.tsx
++++ b/src/screens/chat/components/chat-workspace.tsx
+@@ -1,11 +1,13 @@
+ 'use client'
+ 
+-import { useEffect, useState } from 'react'
++import { useNavigate } from '@tanstack/react-router'
+ import { useQueryClient } from '@tanstack/react-query'
++import { useEffect, useState } from 'react'
+ import { ChatScreen } from '../chat-screen'
+ import { useProfiles } from '../hooks/use-profiles'
+ import { ChatRouteLoading } from '../chat-route-loading'
+ import { ManagedRuntimePanel } from './managed-runtime-panel'
++import { ClaudeCodeChatShell } from './claude-code-chat-shell'
+ import { useAgentStore } from '@/stores/agent-store'
+ 
+ export function ChatWorkspace() {
+@@ -28,6 +30,20 @@ export function ChatWorkspace() {
+     )
+   }
+ 
++  if (agent.runtime === 'claude-code') {
++    return (
++      <ClaudeCodeChatShell
++        agent={agent}
++        sessionId={sessionId ?? null}
++        onSessionResolved={(payload) => {
++          // The route handler updates the URL; no-op here to keep the workspace
++          // shell stable.
++          void payload
++        }}
++      />
++    )
++  }
++
+   const activeFriendlyId = sessionId ?? 'new'
+   const isNewChat = activeFriendlyId === 'new'
+ 
+diff --git a/src/server/__tests__/profiles-browser.test.ts b/src/server/__tests__/profiles-browser.test.ts
+index 8fc40b0c..6438ecff 100644
+--- a/src/server/__tests__/profiles-browser.test.ts
++++ b/src/server/__tests__/profiles-browser.test.ts
+@@ -193,6 +193,49 @@ describe('profiles-browser', () => {
+         path.join('/home/testuser', '.hermes', 'profiles', 'writer'),
+       )
+     })
++    it('heals sticky active_profile when the named profile is missing', async () => {
++      existsSync.mockImplementation((p: string) => {
++        if (p === path.join('/home/testuser', '.hermes', 'active_profile'))
++          return true
++        return false
++      })
++      readFileSync.mockImplementation((p: string) => {
++        if (p === path.join('/home/testuser', '.hermes', 'active_profile'))
++          return 'swarmtest1\n'
++        return ''
++      })
++
++      const mod = await loadMod()
++      expect(mod.getActiveProfileName()).toBe('default')
++      expect(unlinkSync).toHaveBeenCalledWith(
++        path.join('/home/testuser', '.hermes', 'active_profile'),
++      )
++    })
++
++    it('treats tombstoned profiles as not live', async () => {
++      existsSync.mockImplementation((p: string) => {
++        if (
++          p ===
++          path.join(
++            '/home/testuser',
++            '.hermes',
++            'profiles',
++            '.deleted',
++            'swarmtest1',
++          )
++        )
++          return true
++        if (
++          p === path.join('/home/testuser', '.hermes', 'profiles', 'swarmtest1')
++        )
++          return true
++        return false
++      })
++
++      const mod = await loadMod()
++      expect(mod.isNamedProfileDeleted('swarmtest1')).toBe(true)
++      expect(mod.isLiveNamedProfile('swarmtest1')).toBe(false)
++    })
+   })
+ 
+   describe('renameProfile', () => {
+diff --git a/src/server/agent-runtime/agents-config.ts b/src/server/agent-runtime/agents-config.ts
+index ba3a190d..d98141a7 100644
+--- a/src/server/agent-runtime/agents-config.ts
++++ b/src/server/agent-runtime/agents-config.ts
+@@ -100,10 +100,27 @@ export function detectExecutionFromProfile(
+ 
+ function listHermesProfiles(): Array<string> {
+   const dir = path.join(homedir(), '.hermes', 'profiles')
++  const deletedDir = path.join(dir, '.deleted')
++  let tombstoned = new Set<string>()
++  try {
++    tombstoned = new Set(
++      fs
++        .readdirSync(deletedDir, { withFileTypes: true })
++        .filter((entry) => entry.isFile())
++        .map((entry) => entry.name),
++    )
++  } catch {
++    tombstoned = new Set()
++  }
+   try {
+     return fs
+       .readdirSync(dir, { withFileTypes: true })
+-      .filter((entry) => entry.isDirectory())
++      .filter(
++        (entry) =>
++          entry.isDirectory() &&
++          !entry.name.startsWith('.') &&
++          !tombstoned.has(entry.name),
++      )
+       .map((entry) => entry.name)
+   } catch {
+     return []
+diff --git a/src/server/gateway-pool.ts b/src/server/gateway-pool.ts
+index db3084a1..973953e8 100644
+--- a/src/server/gateway-pool.ts
++++ b/src/server/gateway-pool.ts
+@@ -3,7 +3,6 @@
+  * LRU eviction when more than N profiles stay warm (see gateway-lifecycle.ts).
+  * `default` is pinned resident; background starts never steal CLAUDE_API.
+  */
+-import { existsSync } from 'node:fs'
+ import path from 'node:path'
+ import {
+   getActiveProfileName,
+@@ -204,15 +203,18 @@ async function ensureProfileGatewayLocked(
+ ): Promise<EnsureGatewayResult> {
+   const name = (profileName || 'default').trim() || 'default'
+   const hermesHome = resolveProfileHermesHome(name)
+-  if (name !== PINNED_GATEWAY_PROFILE && !existsSync(hermesHome)) {
+-    return {
+-      ok: false,
+-      error: `profile "${name}" does not exist`,
+-      profile: name,
+-      hermesHome,
+-      port: resolveProfileGatewayPort(name),
+-      url: gatewayUrlForPort(resolveProfileGatewayPort(name)),
+-      started: false,
++  if (name !== PINNED_GATEWAY_PROFILE) {
++    const { isLiveNamedProfile } = await import('./profiles-browser')
++    if (!isLiveNamedProfile(name)) {
++      return {
++        ok: false,
++        error: `profile "${name}" does not exist`,
++        profile: name,
++        hermesHome,
++        port: resolveProfileGatewayPort(name),
++        url: gatewayUrlForPort(resolveProfileGatewayPort(name)),
++        started: false,
++      }
+     }
+   }
+   const port = resolveProfileGatewayPort(name)
+@@ -396,6 +398,20 @@ export async function ensureActiveProfileGateway(options?: {
+     console.warn(
+       `[gateway-pool] ${name} gateway unavailable (${'error' in result ? result.error : 'unhealthy'}); falling back to ${PINNED_GATEWAY_PROFILE}`,
+     )
++    // Heal sticky active_profile when the named profile is gone/tombstoned so
++    // the next boot does not keep trying to spawn it.
++    if (
++      'error' in result &&
++      typeof result.error === 'string' &&
++      result.error.includes('does not exist')
++    ) {
++      try {
++        const { setActiveProfile } = await import('./profiles-browser')
++        setActiveProfile(PINNED_GATEWAY_PROFILE)
++      } catch {
++        /* ignore */
++      }
++    }
+     const fallback = await ensureProfileGateway(PINNED_GATEWAY_PROFILE, options)
+     if (fallback.ok && (await probeProfileGateway(PINNED_GATEWAY_PROFILE))) {
+       await applyRoute(getProfileGatewayUrl(PINNED_GATEWAY_PROFILE))
+diff --git a/src/server/gateway-ports.ts b/src/server/gateway-ports.ts
+index 2d701a60..06b6ba41 100644
+--- a/src/server/gateway-ports.ts
++++ b/src/server/gateway-ports.ts
+@@ -5,7 +5,7 @@
+ import fs from 'node:fs'
+ import path from 'node:path'
+ import YAML from 'yaml'
+-import { listProfiles, resolveProfileHermesHome } from './profiles-browser'
++import { listProfiles, resolveProfileHermesHome, isLiveNamedProfile } from './profiles-browser'
+ import { ensureSwarmProfileConfig } from './swarm-profile-config'
+ import { getStateDir } from './workspace-state-dir'
+ 
+@@ -259,6 +259,11 @@ export function ensureProfileApiServerEnv(
+   const assigned = parsePort(port)
+   if (!assigned) return {}
+   const home = resolveProfileHermesHome(name)
++  // Never mkdir a missing/tombstoned named profile — that is how deleted
++  // test profiles like swarmtest1 get resurrected after `rm -rf`.
++  if (name !== 'default' && !isLiveNamedProfile(name)) {
++    throw new Error(`profile "${name}" does not exist`)
++  }
+   const root = hermesRootFromHome(home, name)
+   const envPath = path.join(home, '.env')
+   if (envIsSharedWithRoot(home, root)) {
+diff --git a/src/server/profiles-browser.ts b/src/server/profiles-browser.ts
+index e01c46d4..33511a21 100644
+--- a/src/server/profiles-browser.ts
++++ b/src/server/profiles-browser.ts
+@@ -89,6 +89,43 @@ export function resolveProfileHermesHome(name: string): string {
+   return path.join(getProfilesRoot(), trimmed)
+ }
+ 
++/**
++ * Hermes tombstone path (`profiles/.deleted/<name>`). Lives beside the profile
++ * dir so a stale gateway mkdir cannot erase it after delete.
++ */
++export function profileTombstonePath(name: string): string {
++  return path.join(getProfilesRoot(), '.deleted', name.trim())
++}
++
++/** True when `hermes profile delete` (or workspace delete) tombstoned this name. */
++export function isNamedProfileDeleted(name: string): boolean {
++  const trimmed = (name || '').trim()
++  if (!trimmed || trimmed === 'default') return false
++  return fs.existsSync(profileTombstonePath(trimmed))
++}
++
++export function markNamedProfileDeleted(name: string): void {
++  const trimmed = validateProfileName(name)
++  const marker = profileTombstonePath(trimmed)
++  fs.mkdirSync(path.dirname(marker), { recursive: true, mode: 0o700 })
++  fs.writeFileSync(marker, 'deleted\n', 'utf-8')
++}
++
++export function clearNamedProfileDeleted(name: string): void {
++  const trimmed = (name || '').trim()
++  if (!trimmed || trimmed === 'default') return
++  const marker = profileTombstonePath(trimmed)
++  if (fs.existsSync(marker)) fs.unlinkSync(marker)
++}
++
++/** Live named profile = on-disk directory and not tombstoned. */
++export function isLiveNamedProfile(name: string): boolean {
++  const trimmed = (name || '').trim()
++  if (!trimmed || trimmed === 'default') return true
++  if (isNamedProfileDeleted(trimmed)) return false
++  return fs.existsSync(resolveProfileHermesHome(trimmed))
++}
++
+ function getActiveProfilePath(): string {
+   return path.join(getClaudeRoot(), 'active_profile')
+ }
+@@ -97,6 +134,11 @@ function stickyActiveProfileEnabled(): boolean {
+   return process.env.AGORAX_STICKY_PROFILE !== '0'
+ }
+ 
++function clearStickyActiveProfile(): void {
++  const activePath = getActiveProfilePath()
++  if (fs.existsSync(activePath)) fs.unlinkSync(activePath)
++}
++
+ /**
+  * Validate a profile name that will be *written* to disk. The 'default'
+  * profile is reserved — callers must not create or mutate it via the UI.
+@@ -601,8 +643,21 @@ export function getActiveProfileName(): string {
+   const activePath = getActiveProfilePath()
+   if (!fs.existsSync(activePath)) return 'default'
+   try {
+-    const raw = safeReadText(activePath).trim()
+-    return raw || 'default'
++    const raw = safeReadText(activePath).trim() || 'default'
++    if (raw === 'default') return 'default'
++    // Stale sticky pointers (deleted / tombstoned profiles) must not keep
++    // ensureActiveProfileGateway spawning a dead name — that recreates the dir.
++    if (!isLiveNamedProfile(raw)) {
++      if (stickyActiveProfileEnabled()) {
++        try {
++          clearStickyActiveProfile()
++        } catch {
++          /* ignore */
++        }
++      }
++      return 'default'
++    }
++    return raw
+   } catch {
+     return 'default'
+   }
+@@ -720,7 +775,8 @@ export function listProfilesLight(): Array<ProfileSummary> {
+ 
+     for (const entry of entries) {
+       const name = entry.name
+-      if (name === 'default') continue
++      if (name === 'default' || name.startsWith('.')) continue
++      if (isNamedProfileDeleted(name)) continue
+       const profilePath = path.join(profilesRoot, name)
+       if (!entry.isDirectory()) {
+         if (!entry.isSymbolicLink()) continue
+@@ -788,7 +844,8 @@ export function listProfiles(): Array<ProfileSummary> {
+ 
+     for (const entry of entries) {
+       const name = entry.name
+-      if (name === 'default') continue
++      if (name === 'default' || name.startsWith('.')) continue
++      if (isNamedProfileDeleted(name)) continue
+       const profilePath = path.join(profilesRoot, name)
+       if (!entry.isDirectory()) {
+         if (!entry.isSymbolicLink()) continue
+@@ -902,14 +959,14 @@ export function setActiveProfile(name: string): void {
+   // "default" means clear the active_profile file (revert to default)
+   if (trimmed === 'default') {
+     if (stickyActiveProfileEnabled()) {
+-      const activePath = getActiveProfilePath()
+-      if (fs.existsSync(activePath)) fs.unlinkSync(activePath)
++      clearStickyActiveProfile()
+     }
+     return
+   }
+   const normalized = validateProfileName(trimmed)
+-  const profilePath = path.join(getProfilesRoot(), normalized)
+-  if (!fs.existsSync(profilePath)) throw new Error('Profile not found')
++  if (!isLiveNamedProfile(normalized)) {
++    throw new Error(`Profile not found: ${normalized}`)
++  }
+   if (stickyActiveProfileEnabled()) {
+     fs.mkdirSync(getClaudeRoot(), { recursive: true })
+     fs.writeFileSync(getActiveProfilePath(), `${normalized}\n`, 'utf-8')
+@@ -922,7 +979,19 @@ export function createProfile(
+ ): ProfileDetail {
+   const normalized = validateProfileName(name)
+   const profilePath = path.join(getProfilesRoot(), normalized)
+-  if (fs.existsSync(profilePath)) throw new Error('Profile already exists')
++  // Allow replacing an empty shell left after delete when a tombstone exists
++  // (Hermes create_profile does the same). Refuse a live profile.
++  if (fs.existsSync(profilePath) && !isNamedProfileDeleted(normalized)) {
++    throw new Error('Profile already exists')
++  }
++  if (isNamedProfileDeleted(normalized) && fs.existsSync(profilePath)) {
++    const hasIdentity =
++      fs.existsSync(path.join(profilePath, 'config.yaml')) ||
++      fs.existsSync(path.join(profilePath, '.env'))
++    if (hasIdentity) throw new Error('Profile already exists')
++    fs.rmSync(profilePath, { recursive: true, force: true })
++  }
++  clearNamedProfileDeleted(normalized)
+   fs.mkdirSync(profilePath, { recursive: true })
+ 
+   const configPath = path.join(profilePath, 'config.yaml')
+@@ -970,14 +1039,40 @@ export function createProfile(
+ 
+ export function deleteProfile(name: string): void {
+   const normalized = validateProfileName(name)
+-  if (normalized === getActiveProfileName())
+-    throw new Error('Cannot delete the active profile')
+   const profilePath = path.join(getProfilesRoot(), normalized)
+-  if (!fs.existsSync(profilePath)) throw new Error('Profile not found')
+-  const trashDir = path.join(getClaudeRoot(), 'trash')
+-  fs.mkdirSync(trashDir, { recursive: true })
+-  const trashName = `${normalized}-${Date.now()}`
+-  fs.renameSync(profilePath, path.join(trashDir, trashName))
++  if (!fs.existsSync(profilePath) && !isNamedProfileDeleted(normalized)) {
++    throw new Error('Profile not found')
++  }
++
++  // Active sticky pointer would make the next ensureActiveProfileGateway
++  // respawn this profile and recreate the directory — clear it first.
++  if (getActiveProfileName() === normalized) {
++    setActiveProfile('default')
++  }
++
++  // Stop the live gateway before rmtree; a dying process writing
++  // .clean_shutdown / logs will otherwise resurrect an empty shell.
++  try {
++    // Lazy require avoids a circular dependency with claude-agent → profiles-browser.
++    const { stopProfileGateway } = nodeRequire('./claude-agent') as typeof import('./claude-agent')
++    stopProfileGateway(normalized)
++  } catch {
++    /* best-effort */
++  }
++
++  // Tombstone before remove so concurrent mkdir/list cannot relist this name.
++  markNamedProfileDeleted(normalized)
++
++  if (fs.existsSync(profilePath)) {
++    const trashDir = path.join(getClaudeRoot(), 'trash')
++    fs.mkdirSync(trashDir, { recursive: true })
++    const trashName = `${normalized}-${Date.now()}`
++    try {
++      fs.renameSync(profilePath, path.join(trashDir, trashName))
++    } catch {
++      fs.rmSync(profilePath, { recursive: true, force: true })
++    }
++  }
+ }
+ 
+ export function updateProfileConfig(
+diff --git a/src/server/swarm-memory.ts b/src/server/swarm-memory.ts
+index 5d897b52..dbadb209 100644
+--- a/src/server/swarm-memory.ts
++++ b/src/server/swarm-memory.ts
+@@ -192,6 +192,20 @@ export function ensureWorkerMemoryScaffold(input: {
+   const { workerId } = input
+   if (!validateSwarmId(workerId))
+     throw new Error(`Invalid workerId: ${workerId}`)
++  // Respect Hermes profile tombstones — scaffolding must not recreate a
++  // deleted named profile under ~/.hermes/profiles/<id>.
++  const tombstone = join(
++    homedir(),
++    '.hermes',
++    'profiles',
++    '.deleted',
++    workerId,
++  )
++  if (existsSync(tombstone)) {
++    throw new Error(
++      `Worker profile "${workerId}" was deleted (tombstone at ${tombstone}); recreate it explicitly before scaffolding memory`,
++    )
++  }
+   const root = swarmWorkerMemoryRoot(workerId)
+   ensureDir(root)
+   ensureDir(join(root, 'missions'))
+diff --git a/src/server/swarm-profile-config.ts b/src/server/swarm-profile-config.ts
+index 1e4b692c..241a673d 100644
+--- a/src/server/swarm-profile-config.ts
++++ b/src/server/swarm-profile-config.ts
+@@ -105,6 +105,20 @@ export function ensureSwarmProfileConfig(
+     mcpTokensLinked: 0,
+   }
+   try {
++    // Never materialize a tombstoned named profile via bootstrap mkdir.
++    const base = profilePath.replace(/\/+$/, '')
++    const marker = base.match(/^(.*)\/profiles\/([^/]+)$/)
++    if (marker) {
++      const [, hermesRootGuess, profileName] = marker
++      const tombstone = join(hermesRootGuess, 'profiles', '.deleted', profileName)
++      if (existsSync(tombstone)) {
++        return {
++          ...result,
++          ok: false,
++          error: `profile "${profileName}" was deleted`,
++        }
++      }
++    }
+     mkdirSync(profilePath, { recursive: true })
+     const hermesRoot = options.hermesRoot ?? join(homedir(), '.hermes')
+ 

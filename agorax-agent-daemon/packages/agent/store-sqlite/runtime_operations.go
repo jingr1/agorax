@@ -1,0 +1,816 @@
+package storesqlite
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+)
+
+const runtimeOperationSelectSQL = `
+SELECT operation_id, workspace_id, agent_session_id, kind, status, COALESCE(result, ''),
+       turn_id, COALESCE(request_id, ''), payload_json, COALESCE(lease_owner, ''),
+       COALESCE(lease_expires_at_unix_ms, 0), COALESCE(next_attempt_at_unix_ms, 0),
+       attempt, version, last_error,
+       created_at_unix_ms, updated_at_unix_ms, COALESCE(completed_at_unix_ms, 0)
+FROM workspace_agent_runtime_operations
+`
+
+func (s *Store) PrepareRuntimeOperation(ctx context.Context, input RuntimeOperationPrepare) (RuntimeOperation, bool, error) {
+	if s == nil || s.db == nil {
+		return RuntimeOperation{}, false, errors.New("workspace database is not initialized")
+	}
+	input.OperationID = strings.TrimSpace(input.OperationID)
+	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
+	input.AgentSessionID = strings.TrimSpace(input.AgentSessionID)
+	input.TurnID = strings.TrimSpace(input.TurnID)
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if err := validateRuntimeOperationPrepare(input); err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	payloadJSON, err := marshalJSONMap(input.Payload)
+	if err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	now := input.OccurredAtMS
+	if now <= 0 {
+		return RuntimeOperation{}, false, errors.New("runtime operation occurred time is required")
+	}
+	requestID := any(nil)
+	switch input.Kind {
+	case RuntimeOperationKindInteractiveResponse, RuntimeOperationKindPlanDecision, RuntimeOperationKindEditRetry:
+		requestID = input.RequestID
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RuntimeOperation{}, false, fmt.Errorf("begin prepare runtime operation: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	existing, found, err := getRuntimeOperationByIdentityTx(ctx, tx, input)
+	if err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	if found {
+		if existing.OperationID != input.OperationID {
+			return RuntimeOperation{}, false, ErrRuntimeOperationIdentityMismatch
+		}
+		if !jsonMapsEqual(existing.Payload, input.Payload) {
+			return RuntimeOperation{}, false, ErrRuntimeOperationConflict
+		}
+		if _, err := s.commitTransaction(ctx, tx, input.WorkspaceID, nil); err != nil {
+			return RuntimeOperation{}, false, fmt.Errorf("commit duplicate runtime operation prepare: %w", err)
+		}
+		committed = true
+		return existing, false, nil
+	}
+	if byID, idFound, err := getRuntimeOperationTx(ctx, tx, input.WorkspaceID, input.OperationID); err != nil {
+		return RuntimeOperation{}, false, err
+	} else if idFound {
+		if !runtimeOperationIdentityMatches(byID, input) {
+			return RuntimeOperation{}, false, ErrRuntimeOperationIdentityMismatch
+		}
+		return RuntimeOperation{}, false, ErrRuntimeOperationConflict
+	}
+	if err := requireSessionForkSourceWritableTx(
+		ctx, tx, input.WorkspaceID, input.AgentSessionID,
+	); err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	if err := validateRuntimeOperationSubjectTx(ctx, tx, input); err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO workspace_agent_runtime_operations (
+	operation_id, workspace_id, agent_session_id, kind, status, turn_id,
+	request_id, payload_json, next_attempt_at_unix_ms, created_at_unix_ms, updated_at_unix_ms
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, input.OperationID, input.WorkspaceID, input.AgentSessionID, input.Kind,
+		RuntimeOperationStatusPrepared, input.TurnID, requestID, payloadJSON, now, now, now)
+	if err != nil {
+		return RuntimeOperation{}, false, fmt.Errorf("insert runtime operation: %w", err)
+	}
+	op, _, err := getRuntimeOperationTx(ctx, tx, input.WorkspaceID, input.OperationID)
+	if err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	delta, err := s.commitTransaction(ctx, tx, input.WorkspaceID, []TransactionMutation{
+		transactionMutation(input.WorkspaceID, input.AgentSessionID, MutationEntityRuntimeOperation, input.OperationID, "prepare", op.Version),
+	})
+	if err != nil {
+		return RuntimeOperation{}, false, fmt.Errorf("commit runtime operation prepare: %w", err)
+	}
+	committed = true
+	op.CommitTransactionID = delta.TransactionID
+	op.CommitDelta = delta
+	return op, true, nil
+}
+
+// PrepareInteractiveRuntimeOperation atomically establishes the response claim
+// by transitioning the interaction from pending to answered and persists the
+// durable operation that will deliver that answer to the runtime. A terminal
+// interaction returns its stored disposition without creating another
+// operation, allowing competing GUI/CLI responders to normalize the result.
+func (s *Store) PrepareInteractiveRuntimeOperation(
+	ctx context.Context,
+	input RuntimeOperationPrepare,
+) (RuntimeOperation, Interaction, InteractionTransitionResult, error) {
+	if s == nil || s.db == nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, errors.New("workspace database is not initialized")
+	}
+	input.OperationID = strings.TrimSpace(input.OperationID)
+	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
+	input.AgentSessionID = strings.TrimSpace(input.AgentSessionID)
+	input.TurnID = strings.TrimSpace(input.TurnID)
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if input.Kind != RuntimeOperationKindInteractiveResponse {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, errors.New("interactive runtime operation kind is required")
+	}
+	if err := validateRuntimeOperationPrepare(input); err != nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, err
+	}
+	now := input.OccurredAtMS
+	if now <= 0 {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, errors.New("runtime operation occurred time is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, fmt.Errorf("begin prepare interactive runtime operation: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	existingInteraction, found, err := getAgentInteractionTx(ctx, tx, input.WorkspaceID, input.AgentSessionID, input.TurnID, input.RequestID)
+	if err != nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, err
+	}
+	if !found {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, ErrRuntimeOperationSubjectState
+	}
+	existingOperation, operationFound, err := getRuntimeOperationByIdentityTx(ctx, tx, input)
+	if err != nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, err
+	}
+	if operationFound && existingOperation.OperationID != input.OperationID {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, ErrRuntimeOperationIdentityMismatch
+	}
+	claimPayload := input.Payload
+	if operationFound {
+		claimPayload = existingOperation.Payload
+	}
+	response := InteractionUpsert{
+		WorkspaceID: input.WorkspaceID, AgentSessionID: input.AgentSessionID,
+		RequestID: input.RequestID, TurnID: input.TurnID,
+		Kind: existingInteraction.Kind, Status: InteractionStatusAnswered,
+		ToolName: existingInteraction.ToolName, Input: existingInteraction.Input,
+		Metadata: existingInteraction.Metadata, Output: interactiveResponseOutput(claimPayload),
+		OccurredAtUnixMS: now,
+	}
+	interaction, transitionResult, err := s.upsertInteractionTx(ctx, tx, response, now)
+	if err != nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, err
+	}
+	mutations := make([]TransactionMutation, 0, 2)
+	if transitionResult == InteractionTransitionApplied {
+		mutations = append(mutations, transactionMutation(
+			input.WorkspaceID, input.AgentSessionID, MutationEntityInteraction,
+			interactionMutationEntityID(input.TurnID, input.RequestID), "answer", interaction.UpdatedAtUnixMS,
+		))
+	}
+	if operationFound {
+		delta, err := s.commitTransaction(ctx, tx, input.WorkspaceID, mutations)
+		if err != nil {
+			return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, fmt.Errorf("commit duplicate interactive runtime operation prepare: %w", err)
+		}
+		committed = true
+		existingOperation.CommitTransactionID = delta.TransactionID
+		existingOperation.CommitDelta = delta
+		return existingOperation, interaction, transitionResult, nil
+	}
+	if transitionResult != InteractionTransitionApplied {
+		if _, err := s.commitTransaction(ctx, tx, input.WorkspaceID, mutations); err != nil {
+			return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, fmt.Errorf("commit terminal interactive response observation: %w", err)
+		}
+		committed = true
+		return RuntimeOperation{}, interaction, transitionResult, nil
+	}
+	if err := validateRuntimeOperationSubjectTx(ctx, tx, input); err != nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, err
+	}
+	payloadJSON, err := marshalJSONMap(input.Payload)
+	if err != nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, err
+	}
+	if byID, idFound, err := getRuntimeOperationTx(ctx, tx, input.WorkspaceID, input.OperationID); err != nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, err
+	} else if idFound {
+		if !runtimeOperationIdentityMatches(byID, input) {
+			return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, ErrRuntimeOperationIdentityMismatch
+		}
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, ErrRuntimeOperationConflict
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO workspace_agent_runtime_operations (
+	operation_id, workspace_id, agent_session_id, kind, status, turn_id,
+	request_id, payload_json, next_attempt_at_unix_ms, created_at_unix_ms, updated_at_unix_ms
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, input.OperationID, input.WorkspaceID, input.AgentSessionID, input.Kind,
+		RuntimeOperationStatusPrepared, input.TurnID, input.RequestID,
+		payloadJSON, now, now, now); err != nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, fmt.Errorf("insert interactive runtime operation: %w", err)
+	}
+	operation, _, err := getRuntimeOperationTx(ctx, tx, input.WorkspaceID, input.OperationID)
+	if err != nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, err
+	}
+	mutations = append(mutations, transactionMutation(
+		input.WorkspaceID, input.AgentSessionID, MutationEntityRuntimeOperation,
+		input.OperationID, "prepare", operation.Version,
+	))
+	delta, err := s.commitTransaction(ctx, tx, input.WorkspaceID, mutations)
+	if err != nil {
+		return RuntimeOperation{}, Interaction{}, InteractionTransitionConflict, fmt.Errorf("commit interactive runtime operation prepare: %w", err)
+	}
+	committed = true
+	operation.CommitTransactionID = delta.TransactionID
+	operation.CommitDelta = delta
+	return operation, interaction, transitionResult, nil
+}
+
+func interactiveResponseOutput(payload map[string]any) map[string]any {
+	responsePayload, _ := payload["payload"].(map[string]any)
+	return map[string]any{
+		"action":   payloadString(payload, "action"),
+		"optionId": payloadString(payload, "optionId"),
+		"payload":  cloneJSONMap(responsePayload),
+	}
+}
+
+func (s *Store) GetRuntimeOperation(ctx context.Context, workspaceID string, operationID string) (RuntimeOperation, bool, error) {
+	if s == nil || s.db == nil {
+		return RuntimeOperation{}, false, errors.New("workspace database is not initialized")
+	}
+	return getRuntimeOperation(ctx, s.db, strings.TrimSpace(workspaceID), strings.TrimSpace(operationID))
+}
+
+func (s *Store) ListClaimableRuntimeOperations(ctx context.Context, input ListClaimableRuntimeOperationsInput) ([]RuntimeOperation, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("workspace database is not initialized")
+	}
+	limit := input.Limit
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	workspaceID := strings.TrimSpace(input.WorkspaceID)
+	query := runtimeOperationSelectSQL + `
+WHERE ((status = ? AND next_attempt_at_unix_ms <= ?)
+    OR (status = ? AND lease_expires_at_unix_ms <= ?))`
+	args := []any{RuntimeOperationStatusPrepared, input.NowUnixMS, RuntimeOperationStatusLeased, input.NowUnixMS}
+	if workspaceID != "" {
+		query += ` AND workspace_id = ?`
+		args = append(args, workspaceID)
+	}
+	query += ` ORDER BY created_at_unix_ms ASC, operation_id ASC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list claimable runtime operations: %w", err)
+	}
+	defer rows.Close()
+	result := make([]RuntimeOperation, 0)
+	for rows.Next() {
+		op, err := scanRuntimeOperation(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, op)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate claimable runtime operations: %w", err)
+	}
+	return result, nil
+}
+
+func (s *Store) ClaimRuntimeOperationLease(ctx context.Context, input ClaimRuntimeOperationLeaseInput) (RuntimeOperation, bool, error) {
+	if s == nil || s.db == nil {
+		return RuntimeOperation{}, false, errors.New("workspace database is not initialized")
+	}
+	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
+	input.OperationID = strings.TrimSpace(input.OperationID)
+	input.LeaseOwner = strings.TrimSpace(input.LeaseOwner)
+	if input.WorkspaceID == "" || input.OperationID == "" || input.LeaseOwner == "" || input.NowUnixMS <= 0 || input.LeaseExpiresAtMS <= input.NowUnixMS {
+		return RuntimeOperation{}, false, errors.New("valid workspace, operation, owner, now, and future lease expiry are required")
+	}
+	result, err := s.db.ExecContext(ctx, `
+UPDATE workspace_agent_runtime_operations
+SET status = ?, lease_owner = ?, lease_expires_at_unix_ms = ?, attempt = attempt + 1,
+    next_attempt_at_unix_ms = NULL, version = version + 1, last_error = '', updated_at_unix_ms = ?
+WHERE workspace_id = ? AND operation_id = ?
+  AND ((status = ? AND next_attempt_at_unix_ms <= ?)
+    OR (status = ? AND lease_expires_at_unix_ms <= ?))
+`, RuntimeOperationStatusLeased, input.LeaseOwner, input.LeaseExpiresAtMS, input.NowUnixMS,
+		input.WorkspaceID, input.OperationID, RuntimeOperationStatusPrepared, input.NowUnixMS,
+		RuntimeOperationStatusLeased, input.NowUnixMS)
+	if err != nil {
+		return RuntimeOperation{}, false, fmt.Errorf("claim runtime operation lease: %w", err)
+	}
+	claimed, err := rowsWereAffected(result, "claim runtime operation lease")
+	if err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	op, found, err := s.GetRuntimeOperation(ctx, input.WorkspaceID, input.OperationID)
+	if err != nil || !found {
+		return op, false, err
+	}
+	return op, claimed, nil
+}
+
+func (s *Store) ReleaseOrFailRuntimeOperation(ctx context.Context, input ReleaseOrFailRuntimeOperationInput) (RuntimeOperation, bool, error) {
+	if s == nil || s.db == nil {
+		return RuntimeOperation{}, false, errors.New("workspace database is not initialized")
+	}
+	status, resultValue, nextAttemptValue := RuntimeOperationStatusPrepared, any(nil), any(input.NextAttemptAtMS)
+	if input.Fail {
+		status, resultValue, nextAttemptValue = RuntimeOperationStatusFailed, RuntimeOperationResultFailed, nil
+	} else if input.NextAttemptAtMS < input.NowUnixMS {
+		return RuntimeOperation{}, false, errors.New("runtime operation retry time must not precede release time")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	result, err := tx.ExecContext(ctx, `
+UPDATE workspace_agent_runtime_operations
+SET status = ?, result = ?, lease_owner = NULL, lease_expires_at_unix_ms = NULL,
+    next_attempt_at_unix_ms = ?, version = version + 1, last_error = ?, updated_at_unix_ms = ?
+WHERE workspace_id = ? AND operation_id = ? AND status = ? AND lease_owner = ?
+`, status, resultValue, nextAttemptValue, strings.TrimSpace(input.LastError), input.NowUnixMS,
+		strings.TrimSpace(input.WorkspaceID), strings.TrimSpace(input.OperationID), RuntimeOperationStatusLeased, strings.TrimSpace(input.LeaseOwner))
+	if err != nil {
+		return RuntimeOperation{}, false, fmt.Errorf("release or fail runtime operation: %w", err)
+	}
+	changed, err := rowsWereAffected(result, "release or fail runtime operation")
+	if err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	op, found, err := getRuntimeOperationTx(ctx, tx, input.WorkspaceID, input.OperationID)
+	if err != nil || !found {
+		return op, false, err
+	}
+	mutations := []TransactionMutation{}
+	if changed {
+		operation := "release"
+		if input.Fail {
+			operation = "fail"
+		}
+		mutations = append(mutations, transactionMutation(
+			op.WorkspaceID, op.AgentSessionID, MutationEntityRuntimeOperation,
+			op.OperationID, operation, op.Version,
+		))
+	}
+	delta, err := s.commitTransaction(ctx, tx, op.WorkspaceID, mutations)
+	if err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	committed = true
+	op.CommitTransactionID = delta.TransactionID
+	op.CommitDelta = delta
+	return op, changed, nil
+}
+
+func (s *Store) CheckpointRuntimeOperation(ctx context.Context, input CheckpointRuntimeOperationInput) (RuntimeOperation, bool, error) {
+	if s == nil || s.db == nil {
+		return RuntimeOperation{}, false, errors.New("workspace database is not initialized")
+	}
+	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
+	input.OperationID = strings.TrimSpace(input.OperationID)
+	input.LeaseOwner = strings.TrimSpace(input.LeaseOwner)
+	if input.WorkspaceID == "" || input.OperationID == "" || input.LeaseOwner == "" || input.NowUnixMS <= 0 {
+		return RuntimeOperation{}, false, errors.New("workspace, operation, owner, and checkpoint time are required")
+	}
+	payloadJSON, err := marshalJSONMap(input.Payload)
+	if err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RuntimeOperation{}, false, fmt.Errorf("begin runtime operation checkpoint: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	current, found, err := getRuntimeOperationTx(ctx, tx, input.WorkspaceID, input.OperationID)
+	if err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	if !found || current.Status != RuntimeOperationStatusLeased || current.LeaseOwner != input.LeaseOwner ||
+		current.LeaseExpiresAtMS <= input.NowUnixMS {
+		return current, false, ErrRuntimeOperationLeaseLost
+	}
+	switch current.Kind {
+	case RuntimeOperationKindInteractiveResponse:
+		if !interactiveResponseCheckpointIdentityEqual(current.Payload, input.Payload) {
+			return current, false, ErrRuntimeOperationSubjectState
+		}
+	case RuntimeOperationKindCancelTurn:
+		if !cancelRuntimeOperationCheckpointIdentityEqual(current.Payload, input.Payload) {
+			return current, false, ErrRuntimeOperationSubjectState
+		}
+	case RuntimeOperationKindPlanDecision:
+		if err := validatePlanDecisionOperationPayload(input.OperationID, input.Payload); err != nil {
+			return current, false, err
+		}
+		if !planDecisionCheckpointIdentityEqual(current.Payload, input.Payload) ||
+			!planDecisionStepCanAdvance(payloadString(current.Payload, "step"), payloadString(input.Payload, "step")) {
+			return current, false, ErrRuntimeOperationSubjectState
+		}
+	case RuntimeOperationKindEditRetry:
+		next, err := DecodeEditRetryOperationPayload(input.Payload)
+		if err != nil {
+			return current, false, err
+		}
+		if err := next.Validate(input.OperationID); err != nil {
+			return current, false, err
+		}
+		previous, err := DecodeEditRetryOperationPayload(current.Payload)
+		if err != nil {
+			return current, false, err
+		}
+		if !editRetryIdentityEqual(previous, next) ||
+			!editRetryCheckpointCanAdvance(previous.Checkpoint, next.Checkpoint) {
+			return current, false, ErrRuntimeOperationSubjectState
+		}
+	default:
+		return current, false, ErrRuntimeOperationSubjectState
+	}
+	result, err := tx.ExecContext(ctx, `
+UPDATE workspace_agent_runtime_operations
+SET payload_json = ?, version = version + 1, updated_at_unix_ms = ?
+WHERE workspace_id = ? AND operation_id = ? AND status = ? AND lease_owner = ?
+`, payloadJSON, input.NowUnixMS, input.WorkspaceID, input.OperationID,
+		RuntimeOperationStatusLeased, input.LeaseOwner)
+	if err != nil {
+		return RuntimeOperation{}, false, fmt.Errorf("checkpoint runtime operation: %w", err)
+	}
+	changed, err := rowsWereAffected(result, "checkpoint runtime operation")
+	if err != nil {
+		return RuntimeOperation{}, false, err
+	}
+	var pendingEvent RuntimeOperationEvent
+	if payloadString(current.Payload, "step") != "send_dispatched" && payloadString(input.Payload, "step") == "send_dispatched" {
+		if err := insertPlanDecisionUnknownNoticeTx(ctx, tx, current, input.NowUnixMS); err != nil {
+			return RuntimeOperation{}, false, err
+		}
+		pendingEvent, err = insertRuntimeOperationEventTx(ctx, tx, current, RuntimeOperationEventPlanDecisionPending, map[string]any{
+			"turnId": current.TurnID, "requestId": current.RequestID,
+			"noticeMessageId": planDecisionNoticeMessageID(current.OperationID),
+		}, input.NowUnixMS)
+		if err != nil {
+			return RuntimeOperation{}, false, err
+		}
+	}
+	op, found, err := getRuntimeOperationTx(ctx, tx, input.WorkspaceID, input.OperationID)
+	if err != nil || !found {
+		return op, false, err
+	}
+	mutations := []TransactionMutation{
+		transactionMutation(input.WorkspaceID, op.AgentSessionID, MutationEntityRuntimeOperation, input.OperationID, "checkpoint", op.Version),
+	}
+	if pendingEvent.ID > 0 {
+		messageID := planDecisionNoticeMessageID(op.OperationID)
+		message, found, err := getAgentMessageForUpdate(ctx, tx, input.WorkspaceID, op.AgentSessionID, messageID)
+		if err != nil {
+			return RuntimeOperation{}, false, err
+		}
+		if !found {
+			return RuntimeOperation{}, false, ErrRuntimeOperationSubjectState
+		}
+		mutations = append(mutations,
+			transactionMutation(input.WorkspaceID, op.AgentSessionID, MutationEntityMessage, messageID, "upsert", int64(message.Version)),
+			transactionMutation(input.WorkspaceID, op.AgentSessionID, MutationEntityRuntimeEvent, fmt.Sprint(pendingEvent.ID), "insert", pendingEvent.ID),
+		)
+	}
+	delta, err := s.commitTransaction(ctx, tx, input.WorkspaceID, mutations)
+	if err != nil {
+		return RuntimeOperation{}, false, fmt.Errorf("commit runtime operation checkpoint: %w", err)
+	}
+	committed = true
+	op.CommitTransactionID = delta.TransactionID
+	op.CommitDelta = delta
+	return op, changed, nil
+}
+
+func insertPlanDecisionUnknownNoticeTx(ctx context.Context, tx *sql.Tx, operation RuntimeOperation, now int64) error {
+	payloadJSON, err := marshalJSONMap(map[string]any{
+		"kind":        "agent_system_notice",
+		"noticeKind":  "plan_implementation_pending_confirmation",
+		"severity":    "warning",
+		"retryable":   false,
+		"operationId": operation.OperationID,
+		"planTurnId":  operation.TurnID,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+INSERT OR IGNORE INTO workspace_agent_messages (
+  workspace_id, agent_session_id, message_id, version, turn_id, role, kind,
+  status, payload_json, occurred_at_unix_ms, created_at_unix_ms, updated_at_unix_ms
+) VALUES (?, ?, ?,
+  COALESCE((SELECT MAX(version) + 1 FROM workspace_agent_messages WHERE workspace_id = ? AND agent_session_id = ?), 1),
+  ?, 'system', 'system', 'running', ?, ?, ?, ?)
+`, operation.WorkspaceID, operation.AgentSessionID, planDecisionNoticeMessageID(operation.OperationID),
+		operation.WorkspaceID, operation.AgentSessionID,
+		operation.TurnID, payloadJSON, now, now, now)
+	if err != nil {
+		return fmt.Errorf("insert plan decision unknown notice: %w", err)
+	}
+	return nil
+}
+
+func planDecisionNoticeMessageID(operationID string) string {
+	return "plan-decision:" + strings.TrimSpace(operationID) + ":status"
+}
+
+func planDecisionCheckpointIdentityEqual(current, next map[string]any) bool {
+	for _, key := range []string{"promptKind", "action", "idempotencyKey", "clientSubmitId"} {
+		if payloadString(current, key) != payloadString(next, key) {
+			return false
+		}
+	}
+	return true
+}
+
+func planDecisionStepCanAdvance(current, next string) bool {
+	if current == next {
+		return true
+	}
+	return (current == "prepared" && next == "settings_applied") ||
+		(current == "settings_applied" && next == "send_dispatched") ||
+		(current == "send_dispatched" && next == "send_confirmed")
+}
+
+func editRetryCheckpointCanAdvance(current, next EditRetryCheckpoint) bool {
+	if current == next {
+		return true
+	}
+	return current == EditRetryCheckpointRollbackConfirmed &&
+		next == EditRetryCheckpointReplacementDispatched
+}
+
+func (s *Store) FindTurnByClientSubmitID(ctx context.Context, workspaceID string, agentSessionID string, clientSubmitID string) (string, bool, error) {
+	if s == nil || s.db == nil {
+		return "", false, errors.New("workspace database is not initialized")
+	}
+	var turnID string
+	err := s.db.QueryRowContext(ctx, `
+SELECT turn_id
+FROM workspace_agent_messages
+WHERE workspace_id = ? AND agent_session_id = ?
+  AND turn_id IS NOT NULL AND length(turn_id) > 0
+  AND json_extract(payload_json, '$.clientSubmitId') = ?
+ORDER BY version DESC LIMIT 1
+`, strings.TrimSpace(workspaceID), strings.TrimSpace(agentSessionID), strings.TrimSpace(clientSubmitID)).Scan(&turnID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("find turn by client submit id: %w", err)
+	}
+	return strings.TrimSpace(turnID), true, nil
+}
+
+// RequeueLeasedRuntimeOperationsOnStartup invalidates every lease left by the
+// previous daemon process. This is deliberately global: a new single daemon
+// owner must recover even leases whose wall-clock expiry is still in the
+// future instead of misclassifying their turns as generic stale work.
+func (s *Store) RequeueLeasedRuntimeOperationsOnStartup(ctx context.Context, nowUnixMS int64) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("workspace database is not initialized")
+	}
+	if nowUnixMS <= 0 {
+		return 0, errors.New("startup recovery time is required")
+	}
+	result, err := s.db.ExecContext(ctx, `
+UPDATE workspace_agent_runtime_operations
+SET status = ?, lease_owner = NULL, lease_expires_at_unix_ms = NULL,
+    next_attempt_at_unix_ms = ?, version = version + 1,
+    last_error = CASE
+      WHEN TRIM(last_error) = '' THEN 'startup recovery: previous runtime lease invalidated'
+      ELSE last_error || '; startup recovery: previous runtime lease invalidated'
+    END,
+    updated_at_unix_ms = ?
+WHERE status = ?
+`, RuntimeOperationStatusPrepared, nowUnixMS, nowUnixMS, RuntimeOperationStatusLeased)
+	if err != nil {
+		return 0, fmt.Errorf("requeue leased runtime operations on startup: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("requeue startup runtime operation rows affected: %w", err)
+	}
+	return count, nil
+}
+
+func validateRuntimeOperationSubjectTx(ctx context.Context, tx *sql.Tx, input RuntimeOperationPrepare) error {
+	turn, found, err := getAgentTurnTx(ctx, tx, input.WorkspaceID, input.AgentSessionID, input.TurnID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrRuntimeOperationSubjectState
+	}
+	if input.Kind == RuntimeOperationKindCancelTurn {
+		targets, err := cancelTargetsFromPayload(input.AgentSessionID, input.TurnID, input.Payload)
+		if err != nil {
+			return err
+		}
+		rootAgentSessionID := payloadString(input.Payload, "rootAgentSessionId")
+		for _, target := range targets {
+			targetTurn, targetFound, err := getAgentTurnTx(ctx, tx, input.WorkspaceID, target.AgentSessionID, target.TurnID)
+			if err != nil {
+				return err
+			}
+			if !targetFound {
+				return ErrRuntimeOperationSubjectState
+			}
+			var kind string
+			var recordedRoot sql.NullString
+			if err := tx.QueryRowContext(ctx, `
+SELECT session_kind, root_agent_session_id
+FROM workspace_agent_sessions
+WHERE workspace_id = ? AND agent_session_id = ? AND deleted_at_unix_ms = 0
+`, input.WorkspaceID, target.AgentSessionID).Scan(&kind, &recordedRoot); err != nil {
+				return fmt.Errorf("read cancel target session relation: %w", err)
+			}
+			if (kind == SessionKindRoot && target.AgentSessionID != rootAgentSessionID) ||
+				(kind == SessionKindChild && strings.TrimSpace(recordedRoot.String) != rootAgentSessionID) ||
+				(kind != SessionKindRoot && kind != SessionKindChild) {
+				return ErrRuntimeOperationSubjectState
+			}
+			if targetTurn.Phase == TurnPhaseSettled {
+				continue
+			}
+			var active sql.NullString
+			if err := tx.QueryRowContext(ctx, `SELECT active_turn_id FROM workspace_agent_sessions WHERE workspace_id = ? AND agent_session_id = ?`, input.WorkspaceID, target.AgentSessionID).Scan(&active); err != nil {
+				return fmt.Errorf("read runtime operation target: %w", err)
+			}
+			if !active.Valid || active.String != target.TurnID {
+				return ErrRuntimeOperationSubjectState
+			}
+		}
+		return nil
+	}
+	if input.Kind == RuntimeOperationKindPlanDecision && payloadString(input.Payload, "promptKind") == "plan-implementation" {
+		if turn.Phase != TurnPhaseSettled || turn.Outcome != TurnOutcomeCompleted {
+			return ErrRuntimeOperationSubjectState
+		}
+		var hasPlan int
+		err := tx.QueryRowContext(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM workspace_agent_messages
+  WHERE workspace_id = ? AND agent_session_id = ? AND turn_id = ?
+    AND deleted_at_unix_ms = 0
+    AND (kind = 'plan' OR json_extract(payload_json, '$.messageKind') = 'plan')
+)
+`, input.WorkspaceID, input.AgentSessionID, input.TurnID).Scan(&hasPlan)
+		if err != nil {
+			return fmt.Errorf("validate plan decision evidence: %w", err)
+		}
+		if hasPlan != 1 {
+			return ErrRuntimeOperationSubjectState
+		}
+		return nil
+	}
+	if input.Kind == RuntimeOperationKindEditRetry {
+		return validateEditRetryRuntimeOperationSubjectTx(ctx, tx, input, turn)
+	}
+	interaction, found, err := getAgentInteractionTx(ctx, tx, input.WorkspaceID, input.AgentSessionID, input.TurnID, input.RequestID)
+	if err != nil {
+		return err
+	}
+	if !found || interaction.TurnID != input.TurnID {
+		return ErrRuntimeOperationSubjectState
+	}
+	return nil
+}
+
+func payloadString(payload map[string]any, key string) string {
+	value, _ := payload[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func getRuntimeOperation(ctx context.Context, q rowQueryer, workspaceID string, operationID string) (RuntimeOperation, bool, error) {
+	return scanRuntimeOperationRow(q.QueryRowContext(ctx, runtimeOperationSelectSQL+` WHERE workspace_id = ? AND operation_id = ?`, workspaceID, operationID))
+}
+
+type rowQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func getRuntimeOperationTx(ctx context.Context, tx *sql.Tx, workspaceID string, operationID string) (RuntimeOperation, bool, error) {
+	return getRuntimeOperation(ctx, tx, workspaceID, operationID)
+}
+
+func getRuntimeOperationByIdentityTx(ctx context.Context, tx *sql.Tx, input RuntimeOperationPrepare) (RuntimeOperation, bool, error) {
+	query := runtimeOperationSelectSQL + ` WHERE workspace_id = ? AND agent_session_id = ? AND kind = ? AND turn_id = ? AND request_id = ?`
+	args := []any{input.WorkspaceID, input.AgentSessionID, input.Kind, input.TurnID, input.RequestID}
+	if input.Kind == RuntimeOperationKindCancelTurn {
+		query = runtimeOperationSelectSQL + ` WHERE workspace_id = ? AND agent_session_id = ? AND kind = ? AND turn_id = ? AND request_id IS NULL`
+		args = []any{input.WorkspaceID, input.AgentSessionID, input.Kind, input.TurnID}
+	}
+	if input.Kind == RuntimeOperationKindEditRetry {
+		query = runtimeOperationSelectSQL + ` WHERE workspace_id = ? AND agent_session_id = ? AND kind = ? AND request_id = ?`
+		args = []any{input.WorkspaceID, input.AgentSessionID, input.Kind, input.RequestID}
+	}
+	return scanRuntimeOperationRow(tx.QueryRowContext(ctx, query, args...))
+}
+
+func runtimeOperationIdentityMatches(operation RuntimeOperation, input RuntimeOperationPrepare) bool {
+	return operation.WorkspaceID == input.WorkspaceID &&
+		operation.AgentSessionID == input.AgentSessionID &&
+		operation.Kind == input.Kind &&
+		operation.TurnID == input.TurnID &&
+		operation.RequestID == input.RequestID
+}
+
+func scanRuntimeOperationRow(row *sql.Row) (RuntimeOperation, bool, error) {
+	op, err := scanRuntimeOperation(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RuntimeOperation{}, false, nil
+	}
+	return op, err == nil, err
+}
+
+func scanRuntimeOperation(scanner rowScanner) (RuntimeOperation, error) {
+	var op RuntimeOperation
+	var payloadJSON string
+	err := scanner.Scan(&op.OperationID, &op.WorkspaceID, &op.AgentSessionID, &op.Kind, &op.Status, &op.Result,
+		&op.TurnID, &op.RequestID, &payloadJSON, &op.LeaseOwner, &op.LeaseExpiresAtMS, &op.NextAttemptAtMS, &op.Attempt,
+		&op.Version, &op.LastError, &op.CreatedAtUnixMS, &op.UpdatedAtUnixMS, &op.CompletedAtUnixMS)
+	if err != nil {
+		return RuntimeOperation{}, err
+	}
+	op.Payload, err = unmarshalJSONMap(payloadJSON)
+	if err != nil {
+		return RuntimeOperation{}, fmt.Errorf("decode runtime operation payload: %w", err)
+	}
+	if op.Kind == RuntimeOperationKindEditRetry {
+		if err := validateEditRetryOperationPayload(op.OperationID, op.Payload); err != nil {
+			return RuntimeOperation{}, fmt.Errorf("validate stored edit retry operation payload: %w", err)
+		}
+	}
+	return op, nil
+}
+
+func jsonMapsEqual(left map[string]any, right map[string]any) bool {
+	leftJSON, leftErr := marshalJSONMap(left)
+	rightJSON, rightErr := marshalJSONMap(right)
+	return leftErr == nil && rightErr == nil && leftJSON == rightJSON
+}
+
+func interactiveResponseCheckpointIdentityEqual(previous, next map[string]any) bool {
+	previousIdentity := cloneJSONMap(previous)
+	nextIdentity := cloneJSONMap(next)
+	for _, key := range []string{"followUpPrompt", "followUpClientSubmitId", "followUpDisposition"} {
+		delete(previousIdentity, key)
+		delete(nextIdentity, key)
+	}
+	return jsonMapsEqual(previousIdentity, nextIdentity)
+}
+
+func cancelRuntimeOperationCheckpointIdentityEqual(previous, next map[string]any) bool {
+	nextDeliveryUnconfirmed, ok := next[CancelRuntimeOperationDeliveryUnconfirmedPayloadKey].(bool)
+	if !ok || !nextDeliveryUnconfirmed {
+		return false
+	}
+	if existing, exists := previous[CancelRuntimeOperationDeliveryUnconfirmedPayloadKey]; exists {
+		deliveryUnconfirmed, ok := existing.(bool)
+		if !ok || !deliveryUnconfirmed {
+			return false
+		}
+	}
+	previousIdentity := cloneJSONMap(previous)
+	nextIdentity := cloneJSONMap(next)
+	delete(previousIdentity, CancelRuntimeOperationDeliveryUnconfirmedPayloadKey)
+	delete(nextIdentity, CancelRuntimeOperationDeliveryUnconfirmedPayloadKey)
+	return jsonMapsEqual(previousIdentity, nextIdentity)
+}
