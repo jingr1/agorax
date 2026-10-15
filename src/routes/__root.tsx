@@ -692,7 +692,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                 window.__dismissSplash && window.__dismissSplash();
                 return;
               }
-              if (Date.now() - start > 20000) {
+              if (Date.now() - start > 45000) {
                 d.innerHTML = '<div style="font:600 20px/1.2 system-ui,sans-serif;color:'+txt+';margin-bottom:12px">Still loading</div>'
                   + '<div style="font:400 14px/1.5 system-ui,sans-serif;color:'+muted+';max-width:280px;text-align:center;margin-bottom:20px">The app shell has not started. On mobile Tailscale this is usually a blocked port, a localhost-only bind, or a stalled JS download.</div>'
                   + '<button type="button" onclick="location.reload()" style="appearance:none;border:0;border-radius:12px;padding:12px 18px;background:'+accent+';color:#fff;font:600 14px system-ui,sans-serif">Reload</button>';

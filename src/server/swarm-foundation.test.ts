@@ -44,6 +44,21 @@ describe('normalizeSwarmRuntime', () => {
     expect(runtime.artifacts).toEqual([])
     expect(runtime.previews).toEqual([])
   })
+
+  it('maps legacy checkpoint statuses instead of rejecting the runtime file', () => {
+    expect(
+      normalizeSwarmRuntime('ops-watch', {
+        checkpointStatus: 'check_complete',
+        state: 'idle',
+        phase: 'sweep_complete',
+      }).checkpointStatus,
+    ).toBe('done')
+    expect(
+      normalizeSwarmRuntime('ops-watch', {
+        checkpointStatus: 'not-a-status',
+      }).checkpointStatus,
+    ).toBe('none')
+  })
 })
 
 describe('classifySwarmPluginBoundary', () => {

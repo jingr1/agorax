@@ -22,14 +22,26 @@ import {
   UserMultipleIcon,
 } from '@hugeicons/core-free-icons'
 import { AnimatePresence, motion } from 'motion/react'
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { CHAT_OPEN_SETTINGS_EVENT } from '../chat-events'
 import { useChatSettings as useSidebarSettings } from '../hooks/use-chat-settings'
-import { ProvidersDialog } from './providers-dialog'
 import type { ChatOpenSettingsDetail } from '../chat-events'
 import { t } from '@/lib/i18n'
-import { SettingsDialog } from '@/components/settings-dialog'
+
+// Settings UI pulls the provider screens into the first module graph.
+// Load it only when a dialog actually opens so the shell can start on a
+// high-latency Tailscale link.
+const SettingsDialog = lazy(() =>
+  import('@/components/settings-dialog').then((m) => ({
+    default: m.SettingsDialog,
+  })),
+)
+const ProvidersDialog = lazy(() =>
+  import('./providers-dialog').then((m) => ({
+    default: m.ProvidersDialog,
+  })),
+)
 import {
   TooltipContent,
   TooltipProvider,
@@ -1055,14 +1067,21 @@ function ChatSidebarComponent({
         </div>
       </div>
 
-      {/* ── Dialogs ─────────────────────────────────────────────────── */}
-      <SettingsDialog
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        initialSection={settingsSection}
-      />
+      {settingsOpen ? (
+        <Suspense fallback={null}>
+          <SettingsDialog
+            open={settingsOpen}
+            onOpenChange={setSettingsOpen}
+            initialSection={settingsSection}
+          />
+        </Suspense>
+      ) : null}
 
-      <ProvidersDialog open={providersOpen} onOpenChange={setProvidersOpen} />
+      {providersOpen ? (
+        <Suspense fallback={null}>
+          <ProvidersDialog open={providersOpen} onOpenChange={setProvidersOpen} />
+        </Suspense>
+      ) : null}
     </motion.aside>
   )
 }

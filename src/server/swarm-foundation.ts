@@ -271,6 +271,28 @@ function readDispatchMode(value: unknown): SwarmDispatchMode | null {
     : null
 }
 
+function readCheckpointStatus(value: unknown): SwarmCheckpointStatus {
+  const raw = readString(value)?.toLowerCase().replace(/[\s-]+/g, '_')
+  switch (raw) {
+    case 'none':
+    case 'in_progress':
+    case 'done':
+    case 'blocked':
+    case 'handoff':
+    case 'needs_input':
+      return raw
+    // Workers persist sweep/check aliases that are not in the enum.
+    // Mapping them avoids a Zod throw on every status poll.
+    case 'check_complete':
+    case 'complete':
+    case 'completed':
+    case 'checkpointed':
+      return 'done'
+    default:
+      return 'none'
+  }
+}
+
 function readHistorySource(value: unknown): SwarmHistorySource | null {
   return value === 'state.db' ||
     value === 'local-cache' ||
@@ -415,7 +437,7 @@ export function normalizeSwarmRuntime(
     lastSummary: readString(raw.lastSummary),
     needsHuman: readBoolean(raw.needsHuman) ?? false,
     blockedReason: readString(raw.blockedReason),
-    checkpointStatus: readString(raw.checkpointStatus) ?? 'none',
+    checkpointStatus: readCheckpointStatus(raw.checkpointStatus),
     nextAction: readString(raw.nextAction),
     lastResult: readString(raw.lastResult),
     assignedTaskCount: readNumber(raw.assignedTaskCount) ?? 0,
@@ -435,6 +457,16 @@ export function normalizeSwarmRuntime(
   }
 
   return SwarmRuntimeSchema.parse(runtime)
+}
+
+const loggedRuntimeReadFailures = new Set<string>()
+
+function logRuntimeReadFailure(runtimePath: string, err: unknown): void {
+  if (loggedRuntimeReadFailures.has(runtimePath)) return
+  loggedRuntimeReadFailures.add(runtimePath)
+  const message = err instanceof Error ? err.message : String(err)
+  const brief = message.split('\n', 1)[0]?.slice(0, 240) ?? 'unknown error'
+  console.warn(`[swarm-runtime] failed to read ${runtimePath}: ${brief}`)
 }
 
 export function readSwarmRuntimeFile(
@@ -460,7 +492,7 @@ export function readSwarmRuntimeFile(
       runtime: normalizeSwarmRuntime(workerId, raw, options),
     }
   } catch (err) {
-    console.log('readSwarmRuntimeFile catch', runtimePath, err instanceof Error ? err.message : String(err))
+    logRuntimeReadFailure(runtimePath, err)
     return {
       source: 'fallback',
       runtime: normalizeSwarmRuntime(workerId, {}, options),

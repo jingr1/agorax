@@ -16,6 +16,81 @@ import tailwindcss from '@tailwindcss/vite'
 // nitro plugin removed (tanstackStart handles server runtime)
 import { defineConfig, loadEnv } from 'vite'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
+import type { Plugin } from 'vite'
+
+// `@hugeicons/core-free-icons` barrel-reexports the whole pack. Vite
+// prebundles that into one ~5.7MB module, and the shell imports it before
+// `data-app-ready`. On a phone over Tailscale that download blows the
+// 20s splash budget. Each icon file is a few hundred bytes — import those.
+// The barrel also aliases names (ExternalLink → ArrowUpRight01Icon), so the
+// subpath has to be the real file, not the alias.
+function loadHugeiconsFileByExport(): Map<string, string> {
+  const indexPath = fileURLToPath(
+    new URL(
+      './node_modules/@hugeicons/core-free-icons/dist/esm/index.js',
+      import.meta.url,
+    ),
+  )
+  const map = new Map<string, string>()
+  const re = /export\s*\{([^}]+)\}\s*from\s*'\.\/([^']+)\.js'/g
+  const text = readFileSync(indexPath, 'utf8')
+  for (const match of text.matchAll(re)) {
+    const file = match[2]
+    for (const part of match[1].split(',')) {
+      const name = part.match(/as\s+([A-Za-z0-9_]+)/)
+      if (name) map.set(name[1], file)
+    }
+  }
+  return map
+}
+
+function hugeiconsSubpathPlugin(): Plugin {
+  const fileByExport = loadHugeiconsFileByExport()
+  const importRe =
+    /import\s+(type\s+)?\{([^}]+)\}\s+from\s+['"]@hugeicons\/core-free-icons['"]/g
+  return {
+    name: 'hugeicons-subpath',
+    enforce: 'pre',
+    transform(code, id) {
+      if (id.includes('node_modules')) return null
+      if (!code.includes('@hugeicons/core-free-icons')) return null
+      let changed = false
+      const next = code.replace(importRe, (full, typeKw: string | undefined, inner: string) => {
+        if (typeKw) return full
+        const lines: Array<string> = []
+        const unknown: Array<string> = []
+        for (const part of inner.split(',')) {
+          const item = part.replace(/\/\*[\s\S]*?\*\//g, '').trim()
+          if (!item || item.startsWith('type ')) continue
+          const alias = item.match(/^([A-Za-z0-9_]+)\s+as\s+([A-Za-z0-9_]+)$/)
+          const local = alias?.[2] ?? item
+          const exported = alias?.[1] ?? item
+          if (!/^[A-Za-z0-9_]+$/.test(local) || !/^[A-Za-z0-9_]+$/.test(exported)) {
+            return full
+          }
+          const file = fileByExport.get(exported)
+          if (!file) {
+            unknown.push(item)
+            continue
+          }
+          lines.push(
+            `import ${local} from '@hugeicons/core-free-icons/${file}'`,
+          )
+        }
+        if (unknown.length > 0) {
+          lines.push(
+            `import { ${unknown.join(', ')} } from '@hugeicons/core-free-icons'`,
+          )
+        }
+        if (lines.length === 0) return full
+        changed = true
+        return lines.join('\n')
+      })
+      if (!changed) return null
+      return { code: next, map: null }
+    },
+  }
+}
 
 const config = defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -237,6 +312,10 @@ const config = defineConfig(({ mode, command }) => {
         'playwright-core',
         'playwright-extra',
         'puppeteer-extra-plugin-stealth',
+        // Keep the icon pack out of the dep optimizer. The subpath plugin
+        // above serves one tiny file per icon; prebundling the package
+        // entry pulls every icon into the first paint.
+        '@hugeicons/core-free-icons',
       ],
       needsInterop: ['xterm', 'xterm-addon-fit', 'xterm-addon-web-links'],
     },
@@ -317,21 +396,33 @@ const config = defineConfig(({ mode, command }) => {
         projects: ['./tsconfig.json'],
       }),
       tailwindcss(),
+      hugeiconsSubpathPlugin(),
       // Disable TanStack Start's route-file transform in Vitest so that
       // createFileRoute() calls keep their inline server handlers for tests.
-      ...(process.env.VITEST ? [] : [tanstackStart()]),
+      // autoCodeSplitting keeps route screens out of the first module graph
+      // so a phone on Tailscale can reach data-app-ready.
+      ...(process.env.VITEST
+        ? []
+        : [tanstackStart({ router: { autoCodeSplitting: true } })]),
       viteReact(),
       {
         name: 'hermes-dev-no-cache',
         apply: 'serve',
         configureServer(server) {
-          server.middlewares.use((_req, res, next) => {
-            res.setHeader(
-              'Cache-Control',
-              'no-store, no-cache, must-revalidate, max-age=0',
-            )
-            res.setHeader('Pragma', 'no-cache')
-            res.setHeader('Expires', '0')
+          server.middlewares.use((req, res, next) => {
+            const path = req.url?.split('?')[0] ?? ''
+            // Hashed prebundled deps are safe to cache. Source modules stay
+            // uncached so a stale HMR graph cannot stick on a phone reload.
+            if (path.includes('/node_modules/.vite/deps/')) {
+              res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+            } else {
+              res.setHeader(
+                'Cache-Control',
+                'no-store, no-cache, must-revalidate, max-age=0',
+              )
+              res.setHeader('Pragma', 'no-cache')
+              res.setHeader('Expires', '0')
+            }
             next()
           })
         },
