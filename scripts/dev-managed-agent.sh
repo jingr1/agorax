@@ -25,8 +25,6 @@ if [[ "${AGORAX_MANAGED_AGENT_REPLACE:-}" == "1" ]]; then
   FORCE=1
 fi
 
-export PATH="$HOME/.local/go1.27.2/bin:$HOME/.local/go1.24.5/bin:$HOME/go/bin:/usr/local/go/bin:${PATH:-}"
-
 mkdir -p "$ROOT/.agorax"
 
 # Load repo .env into this process (same rules as the previous inline script).
@@ -143,6 +141,10 @@ fi
 export AGORAX_MANAGED_AGENT_HOST="$HOST"
 export AGORAX_MANAGED_AGENT_PORT="$PORT"
 export AGORAX_AGENT_DB_PATH="$DB_PATH"
+
+# shellcheck disable=SC1091
+source "$ROOT/scripts/ensure-go.sh"
+agorax_ensure_go
 
 cd "$ROOT/agorax-agent-daemon"
 echo "dev:managed-agent: starting agorax-agentd on ${HOST}:${PORT} (db=$DB_PATH)"

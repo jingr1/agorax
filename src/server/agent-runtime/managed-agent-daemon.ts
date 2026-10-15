@@ -94,6 +94,7 @@ export async function restartManagedAgentDaemon(): Promise<{
     AGORAX_AGENT_DB_PATH: dbPath,
     AGORAX_AGENT_LOG: logPath,
     PATH: [
+      `${process.env.HOME || ''}/.local/go1.27.2/bin`,
       `${process.env.HOME || ''}/.local/go1.24.5/bin`,
       `${process.env.HOME || ''}/go/bin`,
       '/usr/local/go/bin',

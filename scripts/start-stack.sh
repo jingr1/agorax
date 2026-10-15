@@ -12,7 +12,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 MODE="${1:-prod}"
-export PATH="$HOME/.local/bin:$HOME/.local/go1.27.2/bin:$HOME/.local/go1.24.5/bin:$HOME/go/bin:/usr/local/go/bin:${PATH:-}"
+export PATH="$HOME/.local/bin:$HOME/go/bin:/usr/local/go/bin:${PATH:-}"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/ensure-go.sh"
+agorax_prefer_local_go
 
 case "$MODE" in
   prod)
