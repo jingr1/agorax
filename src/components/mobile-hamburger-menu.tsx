@@ -11,6 +11,7 @@ import {
   File01Icon,
   McpServerIcon,
   Menu01Icon,
+  MessageMultiple02Icon,
   PuzzleIcon,
   Rocket01Icon,
   Settings01Icon,
@@ -65,6 +66,13 @@ export const MOBILE_HAMBURGER_NAV_ITEMS = [
     to: '/missions',
     match: (p: string) =>
       p.startsWith('/missions') || p.startsWith('/mission-control'),
+  },
+  {
+    id: 'groups',
+    label: 'Groups',
+    icon: MessageMultiple02Icon,
+    to: '/group-chat',
+    match: (p: string) => p.startsWith('/group-chat'),
   },
   {
     id: 'agents',

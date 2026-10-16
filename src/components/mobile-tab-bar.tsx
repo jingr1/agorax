@@ -9,6 +9,7 @@ import {
   DashboardSquare01Icon,
   File01Icon,
   McpServerIcon,
+  MessageMultiple02Icon,
   PuzzleIcon,
   Settings01Icon,
   Target02Icon,
@@ -88,6 +89,13 @@ export const MOBILE_NAV_TABS: Array<TabItem> = [
     to: '/missions',
     match: (p) =>
       p.startsWith('/missions') || p.startsWith('/mission-control'),
+  },
+  {
+    id: 'groups',
+    label: 'Groups',
+    icon: MessageMultiple02Icon,
+    to: '/group-chat',
+    match: (p) => p.startsWith('/group-chat'),
   },
   {
     id: 'swarm',

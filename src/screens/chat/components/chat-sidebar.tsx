@@ -1,10 +1,8 @@
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  ArrowDown01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
   BrainIcon,
-  Chat01Icon,
   Clock01Icon,
   ComputerTerminal01Icon,
   DashboardSquare01Icon,
@@ -328,189 +326,36 @@ function NavItem({
   )
 }
 
-// ── Last-visited route tracking ─────────────────────────────────────────
-
-const LAST_ROUTE_KEY = 'claude-sidebar-last-route'
-
-function getLastRoute(section: string): string | null {
-  try {
-    const stored = localStorage.getItem(LAST_ROUTE_KEY)
-    if (!stored) return null
-    const map = JSON.parse(stored) as Record<string, string>
-    return map[section] || null
-  } catch {
-    return null
-  }
-}
-
-function setLastRoute(section: string, route: string) {
-  try {
-    const stored = localStorage.getItem(LAST_ROUTE_KEY)
-    const map = stored ? (JSON.parse(stored) as Record<string, string>) : {}
-    map[section] = route
-    localStorage.setItem(LAST_ROUTE_KEY, JSON.stringify(map))
-  } catch {
-    // ignore
-  }
-}
-
-// ── Section header ──────────────────────────────────────────────────────
-
-function SectionLabel({
-  label,
-  isCollapsed,
-  transition,
-  collapsible,
-  expanded,
-  onToggle,
-  navigateTo,
-}: {
-  label: string
-  isCollapsed: boolean
-  transition: Record<string, unknown>
-  collapsible?: boolean
-  expanded?: boolean
-  onToggle?: () => void
-  navigateTo?: string
-}) {
-  if (isCollapsed) return null
-
-  const labelContent = (
-    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--theme-muted)] select-none">
-      {label}
-    </span>
-  )
-
-  if (collapsible) {
-    return (
-      <motion.div
-        layout
-        transition={{ layout: transition }}
-        className="flex items-center gap-1.5 px-3 pt-3 pb-1 w-full"
-      >
-        {navigateTo ? (
-          <Link
-            to={navigateTo}
-            className="text-[10px] font-semibold uppercase tracking-wider text-[var(--theme-muted)] hover:text-[var(--theme-text)] select-none transition-colors"
-          >
-            {label}
-          </Link>
-        ) : (
-          labelContent
-        )}
-        <button
-          type="button"
-          onClick={onToggle}
-          className="ml-auto rounded p-0.5 transition-colors hover:bg-[var(--transparency-hover)]"
-          aria-label={expanded ? `Collapse ${label}` : `Expand ${label}`}
-        >
-          <HugeiconsIcon
-            icon={ArrowDown01Icon}
-            size={12}
-            strokeWidth={NAV_ICON_STROKE}
-            className={cn(
-              'text-[var(--theme-muted)] transition-transform duration-150',
-              expanded ? 'rotate-0' : '-rotate-90',
-            )}
-          />
-        </button>
-      </motion.div>
-    )
-  }
-
-  return (
-    <motion.div
-      layout
-      transition={{ layout: transition }}
-      className="px-3 pt-3 pb-1"
-    >
-      {navigateTo ? (
-        <Link
-          to={navigateTo}
-          className="text-[10px] font-semibold uppercase tracking-wider text-[var(--theme-muted)] hover:text-[var(--theme-text)] select-none transition-colors"
-        >
-          {label}
-        </Link>
-      ) : (
-        labelContent
-      )}
-    </motion.div>
-  )
-}
-
-// ── Collapsible section wrapper ─────────────────────────────────────────
-
-function CollapsibleSection({
-  expanded,
+function NavList({
   items,
   isCollapsed,
   transition,
   onSelectSession,
 }: {
-  expanded: boolean
   items: Array<NavItemDef>
   isCollapsed: boolean
   transition: Record<string, unknown>
   onSelectSession?: () => void
 }) {
   return (
-    <AnimatePresence initial={false}>
-      {expanded && (
+    <div className="space-y-0.5">
+      {items.map((item) => (
         <motion.div
-          initial={{ height: 0, opacity: 0 }}
-          animate={{ height: 'auto', opacity: 1 }}
-          exit={{ height: 0, opacity: 0 }}
-          transition={{ duration: 0.15 }}
-          className="overflow-hidden space-y-0.5"
+          key={item.label}
+          layout
+          transition={{ layout: transition }}
+          className="w-full"
         >
-          {items.map((item) => (
-            <motion.div
-              key={item.label}
-              layout
-              transition={{ layout: transition }}
-              className="w-full"
-            >
-              <NavItem
-                item={item}
-                isCollapsed={isCollapsed}
-                transition={transition}
-                onSelectSession={onSelectSession}
-              />
-            </motion.div>
-          ))}
+          <NavItem
+            item={item}
+            isCollapsed={isCollapsed}
+            transition={transition}
+            onSelectSession={onSelectSession}
+          />
         </motion.div>
-      )}
-    </AnimatePresence>
+      ))}
+    </div>
   )
-}
-
-// ── Persist helper ──────────────────────────────────────────────────────
-
-function usePersistedBool(key: string, defaultValue: boolean) {
-  const [value, setValue] = useState(() => {
-    try {
-      const stored = localStorage.getItem(key)
-      if (stored === 'true') return true
-      if (stored === 'false') return false
-      return defaultValue
-    } catch {
-      return defaultValue
-    }
-  })
-
-  function toggle() {
-    setValue((prev) => {
-      const next = !prev
-      try {
-        localStorage.setItem(key, String(next))
-      } catch {
-        // ignore
-      }
-      return next
-    })
-  }
-
-  return [value, toggle] as const
 }
 
 // ── Main component ──────────────────────────────────────────────────────
@@ -584,38 +429,11 @@ function ChatSidebarComponent({
   const echoStudioEnabled = useSettingsStore(
     (state) => state.settings.experimentalEchoStudio,
   )
-  const mainRoutes = ['/chat', '/new', '/files', '/terminal']
-  const knowledgeRoutes = ['/memory', '/skills']
-  const systemRoutes = ['/settings', '/logs']
-
-  useEffect(() => {
-    if (mainRoutes.includes(pathname)) setLastRoute('main', pathname)
-    if (knowledgeRoutes.includes(pathname)) setLastRoute('knowledge', pathname)
-    if (systemRoutes.includes(pathname)) setLastRoute('system', pathname)
-  }, [pathname])
-
-  const mainNav = getLastRoute('main') || '/chat'
-  const knowledgeNav = getLastRoute('knowledge') || '/memory'
-  const _systemNav = getLastRoute('system') || '/settings'
 
   const transition = {
     duration: 0.15,
     ease: isCollapsed ? 'easeIn' : 'easeOut',
   } as const
-
-  // Collapsible section states
-  const [mainExpanded, toggleMain] = usePersistedBool(
-    'claude-sidebar-main-expanded',
-    true,
-  )
-  const [knowledgeExpanded, toggleKnowledge] = usePersistedBool(
-    'claude-sidebar-knowledge-expanded',
-    true,
-  )
-  const [_systemExpanded, _toggleSystem] = usePersistedBool(
-    'claude-sidebar-system-expanded',
-    false,
-  )
 
   const [providersOpen, setProvidersOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
@@ -714,7 +532,6 @@ function ChatSidebarComponent({
 
   // ── Nav definitions ─────────────────────────────────────────────────
 
-  // Search button definition (placed above Studio section)
   const searchItem: NavItemDef = {
     kind: 'button',
     icon: Search01Icon,
@@ -725,7 +542,7 @@ function ChatSidebarComponent({
 
   const isDashboardActive = pathname === '/dashboard'
 
-  const mainItems: Array<NavItemDef> = [
+  const navItems: Array<NavItemDef> = [
     {
       kind: 'link',
       to: '/dashboard',
@@ -740,7 +557,6 @@ function ChatSidebarComponent({
       label: t('nav.chat'),
       active: isChatActive,
     },
-
     {
       kind: 'link',
       to: '/files',
@@ -801,9 +617,6 @@ function ChatSidebarComponent({
           },
         ]
       : []),
-  ]
-
-  const knowledgeItems: Array<NavItemDef> = [
     {
       kind: 'link',
       to: '/memory',
@@ -827,8 +640,6 @@ function ChatSidebarComponent({
       active: isMcpActive,
     },
   ]
-
-  const systemItems: Array<NavItemDef> = []
 
   return (
     <motion.aside
@@ -936,7 +747,7 @@ function ChatSidebarComponent({
         </TooltipProvider>
       </motion.div>
 
-      {/* ── Search (ChatGPT-style, above sections) ─────────────────── */}
+      {/* ── Search ─────────────────────────────────────────────────── */}
       <div className="px-2 pb-1">
         <motion.div
           layout
@@ -952,57 +763,17 @@ function ChatSidebarComponent({
         </motion.div>
       </div>
 
-      {/* ── Scrollable body: nav + sessions ─────────────────────────── */}
+      {/* ── Scrollable body: nav ────────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin flex flex-col">
-        {/* Navigation sections */}
-        <div className={cn('shrink-0 space-y-0.5 px-2', isMobile && 'order-2')}>
-          <SectionLabel
-            label="Main"
-            isCollapsed={isVisuallyCollapsed}
-            transition={transition}
-            collapsible
-            expanded={mainExpanded}
-            onToggle={toggleMain}
-            navigateTo={mainNav}
-          />
-          <CollapsibleSection
-            expanded={mainExpanded || isCollapsed}
-            items={mainItems}
-            isCollapsed={isVisuallyCollapsed}
-            transition={transition}
-            onSelectSession={onSelectSession}
-          />
-
-          <SectionLabel
-            label="Knowledge"
-            isCollapsed={isVisuallyCollapsed}
-            transition={transition}
-            collapsible
-            expanded={knowledgeExpanded}
-            onToggle={toggleKnowledge}
-            navigateTo={knowledgeNav}
-          />
-          <CollapsibleSection
-            expanded={knowledgeExpanded || isCollapsed}
-            items={knowledgeItems}
-            isCollapsed={isVisuallyCollapsed}
-            transition={transition}
-            onSelectSession={onSelectSession}
-          />
-
-          {/* System */}
-          <CollapsibleSection
-            expanded={true}
-            items={systemItems}
+        <div className={cn('shrink-0 px-2', isMobile && 'order-2')}>
+          <NavList
+            items={navItems}
             isCollapsed={isVisuallyCollapsed}
             transition={transition}
             onSelectSession={onSelectSession}
           />
         </div>
-
-        {/* Sessions list removed — managed by ChatSessionSidebar in chat route */}
       </div>
-      {/* end scrollable body */}
 
       {/* ── Footer with User Menu ─────────────────────────────────── */}
       <div className="px-2 py-2.5 border-t shrink-0 theme-border theme-panel">
