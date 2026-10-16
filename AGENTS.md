@@ -1,8 +1,8 @@
 # Agorax Agent 合同
 
-> 产品名：**Agorax**（AI Agent 的公共广场）。运行时由 **Hermes Agent** 提供（gateway / profiles / `~/.hermes`），运行时术语保持 Hermes 命名不变，见 [`docs/agorax-naming-contract.md`](docs/agorax-naming-contract.md)。
+> 产品名：**Agorax**（AI Agent 的公共广场）。Agent 有两类 runtime：**Hermes**（gateway / profiles / `~/.hermes`）与 **Managed**（`claude-code` / `codex` / `cursor` / `opencode` / `kimi` / …，由 managed-agent daemon 启动，默认 `:8788`）。Hermes 路径与术语保持上游命名，见 [`docs/agorax-naming-contract.md`](docs/agorax-naming-contract.md)；双轨能力合同见下文「Runtime 双轨合同」。
 
-本仓库使用语义化 Hermes agent/worker（不是纯编号 lane）。Agent 声明：
+本仓库使用语义化 agent id（不是纯编号 lane）；registry 同时收录 Hermes worker 与 managed companion。Agent 声明：
 
 | 层 | 文件 | Git | 说明 |
 | --- | --- | --- | --- |
@@ -31,7 +31,7 @@
 
 **Agent 列表读路径：** UI 统一用 `GET /api/agents`（`agents.yaml` + status）。单 agent 能力用 `GET /api/agents/:id/capabilities`（**Hermes + managed**）：Hermes 读 profile FS；managed 读平台绑定 + runtime settings（如 Claude/Codex model）。`GET /api/profiles/capabilities` 仍仅 Hermes profile。声明增删改用 `/api/agent-registry`。
 
-当前版本：`2.5.0`。本地开发：`pnpm dev`（gateway + managed-agent `:8788` + Vite UI）或 `pnpm build && pnpm start`（同栈 + 生产 UI）；仅 UI 用 `pnpm start:ui` / `pnpm dev:ui`（默认 `PORT=6734`；localhost 下 gateway pool 可 lazy-start）。
+当前版本：`1.0.0`。本地开发：`pnpm dev`（gateway + managed-agent `:8788` + Vite UI）或 `pnpm build && pnpm start`（同栈 + 生产 UI）；仅 UI 用 `pnpm start:ui` / `pnpm dev:ui`（默认 `PORT=6734`；localhost 下 gateway pool 可 lazy-start）。
 
 ---
 

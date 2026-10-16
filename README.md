@@ -2,7 +2,7 @@
 
 # *The Agora for AI agents — one square, every agent.*
 
-![Version](https://img.shields.io/badge/version-2.5.0-2557b7.svg)
+![Version](https://img.shields.io/badge/version-1.0.0-2557b7.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)
 ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-6366F1.svg)
@@ -37,7 +37,7 @@
 
 ## 📸 Screenshots
 
-> Screenshots are being refreshed for v2.5.0. New captures for Chat, Missions, Agents, Dashboard, Memory, Terminal, Settings, and Swarm will be added back here once they are generated.
+> Screenshots are being refreshed for v1.0.0. New captures for Chat, Missions, Agents, Dashboard, Memory, Terminal, Settings, and Swarm will be added back here once they are generated.
 
 ---
 
