@@ -4,13 +4,13 @@
  * MissionSurface — IssueSurface-inspired shell (board/list/swimlane).
  * List entity is always Mission; Tasks only in detail.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { MissionStatus, MissionSummary } from '@/lib/mission-control-api'
 import { cn } from '@/lib/utils'
 import { fetchMissions, patchMission } from '@/lib/mission-control-api'
 import { CreateMissionButton } from './components/create-task-button'
-import { Button } from '@/components/ui/button'
+import { ToolbarSearch, ToolbarSelect } from '@/components/layout/toolbar'
 import { toast } from '@/components/ui/toast'
 
 export type MissionViewMode = 'board' | 'list' | 'swimlane'
@@ -25,7 +25,7 @@ const STATUSES: Array<{ id: MissionStatus; label: string }> = [
   { id: 'cancelled', label: 'Cancelled' },
 ]
 
-const STATUS_COLORS: Record<MissionStatus, string> = {
+export const STATUS_COLORS: Record<MissionStatus, string> = {
   todo: '#3b82f6',
   ready: '#0ea5e9',
   running: '#f97316',
@@ -67,18 +67,23 @@ function loadPrefs(): Partial<SurfacePrefs> {
   }
 }
 
-function resolveStatus(m: MissionSummary): MissionStatus {
-  return (m.status ?? m.boardLane ?? m.derivedStatus ?? m.lane ?? 'todo') as MissionStatus
+export function resolveStatus(m: MissionSummary): MissionStatus {
+  return (m.status ??
+    m.boardLane ??
+    m.derivedStatus ??
+    m.lane ??
+    'todo') as MissionStatus
 }
 
 function assigneeLabel(m: MissionSummary): string {
-  if (m.assignee?.type === 'chat_group') return `group:${m.assignee.id.slice(0, 8)}`
+  if (m.assignee?.type === 'chat_group')
+    return `group:${m.assignee.id.slice(0, 8)}`
   if (m.assignee?.type === 'agent') return m.assignee.id
   if (m.pipelineId) return `pipeline:${m.pipelineId}`
   return m.currentAssignee ?? '—'
 }
 
-function isActiveWorker(m: MissionSummary): boolean {
+export function isActiveWorker(m: MissionSummary): boolean {
   const status = resolveStatus(m)
   return status === 'running' || status === 'review' || status === 'ready'
 }
@@ -108,6 +113,7 @@ export function MissionSurface({ onSelectMission }: MissionSurfaceProps) {
   )
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [dragMissionId, setDragMissionId] = useState<string | null>(null)
+  const [dragOverLane, setDragOverLane] = useState<MissionStatus | null>(null)
   const queryClient = useQueryClient()
 
   useEffect(() => {
@@ -141,7 +147,8 @@ export function MissionSurface({ onSelectMission }: MissionSurfaceProps) {
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase()
     return missions.filter((m) => {
-      if (statusFilter !== 'all' && resolveStatus(m) !== statusFilter) return false
+      if (statusFilter !== 'all' && resolveStatus(m) !== statusFilter)
+        return false
       if (agentsWorkingOnly && !isActiveWorker(m)) return false
       if (!q) return true
       return (
@@ -152,7 +159,10 @@ export function MissionSurface({ onSelectMission }: MissionSurfaceProps) {
     })
   }, [missions, filter, statusFilter, agentsWorkingOnly])
 
-  const workingCount = missions.filter(isActiveWorker).length
+  const workingCount = useMemo(
+    () => missions.filter(isActiveWorker).length,
+    [missions],
+  )
 
   const byStatus = useMemo(() => {
     const map = new Map<MissionStatus, MissionSummary[]>()
@@ -171,7 +181,7 @@ export function MissionSurface({ onSelectMission }: MissionSurfaceProps) {
     for (const m of filtered) {
       const key =
         swimlaneBy === 'project'
-          ? m.projectId ?? 'No project'
+          ? (m.projectId ?? 'No project')
           : assigneeLabel(m)
       const list = map.get(key) ?? []
       list.push(m)
@@ -199,75 +209,124 @@ export function MissionSurface({ onSelectMission }: MissionSurfaceProps) {
   }
 
   function onDropStatus(statusId: MissionStatus) {
+    setDragOverLane(null)
     if (!dragMissionId) return
-    void moveMutation.mutateAsync({ missionId: dragMissionId, status: statusId })
+    void moveMutation.mutateAsync({
+      missionId: dragMissionId,
+      status: statusId,
+    })
     setDragMissionId(null)
   }
 
+  const openMission = useCallback(
+    (id: string) => onSelectMission(id),
+    [onSelectMission],
+  )
+  const startDrag = useCallback((id: string) => setDragMissionId(id), [])
+  const endDrag = useCallback(() => {
+    setDragMissionId(null)
+    setDragOverLane(null)
+  }, [])
+
+  function laneDropProps(id: MissionStatus) {
+    return {
+      onDragOver: (e: React.DragEvent) => {
+        if (!dragMissionId) return
+        e.preventDefault()
+        if (dragOverLane !== id) setDragOverLane(id)
+      },
+      onDragLeave: (e: React.DragEvent<HTMLElement>) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+        setDragOverLane((prev) => (prev === id ? null : prev))
+      },
+      onDrop: () => onDropStatus(id),
+    }
+  }
+
+  const isDragging = dragMissionId !== null
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--theme-border)] bg-[var(--theme-card)] px-4 py-2">
-        <div className="flex gap-0.5 rounded-lg bg-[var(--theme-input)] p-0.5">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
+        <div
+          className="flex h-9 items-center gap-0.5 rounded-lg border border-border bg-input p-0.5"
+          role="tablist"
+          aria-label="View"
+        >
           {(['board', 'list', 'swimlane'] as const).map((mode) => (
-            <Button
+            <button
               key={mode}
               type="button"
-              size="sm"
-              variant={viewMode === mode ? 'default' : 'ghost'}
+              role="tab"
+              aria-selected={viewMode === mode}
               onClick={() => setViewMode(mode)}
-              className="h-7 capitalize text-[11px]"
+              className={cn(
+                'h-full rounded-md px-3 text-xs capitalize transition-colors',
+                viewMode === mode
+                  ? 'bg-card font-medium text-fg shadow-sm'
+                  : 'text-fg-muted hover:text-fg',
+              )}
             >
               {mode}
-            </Button>
+            </button>
           ))}
         </div>
-        <input
+        <ToolbarSearch
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter missions…"
-          className="min-w-[10rem] flex-1 rounded-md field-surface px-2 py-1 text-xs"
+          className="basis-full sm:basis-0 sm:max-w-xs"
         />
-        <select
+        <ToolbarSelect
+          label="Status"
           value={statusFilter}
           onChange={(e) =>
             setStatusFilter(e.target.value as MissionStatus | 'all')
           }
-          className="control-surface rounded-md px-2 py-1 text-xs"
         >
-          <option value="all">All statuses</option>
+          <option value="all">All</option>
           {STATUSES.map((l) => (
             <option key={l.id} value={l.id}>
               {l.label}
             </option>
           ))}
-        </select>
-        <Button
-          type="button"
-          size="sm"
-          variant={agentsWorkingOnly ? 'default' : 'secondary'}
-          onClick={() => setAgentsWorkingOnly((v) => !v)}
-          className="h-7 text-[11px]"
-        >
-          Agents working ({workingCount})
-        </Button>
+        </ToolbarSelect>
         {viewMode === 'swimlane' ? (
-          <select
+          <ToolbarSelect
+            label="Group by"
             value={swimlaneBy}
             onChange={(e) =>
               setSwimlaneBy(e.target.value as 'assignee' | 'project')
             }
-            className="control-surface rounded-md px-2 py-1 text-xs"
           >
-            <option value="assignee">Swim by assignee</option>
-            <option value="project">Swim by project</option>
-          </select>
+            <option value="assignee">Assignee</option>
+            <option value="project">Project</option>
+          </ToolbarSelect>
         ) : null}
+        <button
+          type="button"
+          aria-pressed={agentsWorkingOnly}
+          onClick={() => setAgentsWorkingOnly((v) => !v)}
+          className={cn(
+            'inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs transition-colors',
+            agentsWorkingOnly
+              ? 'border-warning/50 bg-warning/10 text-warning'
+              : 'border-border bg-input text-fg-muted hover:text-fg',
+          )}
+        >
+          <span className="size-1.5 rounded-full bg-warning" />
+          Agents working
+          <span className="rounded bg-card-2 px-1.5 text-[11px] tabular-nums text-fg">
+            {workingCount}
+          </span>
+        </button>
         {selectedIds.size > 0 ? (
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-[var(--theme-muted)]">
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-xs text-fg-muted">
               {selectedIds.size} selected
             </span>
-            <select
+            <ToolbarSelect
+              label="Move to"
               defaultValue=""
               onChange={(e) => {
                 const value = e.target.value as MissionStatus | ''
@@ -275,95 +334,119 @@ export function MissionSurface({ onSelectMission }: MissionSurfaceProps) {
                 void batchMove(value)
                 e.target.value = ''
               }}
-              className="control-surface rounded-md px-2 py-1 text-xs"
             >
               <option value="" disabled>
-                Batch move…
+                Status…
               </option>
               {STATUSES.map((l) => (
                 <option key={l.id} value={l.id}>
                   {l.label}
                 </option>
               ))}
-            </select>
+            </ToolbarSelect>
           </div>
         ) : null}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto p-4">
+      <div className="min-h-0 flex-1 overflow-hidden">
         {missionsQuery.isLoading ? (
-          <p className="text-xs text-[var(--theme-muted)]">Loading missions…</p>
+          <p className="p-4 text-xs text-fg-muted">Loading missions…</p>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <p className="text-sm text-[var(--theme-muted)]">No missions yet.</p>
-            <CreateMissionButton variant="inline" />
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+            <p className="text-sm text-fg-muted">
+              {missions.length === 0
+                ? 'No missions yet.'
+                : 'No missions match these filters.'}
+            </p>
+            {missions.length === 0 ? (
+              <CreateMissionButton variant="inline" />
+            ) : null}
           </div>
         ) : viewMode === 'board' ? (
-          <div className="flex gap-3 overflow-x-auto pb-2">
-            {STATUSES.map((lane) => (
-              <div
-                key={lane.id}
-                className="flex w-64 shrink-0 flex-col rounded-lg border border-[var(--theme-border)] bg-[var(--theme-card)]"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={() => onDropStatus(lane.id)}
-              >
-                <div className="flex items-center gap-2 border-b border-[var(--theme-border)] px-3 py-2">
-                  <span
-                    className="h-2 w-2 rounded-full"
-                    style={{ background: STATUS_COLORS[lane.id] }}
-                  />
-                  <span className="text-xs font-semibold">{lane.label}</span>
-                  <span className="ml-auto text-[10px] text-[var(--theme-muted)]">
-                    {byStatus.get(lane.id)?.length ?? 0}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-2 p-2">
-                  {(byStatus.get(lane.id) ?? []).map((m) => (
-                    <MissionCard
-                      key={selectId(m)}
-                      mission={m}
-                      draggable
-                      onDragStart={() => setDragMissionId(selectId(m))}
-                      onOpen={() => onSelectMission(selectId(m))}
+          <div className="flex h-full gap-3 overflow-x-auto p-4">
+            {STATUSES.map((lane) => {
+              const rows = byStatus.get(lane.id) ?? []
+              const isOver = dragOverLane === lane.id
+              return (
+                <div
+                  key={lane.id}
+                  className={cn(
+                    'flex min-w-[11rem] flex-1 basis-0 flex-col rounded-xl border bg-panel transition-colors',
+                    isOver ? 'border-accent bg-accent/5' : 'border-border',
+                  )}
+                  {...laneDropProps(lane.id)}
+                >
+                  <div className="flex shrink-0 items-center gap-2 px-3 py-2.5">
+                    <span
+                      className="size-2 rounded-full"
+                      style={{ background: STATUS_COLORS[lane.id] }}
                     />
-                  ))}
+                    <span className="text-xs font-semibold text-fg">
+                      {lane.label}
+                    </span>
+                    <span className="ml-auto rounded bg-card-2 px-1.5 text-[11px] tabular-nums text-fg-muted">
+                      {rows.length}
+                    </span>
+                  </div>
+                  <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
+                    {rows.map((m) => (
+                      <MissionCard
+                        key={selectId(m)}
+                        mission={m}
+                        onOpen={openMission}
+                        onDragStart={startDrag}
+                        onDragEnd={endDrag}
+                      />
+                    ))}
+                    {rows.length === 0 ? (
+                      <div
+                        className={cn(
+                          'rounded-lg border border-dashed py-6 text-center text-[11px] text-fg-muted',
+                          isDragging ? 'border-accent/40' : 'border-border',
+                        )}
+                      >
+                        {isDragging ? 'Drop here' : 'No missions'}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         ) : viewMode === 'list' ? (
-          <div className="space-y-4">
+          <div className="h-full space-y-5 overflow-y-auto p-4">
             {STATUSES.map((lane) => {
               const rows = byStatus.get(lane.id) ?? []
               if (rows.length === 0) return null
               return (
                 <section key={lane.id}>
-                  <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--theme-muted)]">
+                  <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold text-fg">
                     <span
-                      className="h-2 w-2 rounded-full"
+                      className="size-2 rounded-full"
                       style={{ background: STATUS_COLORS[lane.id] }}
                     />
                     {lane.label}
-                    <span className="font-normal normal-case tracking-normal">
-                      ({rows.length})
+                    <span className="rounded bg-card-2 px-1.5 text-[11px] font-normal tabular-nums text-fg-muted">
+                      {rows.length}
                     </span>
                   </h3>
-                  <div className="overflow-hidden rounded-lg border border-[var(--theme-border)]">
-                    <div className="hidden grid-cols-[auto_minmax(0,1fr)_7rem_6rem_3.5rem] gap-2 border-b border-[var(--theme-border)] bg-[var(--theme-card)] px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--theme-muted)] sm:grid">
+                  <div className="overflow-hidden rounded-xl border border-border bg-panel">
+                    <div className="hidden grid-cols-[auto_minmax(0,1fr)_10rem_8rem_4rem] gap-3 border-b border-border px-3 py-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted sm:grid">
                       <span className="w-4" />
                       <span>Title</span>
                       <span>Assignee</span>
                       <span>Pipeline</span>
                       <span className="text-right">Tasks</span>
                     </div>
-                    <div className="divide-y divide-[var(--theme-border)]">
+                    <div className="divide-y divide-border">
                       {rows.map((m) => (
                         <div
                           key={selectId(m)}
-                          className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 px-3 py-2 hover:bg-[var(--theme-hover)] sm:grid-cols-[auto_minmax(0,1fr)_7rem_6rem_3.5rem]"
+                          className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 transition-colors hover:bg-hover sm:grid-cols-[auto_minmax(0,1fr)_10rem_8rem_4rem]"
                         >
                           <input
                             type="checkbox"
+                            className="size-4 accent-[var(--theme-accent)]"
                             checked={selectedIds.has(selectId(m))}
                             onChange={() => toggleSelect(selectId(m))}
                           />
@@ -372,22 +455,22 @@ export function MissionSurface({ onSelectMission }: MissionSurfaceProps) {
                             className="min-w-0 text-left text-sm"
                             onClick={() => onSelectMission(selectId(m))}
                           >
-                            <span className="line-clamp-2 font-medium">
+                            <span className="line-clamp-2 font-medium text-fg">
                               {m.title}
                             </span>
-                            <span className="mt-0.5 block text-[10px] text-[var(--theme-muted)] sm:hidden">
+                            <span className="mt-0.5 block text-[11px] text-fg-muted sm:hidden">
                               {assigneeLabel(m)}
                               {m.pipelineId ? ` · ${m.pipelineId}` : ''}
-                              {` · ${m.taskCount} tasks`}
+                              {` · ${taskCountLabel(m.taskCount)}`}
                             </span>
                           </button>
-                          <span className="hidden truncate text-[11px] text-[var(--theme-muted)] sm:block">
+                          <span className="hidden truncate text-xs text-fg-muted sm:block">
                             {assigneeLabel(m)}
                           </span>
-                          <span className="hidden truncate text-[11px] text-[var(--theme-muted)] sm:block">
+                          <span className="hidden truncate text-xs text-fg-muted sm:block">
                             {m.pipelineId ?? '—'}
                           </span>
-                          <span className="hidden text-right text-[11px] tabular-nums text-[var(--theme-muted)] sm:block">
+                          <span className="hidden text-right text-xs tabular-nums text-fg-muted sm:block">
                             {m.taskCount}
                           </span>
                         </div>
@@ -399,37 +482,52 @@ export function MissionSurface({ onSelectMission }: MissionSurfaceProps) {
             })}
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="h-full space-y-5 overflow-auto p-4">
             {swimLanes.map(([laneName, rows]) => (
               <section key={laneName}>
-                <h3 className="mb-2 text-xs font-semibold text-[var(--theme-muted)]">
+                <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold text-fg">
                   {laneName}
+                  <span className="rounded bg-card-2 px-1.5 text-[11px] font-normal tabular-nums text-fg-muted">
+                    {rows.length}
+                  </span>
                 </h3>
-                <div className="flex gap-2 overflow-x-auto">
-                  {STATUSES.map((lane) => (
-                    <div
-                      key={lane.id}
-                      className="w-48 shrink-0 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-card)] p-2"
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={() => onDropStatus(lane.id)}
-                    >
-                      <div className="mb-1 text-[10px] font-medium uppercase text-[var(--theme-muted)]">
-                        {lane.label}
-                      </div>
-                      {rows
-                        .filter((m) => resolveStatus(m) === lane.id)
-                        .map((m) => (
+                <div className="flex gap-2">
+                  {STATUSES.map((lane) => {
+                    const cells = rows.filter(
+                      (m) => resolveStatus(m) === lane.id,
+                    )
+                    const isOver = dragOverLane === lane.id
+                    return (
+                      <div
+                        key={lane.id}
+                        className={cn(
+                          'min-w-[10rem] flex-1 basis-0 space-y-1.5 rounded-xl border bg-panel p-2 transition-colors',
+                          isOver
+                            ? 'border-accent bg-accent/5'
+                            : 'border-border',
+                        )}
+                        {...laneDropProps(lane.id)}
+                      >
+                        <div className="flex items-center gap-1.5 px-0.5 text-[10px] font-medium uppercase tracking-wider text-fg-muted">
+                          <span
+                            className="size-1.5 rounded-full"
+                            style={{ background: STATUS_COLORS[lane.id] }}
+                          />
+                          {lane.label}
+                        </div>
+                        {cells.map((m) => (
                           <MissionCard
                             key={selectId(m)}
                             mission={m}
                             compact
-                            draggable
-                            onDragStart={() => setDragMissionId(selectId(m))}
-                            onOpen={() => onSelectMission(selectId(m))}
+                            onOpen={openMission}
+                            onDragStart={startDrag}
+                            onDragEnd={endDrag}
                           />
                         ))}
-                    </div>
-                  ))}
+                      </div>
+                    )
+                  })}
                 </div>
               </section>
             ))}
@@ -440,53 +538,73 @@ export function MissionSurface({ onSelectMission }: MissionSurfaceProps) {
   )
 }
 
-function MissionCard({
+function taskCountLabel(count: number): string {
+  return `${count} ${count === 1 ? 'task' : 'tasks'}`
+}
+
+function workerLabel(mission: MissionSummary): string {
+  if (mission.currentAssignee) {
+    return mission.currentStage &&
+      mission.currentStage !== mission.currentAssignee
+      ? `${mission.currentAssignee} · ${mission.currentStage}`
+      : mission.currentAssignee
+  }
+  if (mission.currentStage) return mission.currentStage
+  const assignee = assigneeLabel(mission)
+  return assignee === '—' ? 'Unassigned' : assignee
+}
+
+/** Memoised: the 30s refetch keeps unchanged mission objects by reference. */
+const MissionCard = memo(function MissionCardView({
   mission,
   onOpen,
   compact,
-  draggable,
   onDragStart,
+  onDragEnd,
 }: {
   mission: MissionSummary
-  onOpen: () => void
+  onOpen: (id: string) => void
   compact?: boolean
-  draggable?: boolean
-  onDragStart?: () => void
+  onDragStart?: (id: string) => void
+  onDragEnd?: () => void
 }) {
+  const id = selectId(mission)
   return (
     <button
       type="button"
-      draggable={draggable}
-      onDragStart={onDragStart}
-      onClick={onOpen}
+      draggable={Boolean(onDragStart)}
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'move'
+        onDragStart?.(id)
+      }}
+      onDragEnd={onDragEnd}
+      onClick={() => onOpen(id)}
       className={cn(
-        'w-full rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg)] p-2 text-left transition-colors hover:border-[var(--theme-accent)]',
-        compact && 'mb-1',
+        'w-full rounded-lg border border-border bg-card text-left transition-colors hover:border-accent/50 hover:bg-hover',
+        compact ? 'p-2' : 'p-2.5',
       )}
     >
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-xs font-medium leading-snug">{mission.title}</span>
+      <span
+        className={cn(
+          'line-clamp-2 block font-medium leading-snug text-fg',
+          compact ? 'text-xs' : 'text-[13px]',
+        )}
+      >
+        {mission.title}
+      </span>
+      <div className="mt-2 flex items-center gap-2 text-[11px] text-fg-muted">
         {isActiveWorker(mission) ? (
-          <span className="shrink-0 rounded bg-amber-500/15 px-1 text-[9px] font-medium text-amber-700">
-            Working
-          </span>
+          <span
+            className="size-1.5 shrink-0 rounded-full bg-warning"
+            title="Agent working"
+            aria-label="Agent working"
+          />
         ) : null}
-      </div>
-      <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-[var(--theme-muted)]">
-        <span className="truncate">
-          {mission.currentAssignee
-            ? `${mission.currentAssignee}${
-                mission.currentStage &&
-                mission.currentStage !== mission.currentAssignee
-                  ? ` · ${mission.currentStage}`
-                  : ''
-              }`
-            : mission.currentStage
-              ? mission.currentStage
-              : assigneeLabel(mission)}
+        <span className="min-w-0 flex-1 truncate">{workerLabel(mission)}</span>
+        <span className="shrink-0 tabular-nums">
+          {taskCountLabel(mission.taskCount)}
         </span>
-        <span>{mission.taskCount} tasks</span>
       </div>
     </button>
   )
-}
+})

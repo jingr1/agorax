@@ -14,11 +14,16 @@ import {
   PencilEdit02Icon,
   PlayIcon,
   RefreshIcon,
-  Search01Icon,
 } from '@hugeicons/core-free-icons'
 import { CreateJobDialog } from './create-job-dialog'
 import { EditJobDialog } from './edit-job-dialog'
 import type { ClaudeJob } from '@/lib/jobs-api'
+import { EmptyState } from '@/components/empty-state'
+import { PageHeader } from '@/components/layout/page-header'
+import { PageShell } from '@/components/layout/page-shell'
+import { Section } from '@/components/layout/section'
+import { Toolbar, ToolbarSearch } from '@/components/layout/toolbar'
+import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 import {
@@ -418,149 +423,110 @@ export function JobsScreen() {
   )
 
   return (
-    <div className="min-h-full overflow-y-auto bg-surface text-ink">
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-5 px-4 py-6 pb-[calc(var(--tabbar-h,80px)+1.5rem)] sm:px-6 lg:px-8">
-        <header className="rounded-2xl border border-primary-200 bg-primary-50/85 p-4 backdrop-blur-xl">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <HugeiconsIcon
-                icon={Clock01Icon}
-                size={18}
-                className="text-[var(--theme-accent)]"
-              />
-              <h1 className="text-base font-semibold text-[var(--theme-text)]">
-                Jobs
-              </h1>
-              {jobsQuery.data && (
-                <span className="ml-1 text-xs text-[var(--theme-muted)]">
-                  ({jobsQuery.data.length})
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() =>
-                  void queryClient.invalidateQueries({ queryKey: QUERY_KEY })
-                }
-                className="rounded-lg p-1.5 transition-colors hover:bg-[var(--theme-hover)]"
-                title="Refresh"
-              >
-                <HugeiconsIcon
-                  icon={RefreshIcon}
-                  size={16}
-                  className="text-[var(--theme-muted)]"
-                />
-              </button>
-              <button
-                onClick={() => setShowCreate(true)}
-                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
-                style={{ background: 'var(--theme-accent)' }}
-              >
-                <HugeiconsIcon icon={Add01Icon} size={14} />
-                New Job
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <div className="rounded-2xl border border-primary-200 bg-primary-50/85 p-4 backdrop-blur-xl">
-          <div className="relative">
-            <HugeiconsIcon
-              icon={Search01Icon}
-              size={14}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--theme-muted)]"
-            />
-            <input
-              type="text"
-              placeholder="Search jobs..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-lg border border-[var(--theme-border)] bg-[var(--theme-input)] py-1.5 pl-8 pr-3 text-xs text-[var(--theme-text)] placeholder:text-[var(--theme-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--theme-accent)]"
-            />
-          </div>
-          {profilesQuery.isError ? (
-            <p
-              className="mt-2 text-xs"
-              style={{ color: 'var(--theme-warning)' }}
+    <PageShell>
+      <PageHeader
+        icon={Clock01Icon}
+        title="Jobs"
+        meta={jobsQuery.data ? jobsQuery.data.length : undefined}
+        description="Scheduled cron jobs across Hermes profiles"
+        actions={
+          <>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() =>
+                void queryClient.invalidateQueries({ queryKey: QUERY_KEY })
+              }
+              title="Refresh"
             >
-              Profile list failed to load. New jobs will default to the default
-              profile until profiles refresh.
-            </p>
-          ) : null}
-        </div>
+              <HugeiconsIcon icon={RefreshIcon} size={16} />
+            </Button>
+            <Button size="sm" onClick={() => setShowCreate(true)}>
+              <HugeiconsIcon icon={Add01Icon} size={14} />
+              New Job
+            </Button>
+          </>
+        }
+      />
 
-        <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3">
-          {jobsQuery.isLoading ? (
-            <div className="flex items-center justify-center py-12 text-sm text-[var(--theme-muted)]">
-              Loading jobs...
-            </div>
-          ) : jobsQuery.isError ? (
-            <div
-              className="flex items-center justify-center py-12 text-sm"
-              style={{ color: 'var(--theme-danger)' }}
-            >
-              Failed to load jobs:{' '}
-              {jobsQuery.error instanceof Error
-                ? jobsQuery.error.message
-                : 'Unknown error'}
-            </div>
-          ) : filteredJobs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-[var(--theme-muted)]">
-              <HugeiconsIcon
-                icon={Clock01Icon}
-                size={32}
-                className="mb-3 opacity-40"
+      <Section className="p-3">
+        <Toolbar>
+          <ToolbarSearch
+            placeholder="Search jobs..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </Toolbar>
+        {profilesQuery.isError ? (
+          <p className="mt-2 text-xs text-warning">
+            Profile list failed to load. New jobs will default to the default
+            profile until profiles refresh.
+          </p>
+        ) : null}
+      </Section>
+
+      <div className="space-y-2">
+        {jobsQuery.isLoading ? (
+          <div className="flex items-center justify-center py-12 text-sm text-fg-muted">
+            Loading jobs...
+          </div>
+        ) : jobsQuery.isError ? (
+          <div className="flex items-center justify-center py-12 text-sm text-danger">
+            Failed to load jobs:{' '}
+            {jobsQuery.error instanceof Error
+              ? jobsQuery.error.message
+              : 'Unknown error'}
+          </div>
+        ) : filteredJobs.length === 0 ? (
+          <EmptyState
+            icon={Clock01Icon}
+            title="No scheduled jobs"
+            description="No cron jobs found across Hermes profiles"
+          />
+        ) : (
+          <AnimatePresence mode="popLayout">
+            {filteredJobs.map((job) => (
+              <JobCard
+                key={job.id}
+                job={job}
+                onPause={(id) => pauseMutation.mutate(id)}
+                onResume={(id) => resumeMutation.mutate(id)}
+                onTrigger={(id) => triggerMutation.mutate(id)}
+                onEdit={(selectedJob) => setEditingJob(selectedJob)}
+                onDelete={(id) => {
+                  if (confirm(`Delete job "${job.name}"?`)) {
+                    deleteMutation.mutate(id)
+                  }
+                }}
               />
-              <p className="text-sm font-medium">No scheduled jobs</p>
-              <p className="mt-1 text-xs">
-                No cron jobs found across Hermes profiles
-              </p>
-            </div>
-          ) : (
-            <AnimatePresence mode="popLayout">
-              {filteredJobs.map((job) => (
-                <JobCard
-                  key={job.id}
-                  job={job}
-                  onPause={(id) => pauseMutation.mutate(id)}
-                  onResume={(id) => resumeMutation.mutate(id)}
-                  onTrigger={(id) => triggerMutation.mutate(id)}
-                  onEdit={(selectedJob) => setEditingJob(selectedJob)}
-                  onDelete={(id) => {
-                    if (confirm(`Delete job "${job.name}"?`)) {
-                      deleteMutation.mutate(id)
-                    }
-                  }}
-                />
-              ))}
-            </AnimatePresence>
-          )}
-        </div>
-
-        <CreateJobDialog
-          open={showCreate}
-          profiles={profiles}
-          onOpenChange={setShowCreate}
-          onSubmit={handleCreate}
-          isSubmitting={createMutation.isPending}
-        />
-        <EditJobDialog
-          job={editingJob}
-          open={editingJob !== null}
-          profiles={profiles}
-          onOpenChange={(open) => {
-            if (!open) setEditingJob(null)
-          }}
-          onSubmit={async (updates) => {
-            if (!editingJob) return
-            await updateMutation.mutateAsync({
-              jobId: editingJob.id,
-              updates,
-            })
-          }}
-          isSubmitting={updateMutation.isPending}
-        />
+            ))}
+          </AnimatePresence>
+        )}
       </div>
-    </div>
+
+      <CreateJobDialog
+        open={showCreate}
+        profiles={profiles}
+        onOpenChange={setShowCreate}
+        onSubmit={handleCreate}
+        isSubmitting={createMutation.isPending}
+      />
+      <EditJobDialog
+        job={editingJob}
+        open={editingJob !== null}
+        profiles={profiles}
+        onOpenChange={(open) => {
+          if (!open) setEditingJob(null)
+        }}
+        onSubmit={async (updates) => {
+          if (!editingJob) return
+          await updateMutation.mutateAsync({
+            jobId: editingJob.id,
+            updates,
+          })
+        }}
+        isSubmitting={updateMutation.isPending}
+      />
+    </PageShell>
   )
 }

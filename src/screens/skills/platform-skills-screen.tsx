@@ -6,7 +6,15 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { PlusSignIcon } from '@hugeicons/core-free-icons'
+import { PlusSignIcon, PuzzleIcon } from '@hugeicons/core-free-icons'
+import { PageHeader } from '@/components/layout/page-header'
+import { PageShell } from '@/components/layout/page-shell'
+import { Section } from '@/components/layout/section'
+import {
+  Toolbar,
+  ToolbarSearch,
+  ToolbarSelect,
+} from '@/components/layout/toolbar'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { toast } from '@/components/ui/toast'
@@ -174,9 +182,7 @@ export function PlatformSkillsScreen() {
       list = list.filter((s) => boundIds.has(s.id))
     }
     if (category !== 'All') {
-      list = list.filter(
-        (s) => (s.category?.trim() || 'General') === category,
-      )
+      list = list.filter((s) => (s.category?.trim() || 'General') === category)
     }
     if (q) {
       list = list.filter(
@@ -196,173 +202,144 @@ export function PlatformSkillsScreen() {
   }, [skills, search, filterAgentId, category, sort, bindingBySkillId])
 
   return (
-    <div className="min-h-full overflow-y-auto bg-surface text-ink">
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-5 px-4 py-6 pb-[calc(var(--tabbar-h,80px)+1.5rem)] sm:px-6 lg:px-8">
-        <header className="rounded-2xl border border-primary-200 bg-primary-50/85 p-4 backdrop-blur-xl">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1.5">
-              <p className="text-xs font-medium uppercase text-primary-500 tabular-nums">
-                Platform catalog
-              </p>
-              <h1 className="text-2xl font-medium text-ink text-balance sm:text-3xl">
-                Skills
-              </h1>
-              <p className="text-sm text-primary-500 text-pretty sm:text-base">
-                目录共 {skills.length} 个
-                {filteredSkills.length !== skills.length
-                  ? ` · 当前筛选 ${filteredSkills.length}`
-                  : ''}
-                。点「同步本地 skills」从磁盘导入；点击行进入详情。Composer{' '}
-                <code className="text-xs">/</code> 仅列出已启用绑定。
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={syncMutation.isPending}
-                onClick={() => syncMutation.mutate()}
-              >
-                同步本地 skills
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => setCreateOpen(true)}
-              >
-                <HugeiconsIcon icon={PlusSignIcon} size={14} />
-                新建 skill
-              </Button>
-            </div>
-          </div>
-        </header>
+    <PageShell>
+      <PageHeader
+        icon={PuzzleIcon}
+        title="Skills"
+        meta={
+          filteredSkills.length !== skills.length
+            ? `${filteredSkills.length} / ${skills.length}`
+            : skills.length
+        }
+        description={
+          <>
+            点「同步本地 skills」从磁盘导入；点击行进入详情。Composer{' '}
+            <code className="text-xs">/</code> 仅列出已启用绑定。
+          </>
+        }
+        actions={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={syncMutation.isPending}
+              onClick={() => syncMutation.mutate()}
+            >
+              同步本地 skills
+            </Button>
+            <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
+              <HugeiconsIcon icon={PlusSignIcon} size={14} />
+              新建 skill
+            </Button>
+          </>
+        }
+      />
 
-        <section className="rounded-2xl border border-primary-200 bg-primary-50/80 p-3 backdrop-blur-xl sm:p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex h-9 items-center gap-2 rounded-lg border border-primary-200 bg-primary-100/60 px-3 text-xs text-primary-500">
-              <span className="font-medium uppercase tracking-wider text-[10px]">
-                Agent
-              </span>
-              <select
-                value={filterAgentId}
-                onChange={(event) => setFilterAgentId(event.target.value)}
-                className="h-7 rounded-md border border-primary-200 bg-primary-50/70 px-2 text-xs text-ink outline-none"
-                aria-label="按智能体筛选"
-              >
-                <option value="all">全部（目录）</option>
-                {agents.map((agent) => (
-                  <option key={agentIdOf(agent)} value={agentIdOf(agent)}>
-                    {agentLabel(agent)}
-                    {agent.runtime ? ` · ${agent.runtime}` : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex h-9 items-center gap-2 rounded-lg border border-primary-200 bg-primary-100/60 px-3 text-xs text-primary-500">
-              <span className="font-medium uppercase tracking-wider text-[10px]">
-                Category
-              </span>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="h-7 max-w-[160px] rounded-md border border-primary-200 bg-primary-50/70 px-2 text-xs text-ink outline-none"
-              >
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex h-9 items-center gap-2 rounded-lg border border-primary-200 bg-primary-100/60 px-3 text-xs text-primary-500">
-              <span className="font-medium uppercase tracking-wider text-[10px]">
-                Sort
-              </span>
-              <select
-                value={sort}
-                onChange={(e) =>
-                  setSort(e.target.value === 'category' ? 'category' : 'name')
-                }
-                className="h-7 rounded-md border border-primary-200 bg-primary-50/70 px-2 text-xs text-ink outline-none"
-              >
-                <option value="name">Name</option>
-                <option value="category">Category</option>
-              </select>
-            </label>
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="搜索 skills…"
-              className="h-9 w-full min-w-0 flex-1 rounded-lg border border-primary-200 bg-primary-100/60 px-3 text-sm text-ink outline-none focus:border-primary sm:min-w-[180px]"
-            />
-          </div>
-        </section>
+      <Section className="p-3">
+        <Toolbar>
+          <ToolbarSelect
+            label="Agent"
+            value={filterAgentId}
+            onChange={(event) => setFilterAgentId(event.target.value)}
+            aria-label="按智能体筛选"
+          >
+            <option value="all">全部（目录）</option>
+            {agents.map((agent) => (
+              <option key={agentIdOf(agent)} value={agentIdOf(agent)}>
+                {agentLabel(agent)}
+                {agent.runtime ? ` · ${agent.runtime}` : ''}
+              </option>
+            ))}
+          </ToolbarSelect>
+          <ToolbarSelect
+            label="Category"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+          >
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </ToolbarSelect>
+          <ToolbarSelect
+            label="Sort"
+            value={sort}
+            onChange={(e) =>
+              setSort(e.target.value === 'category' ? 'category' : 'name')
+            }
+          >
+            <option value="name">Name</option>
+            <option value="category">Category</option>
+          </ToolbarSelect>
+          <ToolbarSearch
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="搜索 skills…"
+          />
+        </Toolbar>
+      </Section>
 
-        <section className="rounded-2xl border border-primary-200 bg-primary-50/70 overflow-hidden">
-          {skillsQuery.isLoading ? (
-            <p className="p-4 text-sm text-primary-500">加载中…</p>
-          ) : filteredSkills.length === 0 ? (
-            <p className="p-4 text-sm text-primary-500">
-              没有 skill。点「同步本地 skills」从磁盘导入，或新建一个。
-            </p>
-          ) : (
-            <ul className="divide-y divide-primary-200">
-              {filteredSkills.map((skill) => {
-                const binding = bindingBySkillId.get(skill.id)
-                return (
-                  <li key={skill.id}>
-                    <div className="flex items-start gap-3 px-4 py-3 hover:bg-primary-100/40">
-                      <Link
-                        to="/skills/$skillId"
-                        params={{ skillId: skill.id }}
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-ink">
-                            {skill.name}
-                          </span>
-                          <span className="rounded-md bg-primary-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-primary-500">
-                            {skill.category?.trim() || 'General'}
-                          </span>
-                        </div>
-                        <p className="mt-1 line-clamp-2 text-sm text-primary-500">
-                          {skill.description || '无描述'}
-                        </p>
-                        <p className="mt-1 text-[11px] text-primary-400 tabular-nums">
-                          {skill.boundAgentCount} 个智能体
-                        </p>
-                      </Link>
-                      {filterAgentId !== 'all' && binding ? (
-                        <div className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
-                          <Switch
-                            checked={binding.enabled}
-                            onCheckedChange={(enabled) => {
-                              bindMutation.mutate({
-                                agentId: filterAgentId,
-                                skillId: skill.id,
-                                action: enabled ? 'enable' : 'disable',
-                              })
-                            }}
-                            aria-label={`启用 ${skill.name}`}
-                          />
-                          <span
-                            className={cn(
-                              'text-[10px] text-primary-500',
-                            )}
-                          >
-                            {binding.enabled ? 'Enabled' : 'Disabled'}
-                          </span>
-                        </div>
-                      ) : null}
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </section>
-      </div>
+      <Section className="overflow-hidden p-0">
+        {skillsQuery.isLoading ? (
+          <p className="p-4 text-sm text-fg-muted">加载中…</p>
+        ) : filteredSkills.length === 0 ? (
+          <p className="p-4 text-sm text-fg-muted">
+            没有 skill。点「同步本地 skills」从磁盘导入，或新建一个。
+          </p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {filteredSkills.map((skill) => {
+              const binding = bindingBySkillId.get(skill.id)
+              return (
+                <li key={skill.id}>
+                  <div className="flex items-start gap-3 px-4 py-3 hover:bg-card">
+                    <Link
+                      to="/skills/$skillId"
+                      params={{ skillId: skill.id }}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-ink">
+                          {skill.name}
+                        </span>
+                        <span className="rounded-md bg-primary-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-primary-500">
+                          {skill.category?.trim() || 'General'}
+                        </span>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-sm text-primary-500">
+                        {skill.description || '无描述'}
+                      </p>
+                      <p className="mt-1 text-[11px] text-primary-400 tabular-nums">
+                        {skill.boundAgentCount} 个智能体
+                      </p>
+                    </Link>
+                    {filterAgentId !== 'all' && binding ? (
+                      <div className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
+                        <Switch
+                          checked={binding.enabled}
+                          onCheckedChange={(enabled) => {
+                            bindMutation.mutate({
+                              agentId: filterAgentId,
+                              skillId: skill.id,
+                              action: enabled ? 'enable' : 'disable',
+                            })
+                          }}
+                          aria-label={`启用 ${skill.name}`}
+                        />
+                        <span className={cn('text-[10px] text-primary-500')}>
+                          {binding.enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </Section>
 
       <CreateSkillDialog
         open={createOpen}
@@ -376,6 +353,6 @@ export function PlatformSkillsScreen() {
           })
         }}
       />
-    </div>
+    </PageShell>
   )
 }

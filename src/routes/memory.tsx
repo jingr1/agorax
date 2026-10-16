@@ -1,6 +1,8 @@
 import { Suspense, lazy, useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
+import { BrainIcon } from '@hugeicons/core-free-icons'
 import BackendUnavailableState from '@/components/backend-unavailable-state'
+import { PageHeader } from '@/components/layout/page-header'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
 import { useFeatureAvailable } from '@/hooks/use-feature-available'
 import { usePageTitle } from '@/hooks/use-page-title'
@@ -40,16 +42,21 @@ export const Route = createFileRoute('/memory')({
           }
           className="h-full min-h-0 gap-0"
         >
-          <div className="border-b border-primary-200 px-3 pt-3 dark:border-neutral-800 md:px-4 md:pt-4">
+          <PageHeader
+            variant="bar"
+            icon={BrainIcon}
+            title="Memory"
+            className="pb-0"
+          >
             <TabsList
               variant="underline"
-              className="w-full justify-start gap-1"
+              className="mt-1 w-full justify-start gap-1"
             >
               <TabsTab value="memory">Memory</TabsTab>
               <TabsTab value="knowledge">Knowledge</TabsTab>
               <TabsTab value="external">External providers</TabsTab>
             </TabsList>
-          </div>
+          </PageHeader>
 
           <TabsPanel value="memory" className="min-h-0 flex-1">
             {tab === 'memory' ? (
@@ -101,7 +108,7 @@ export const Route = createFileRoute('/memory')({
 
 function RouteLoadingState({ label }: { label: string }) {
   return (
-    <div className="flex h-full min-h-[240px] items-center justify-center px-4 text-sm text-primary-500 dark:text-neutral-400">
+    <div className="flex h-full min-h-[240px] items-center justify-center px-4 text-sm text-fg-muted">
       {label}
     </div>
   )

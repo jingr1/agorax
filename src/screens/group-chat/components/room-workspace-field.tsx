@@ -24,10 +24,7 @@ async function fetchWorkspaceEntries(): Promise<Array<WorkspaceEntry>> {
     }
     const list = Array.isArray(data.workspaces) ? data.workspaces : []
     if (data.path && !list.some((w) => w.path === data.path)) {
-      return [
-        { name: shortPathLabel(data.path), path: data.path },
-        ...list,
-      ]
+      return [{ name: shortPathLabel(data.path), path: data.path }, ...list]
     }
     return list
   } catch {
@@ -39,6 +36,8 @@ type RoomWorkspaceFieldProps = {
   value: string
   onChange: (path: string) => void
   className?: string
+  /** Attach-path lists files. Workspace dialogs stay folder-only. */
+  includeFiles?: boolean
   /**
    * @deprecated Kept for call-site compatibility; picker always shows the
    * chat-style path input + folder tree.
@@ -55,13 +54,14 @@ export function RoomWorkspaceField({
   value,
   onChange,
   className,
+  includeFiles = false,
 }: RoomWorkspaceFieldProps) {
   const [entries, setEntries] = useState<Array<WorkspaceEntry>>([])
 
   useEffect(() => {
     void fetchWorkspaceEntries().then(setEntries)
-    preloadWorkspaceFolders('')
-  }, [])
+    preloadWorkspaceFolders('', includeFiles)
+  }, [includeFiles])
 
   return (
     <div className={cn('space-y-3', className)}>
@@ -105,7 +105,11 @@ export function RoomWorkspaceField({
           </div>
         </div>
       ) : null}
-      <WorkspaceFolderPicker value={value} onChange={onChange} />
+      <WorkspaceFolderPicker
+        value={value}
+        onChange={onChange}
+        includeFiles={includeFiles}
+      />
     </div>
   )
 }

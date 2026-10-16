@@ -87,6 +87,22 @@
     black
   );
 
+  /* Semantic aliases — screens should use these (bg-panel, text-fg-muted,
+     border-border, …) instead of primary-* ramps or hardcoded neutral-*. */
+  --color-panel: var(--theme-panel, oklch(0.14 0.005 80));
+  --color-card: var(--theme-card, oklch(0.18 0.005 80));
+  --color-card-2: var(--theme-card2, oklch(0.2 0.005 80));
+  --color-input: var(--theme-input, oklch(0.18 0.005 80));
+  --color-hover: var(--theme-hover, rgb(255 255 255 / 6%));
+  --color-border: var(--theme-border, oklch(0.26 0.006 80));
+  --color-border-subtle: var(--theme-border-subtle, oklch(0.34 0.006 80));
+  --color-fg: var(--theme-text, oklch(0.95 0.002 80));
+  --color-fg-muted: var(--theme-muted, oklch(0.55 0.006 80));
+  --color-accent: var(--theme-accent, #8a8f98);
+  --color-danger: var(--theme-danger, #e5484d);
+  --color-warning: var(--theme-warning, #f5a524);
+  --color-success: var(--theme-success, #30a46c);
+
   /* Tutti desktop: control radius ~6px; cards/panels 8/12/18 */
   --radius-sm: 6px;
   --radius-md: 8px;

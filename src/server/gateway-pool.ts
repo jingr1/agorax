@@ -42,6 +42,7 @@ import {
 import {
   isMultiplexProfileHealthy,
   isProfileMultiplexServed,
+  isProfileStandalone,
   multiplexProfileGatewayUrl,
   readLiveMultiplexGateway,
   shouldUseMultiplexGatewayPath,
@@ -89,6 +90,8 @@ export type EnsureGatewayResult = Omit<StartHermesAgentResult, 'ok' | 'error'> &
     port?: number
     url?: string
     started?: boolean
+    /** Config can never work as-is; retrying or proceeding is pointless. */
+    misconfigured?: boolean
   }
 
 const ensurePromises = new Map<string, Promise<EnsureGatewayResult>>()
@@ -181,7 +184,10 @@ export async function probeProfileGateway(
 ): Promise<boolean> {
   const name = (profileName || 'default').trim() || 'default'
   const live = readLiveMultiplexGateway()
-  if (live && (name === PINNED_GATEWAY_PROFILE || isProfileMultiplexServed(name))) {
+  if (
+    live &&
+    (name === PINNED_GATEWAY_PROFILE || isProfileMultiplexServed(name))
+  ) {
     return profileOwnsPort(PINNED_GATEWAY_PROFILE, live.port)
   }
   const port = resolveProfileGatewayPort(name)
@@ -191,7 +197,11 @@ export async function probeProfileGateway(
 export function getGatewayPoolSnapshot(): Array<PooledGateway> {
   const live = readLiveMultiplexGateway()
   return listManagedProfileNames().map((profile) => {
-    if (live && (profile === PINNED_GATEWAY_PROFILE || live.servedProfiles.includes(profile))) {
+    if (
+      live &&
+      (profile === PINNED_GATEWAY_PROFILE ||
+        live.servedProfiles.includes(profile))
+    ) {
       return {
         profile,
         port: live.port,
@@ -215,7 +225,11 @@ export async function getGatewayPoolStatus(): Promise<Array<PooledGateway>> {
   const snapshot = getGatewayPoolSnapshot()
   const live = readLiveMultiplexGateway()
   for (const entry of snapshot) {
-    if (live && (entry.profile === PINNED_GATEWAY_PROFILE || isProfileMultiplexServed(entry.profile))) {
+    if (
+      live &&
+      (entry.profile === PINNED_GATEWAY_PROFILE ||
+        isProfileMultiplexServed(entry.profile))
+    ) {
       entry.state = profileOwnsPort(PINNED_GATEWAY_PROFILE, live.port)
         ? 'healthy'
         : 'stopped'
@@ -322,6 +336,19 @@ async function ensureProfileGatewayLocked(
       }
     }
     if (shouldUseMultiplexGatewayPath(name)) {
+      if (isProfileStandalone(name)) {
+        const port = resolveProfileGatewayPort(PINNED_GATEWAY_PROFILE)
+        return {
+          ok: false,
+          error: `profile "${name}" sets gateway.standalone: true but the default gateway multiplexes profiles; mixed mode is unsupported — remove gateway.standalone from ${hermesHome}/config.yaml`,
+          profile: name,
+          hermesHome,
+          port,
+          url: multiplexProfileGatewayUrl(name, port),
+          started: false,
+          misconfigured: true,
+        }
+      }
       return ensureMultiplexProfileGateway(name, options)
     }
   }

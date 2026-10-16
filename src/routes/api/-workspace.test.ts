@@ -359,6 +359,22 @@ describe('workspace folder listing', () => {
     expect(
       root.folders.find((folder) => folder.name === '.hermes'),
     ).toBeUndefined()
+    expect(root.folders.some((folder) => folder.name === 'readme.txt')).toBe(
+      false,
+    )
+  })
+
+  it('includes files only when asked, and keeps folders first', async () => {
+    await makeDir(tempRoot, 'project')
+    await fs.writeFile(path.join(tempRoot, 'readme.txt'), 'x')
+
+    const root = await listWorkspaceFolders('', { includeFiles: true })
+
+    expect(root.folders.map((entry) => [entry.kind, entry.name])).toEqual([
+      ['folder', 'project'],
+      ['file', 'readme.txt'],
+    ])
+    expect(root.folders[1]?.fullPath).toBe(path.join(tempRoot, 'readme.txt'))
   })
 
   it('expands a subdirectory with a relative path', async () => {

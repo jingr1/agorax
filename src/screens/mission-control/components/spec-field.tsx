@@ -1,19 +1,16 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Folder01Icon,
-  File01Icon,
-  ArrowLeft01Icon,
-} from '@hugeicons/core-free-icons'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
-  fetchFileTree,
-  type FileTreeEntry,
-} from '@/lib/workspace-client'
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogRoot,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { RoomWorkspaceField } from '@/screens/group-chat/components/room-workspace-field'
 
 /** Matches file-explorer-sidebar drag payload. */
 const WS_DRAG_MIME = 'application/x-hermes-workspace-file'
@@ -44,8 +41,10 @@ type SpecFieldProps = {
   placeholder?: string
   disabled?: boolean
   className?: string
-  /** Optional profile for /api/files listing. Empty = active workspace. */
-  profileName?: string
+  /** Hide the built-in tip row so the parent can place the button. */
+  hideToolbar?: boolean
+  /** Receives the opener, then null on unmount. */
+  onAttachReady?: (open: (() => void) | null) => void
 }
 
 export function SpecField({
@@ -55,15 +54,30 @@ export function SpecField({
   placeholder,
   disabled,
   className,
-  profileName = '',
+  hideToolbar = false,
+  onAttachReady,
 }: SpecFieldProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [dirPath, setDirPath] = useState('')
+  const [fieldMounted, setFieldMounted] = useState(false)
+  const [pathDraft, setPathDraft] = useState('')
   const [dragOver, setDragOver] = useState(false)
+
+  const openPicker = useCallback(() => {
+    setPathDraft('')
+    setFieldMounted(true)
+    setPickerOpen(true)
+  }, [])
+
+  useEffect(() => {
+    onAttachReady?.(openPicker)
+    return () => onAttachReady?.(null)
+  }, [onAttachReady, openPicker])
 
   const insertPath = useCallback(
     (path: string) => {
+      const trimmed = path.trim()
+      if (!trimmed) return
       const el = textareaRef.current
       const start = el?.selectionStart ?? value.length
       const end = el?.selectionEnd ?? value.length
@@ -71,7 +85,7 @@ export function SpecField({
         value,
         start,
         end,
-        formatPathRef(path),
+        formatPathRef(trimmed),
       )
       onChange(next)
       requestAnimationFrame(() => {
@@ -85,16 +99,6 @@ export function SpecField({
     },
     [onChange, value],
   )
-
-  const filesQuery = useQuery({
-    queryKey: ['mission-control', 'spec-files', profileName, dirPath],
-    queryFn: () => fetchFileTree(profileName, 0, dirPath),
-    enabled: pickerOpen,
-  })
-
-  useEffect(() => {
-    if (!pickerOpen) setDirPath('')
-  }, [pickerOpen])
 
   const onDrop = (event: React.DragEvent<HTMLTextAreaElement>) => {
     if (disabled) return
@@ -116,27 +120,25 @@ export function SpecField({
     }
   }
 
-  const parentDir = dirPath.includes('/')
-    ? dirPath.slice(0, dirPath.lastIndexOf('/'))
-    : ''
-
   return (
     <div className={cn('relative', className)}>
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-[10px] text-[var(--theme-muted)]">
-          Tip: Attach path… or drop a workspace file
-        </span>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          disabled={disabled}
-          onClick={() => setPickerOpen(true)}
-          className="h-6 px-2 text-[10px]"
-        >
-          Attach path…
-        </Button>
-      </div>
+      {hideToolbar ? null : (
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <span className="text-[10px] text-[var(--theme-muted)]">
+            Tip: Attach path… or drop a workspace file
+          </span>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={disabled}
+            onClick={openPicker}
+            className="h-6 px-2 text-[10px]"
+          >
+            Attach path…
+          </Button>
+        </div>
+      )}
       <textarea
         ref={textareaRef}
         value={value}
@@ -167,78 +169,52 @@ export function SpecField({
         )}
       />
 
-      {pickerOpen ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
-          <div className="flex max-h-[70vh] w-full max-w-md flex-col rounded-xl border border-[var(--theme-border)] bg-[var(--theme-card)] shadow-xl">
-            <div className="flex items-center justify-between gap-2 border-b border-[var(--theme-border)] px-3 py-2">
-              <div className="flex min-w-0 items-center gap-2">
-                {dirPath ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => setDirPath(parentDir)}
-                    aria-label="Up"
-                  >
-                    <HugeiconsIcon icon={ArrowLeft01Icon} size={14} />
+      <DialogRoot
+        open={pickerOpen}
+        onOpenChange={(open) => {
+          setPickerOpen(open)
+          if (!open) setPathDraft('')
+        }}
+        onOpenChangeComplete={(open) => {
+          if (!open) setFieldMounted(false)
+        }}
+      >
+        <DialogContent className="w-[min(520px,92vw)]">
+          <div className="p-4">
+            <DialogTitle className="mb-1">Attach path</DialogTitle>
+            <DialogDescription className="mb-3">
+              Enter a path or pick a file. The path is inserted into the spec.
+            </DialogDescription>
+            {fieldMounted ? (
+              <RoomWorkspaceField
+                includeFiles
+                value={pathDraft}
+                onChange={setPathDraft}
+              />
+            ) : null}
+            <div className="mt-4 flex justify-end gap-2">
+              <DialogClose
+                render={
+                  <Button variant="ghost" type="button">
+                    Cancel
                   </Button>
-                ) : null}
-                <h3 className="truncate text-xs font-semibold">
-                  {dirPath || 'Workspace'}
-                </h3>
-              </div>
+                }
+              />
               <Button
                 type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => setPickerOpen(false)}
-                className="h-6 px-2 text-[10px]"
+                disabled={!pathDraft.trim()}
+                onClick={() => {
+                  insertPath(pathDraft)
+                  setPickerOpen(false)
+                  setPathDraft('')
+                }}
               >
-                Close
+                Attach
               </Button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-1">
-              {filesQuery.isLoading ? (
-                <p className="px-2 py-3 text-xs text-[var(--theme-muted)]">
-                  Loading…
-                </p>
-              ) : filesQuery.isError ? (
-                <p className="px-2 py-3 text-xs text-red-600">
-                  {(filesQuery.error as Error).message || 'Failed to list files'}
-                </p>
-              ) : (filesQuery.data ?? []).length === 0 ? (
-                <p className="px-2 py-3 text-xs text-[var(--theme-muted)]">
-                  Empty folder
-                </p>
-              ) : (
-                (filesQuery.data ?? []).map((entry: FileTreeEntry) => (
-                  <button
-                    key={entry.path}
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-[var(--theme-hover)]"
-                    onClick={() => {
-                      if (entry.type === 'folder') {
-                        setDirPath(entry.path)
-                        return
-                      }
-                      insertPath(entry.path)
-                      setPickerOpen(false)
-                    }}
-                  >
-                    <HugeiconsIcon
-                      icon={
-                        entry.type === 'folder' ? Folder01Icon : File01Icon
-                      }
-                      size={14}
-                    />
-                    <span className="truncate">{entry.name}</span>
-                  </button>
-                ))
-              )}
-            </div>
           </div>
-        </div>
-      ) : null}
+        </DialogContent>
+      </DialogRoot>
     </div>
   )
 }

@@ -1,7 +1,8 @@
-import { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from '@tanstack/react-router'
+import { Folder01Icon, FolderAddIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { MemberAvatar } from './components/member-avatar'
-import { MemberRoster } from './components/member-roster'
 import { MentionPicker } from './components/mention-picker'
 import { PendingTurnCard } from './components/pending-turn-card'
 import { ManagedInteractionRoomCard } from './components/managed-interaction-card'
@@ -16,27 +17,23 @@ import type {
   RoomParticipant,
 } from '@/lib/group-chat-types'
 import { cn } from '@/lib/utils'
+import { Markdown } from '@/components/prompt-kit/markdown'
 import { Button } from '@/components/ui/button'
-import {
-  MenuContent,
-  MenuItem,
-  MenuRoot,
-  MenuTrigger,
-} from '@/components/ui/menu'
+import { ComposerPrimaryButton } from '@/screens/chat/components/composer-primary-button'
+import {} from '@/components/ui/menu'
 import {
   answerPendingTurn,
-  addParticipant as apiAddParticipant,
-  removeParticipant as apiRemoveParticipant,
   sendMessage as apiSendMessage,
   dismissPendingTurn,
-  listAvailableAgents,
   listMessages,
-  listParticipants,
   listPendingTurns,
   updateRoom,
 } from '@/lib/group-chat-api'
 import { useGroupChatEvents } from '@/lib/use-group-chat-events'
-import { GroupChatRoomsContext } from './group-chat-layout'
+import {
+  GroupChatMembersContext,
+  GroupChatRoomsContext,
+} from './group-chat-layout'
 import { writeLastRoom } from './last-room'
 import {
   RoomWorkspaceField,
@@ -62,18 +59,9 @@ export function RoomsScreen() {
   const sidebarRooms = useContext(GroupChatRoomsContext)
   const [activeRoom, setActiveRoom] = useState<Room | null>(null)
   const [messages, setMessages] = useState<Array<RoomMessage>>([])
-  const [participants, setParticipants] = useState<Array<RoomParticipant>>([])
+  const participants = useContext(GroupChatMembersContext)
   const [pendingTurns, setPendingTurns] = useState<Array<PendingTurn>>([])
   const [input, setInput] = useState('')
-  const [availableAgents, setAvailableAgents] = useState<
-    Array<{
-      id: string
-      displayName: string
-      mentionName?: string
-      runtime?: string
-      profile?: string | null
-    }>
-  >([])
   const [loading, setLoading] = useState(false)
   // Ephemeral turn status is per-room: switching rooms shows that room's last
   // known status instead of leaking another room's or wiping this room's.
@@ -89,28 +77,18 @@ export function RoomsScreen() {
   const statusText = roomId ? (statusByRoom[roomId] ?? null) : null
 
   useEffect(() => {
-    listAvailableAgents().then((res) => setAvailableAgents(res.agents))
-  }, [])
-
-  useEffect(() => {
     if (!roomId) {
       setActiveRoom(null)
       setMessages([])
-      setParticipants([])
       setPendingTurns([])
       return
     }
     writeLastRoom(roomId)
     setLoading(true)
-    Promise.all([
-      listMessages(roomId),
-      listParticipants(roomId),
-      listPendingTurns(roomId),
-    ])
-      .then(([msgRes, partRes, ptRes]) => {
+    Promise.all([listMessages(roomId), listPendingTurns(roomId)])
+      .then(([msgRes, ptRes]) => {
         setActiveRoom(msgRes.room)
         setMessages(msgRes.messages)
-        setParticipants(partRes.participants)
         setPendingTurns(ptRes.pendingTurns)
       })
       .finally(() => setLoading(false))
@@ -185,44 +163,6 @@ export function RoomsScreen() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  async function handleAddAgent(agent: {
-    id: string
-    displayName: string
-    mentionName?: string
-    runtime?: string
-    profile?: string | null
-  }) {
-    if (!roomId) return
-    const runtime = agent.runtime || 'hermes'
-    // Non-Hermes runtimes never carry a Hermes profile (mirrors RoomRuntime).
-    const isManaged = runtime !== 'hermes'
-    await apiAddParticipant(roomId, {
-      participantId: agent.id,
-      kind: 'agent',
-      displayName: agent.displayName,
-      mentionName: agent.mentionName,
-      runtime,
-      profile: isManaged ? null : (agent.profile ?? null),
-    })
-    const res = await listParticipants(roomId)
-    setParticipants(res.participants)
-  }
-
-  async function handleRemoveParticipant(participantId: string) {
-    if (!roomId) return
-    try {
-      await apiRemoveParticipant(roomId, participantId)
-      const res = await listParticipants(roomId)
-      setParticipants(res.participants)
-    } catch (error) {
-      console.error('[group-chat] remove participant failed:', error)
-      setStatusByRoom((prev) => ({
-        ...prev,
-        [roomId]: `Remove failed: ${error instanceof Error ? error.message : String(error)}`,
-      }))
-    }
-  }
-
   async function handleSend() {
     if (!roomId || !input.trim()) return
     const content = input.trim()
@@ -264,47 +204,42 @@ export function RoomsScreen() {
     }
   }
 
-  const displayTitle =
-    sidebarRooms.find((r) => r.id === roomId)?.title ?? activeRoom?.title
+  const sidebarRoom = sidebarRooms.find((r) => r.id === roomId)
+  // activeRoom still holds the previous room until this room's fetch lands.
+  const currentRoom = activeRoom?.id === roomId ? activeRoom : null
+  const displayTitle = sidebarRoom?.title ?? currentRoom?.title
   const displayWorkspace =
-    activeRoom?.workspacePath ??
-    sidebarRooms.find((r) => r.id === roomId)?.workspacePath ??
-    null
+    currentRoom?.workspacePath ?? sidebarRoom?.workspacePath ?? null
   const displayMissionId =
-    activeRoom?.missionId ??
-    sidebarRooms.find((r) => r.id === roomId)?.missionId ??
-    null
+    currentRoom?.missionId ?? sidebarRoom?.missionId ?? null
 
   if (!roomId) {
     return (
-      <div className="h-full flex items-center justify-center text-muted-foreground">
+      <div className="flex h-full items-center justify-center text-sm text-fg-muted">
         No room yet — create one from the sidebar.
       </div>
     )
   }
 
   return (
-    <div className="flex h-full flex-col min-w-0 bg-[var(--theme-bg)]">
+    <div className="flex h-full min-w-0 flex-col bg-surface text-fg">
       {activeRoom ? (
         <>
-          <header
-            className="h-16 shrink-0 px-4 border-b flex items-center justify-between"
-            style={{ borderColor: 'var(--theme-border)' }}
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="min-w-0">
-                <h1 className="font-semibold truncate">{displayTitle}</h1>
-                <div className="text-xs opacity-70 flex items-center gap-2 min-w-0">
-                  <span>{participants.length} members</span>
+          <header className="flex h-12 shrink-0 items-center justify-between gap-3 px-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <h1 className="min-w-[4rem] truncate text-sm font-medium">
+                  {displayTitle}
+                </h1>
+                <div className="flex min-w-0 max-w-[60%] shrink-0 items-center gap-2 text-xs text-fg-muted">
                   {activeRoom?.state === 'paused' ? (
-                    <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-300 bg-amber-400/15">
+                    <span className="shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-warning">
                       Paused
                     </span>
                   ) : null}
                   {displayMissionId ? (
                     <span
-                      className="shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide"
-                      style={{ background: 'rgba(59,130,246,0.15)' }}
+                      className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent"
                       title={displayMissionId}
                     >
                       Mission
@@ -313,8 +248,12 @@ export function RoomsScreen() {
                   {displayWorkspace ? (
                     <button
                       type="button"
-                      className="truncate text-left hover:underline disabled:no-underline disabled:cursor-default"
-                      title={displayWorkspace}
+                      className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border bg-card px-1.5 py-0.5 text-fg transition-colors hover:border-accent/50 hover:bg-hover disabled:cursor-default disabled:hover:border-border disabled:hover:bg-card"
+                      title={
+                        displayMissionId
+                          ? `${displayWorkspace} (from mission, read-only)`
+                          : `${displayWorkspace} — click to change`
+                      }
                       disabled={Boolean(displayMissionId)}
                       onClick={() => {
                         if (displayMissionId) return
@@ -323,28 +262,43 @@ export function RoomsScreen() {
                         setWorkspaceDialogOpen(true)
                       }}
                     >
-                      {shortPathLabel(displayWorkspace)}
+                      <HugeiconsIcon
+                        icon={Folder01Icon}
+                        size={12}
+                        strokeWidth={1.8}
+                        className="shrink-0 text-fg-muted"
+                      />
+                      <span className="truncate">
+                        {shortPathLabel(displayWorkspace)}
+                      </span>
                     </button>
                   ) : !displayMissionId ? (
                     <button
                       type="button"
-                      className="hover:underline"
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-dashed border-accent/50 bg-accent/10 px-1.5 py-0.5 font-medium text-accent transition-colors hover:border-accent hover:bg-accent/20"
+                      title="Bind a working directory for agents in this room"
                       onClick={() => {
                         setWorkspaceDraft('')
                         setWorkspaceError(null)
                         setWorkspaceDialogOpen(true)
                       }}
                     >
+                      <HugeiconsIcon
+                        icon={FolderAddIcon}
+                        size={12}
+                        strokeWidth={1.8}
+                        className="shrink-0"
+                      />
                       Set workspace
                     </button>
                   ) : null}
                   {statusText && (
-                    <span className="text-amber-400">{statusText}</span>
+                    <span className="truncate text-warning">{statusText}</span>
                   )}
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex shrink-0 items-center gap-2">
               {activeRoom?.state === 'paused' ? (
                 <Button
                   size="sm"
@@ -370,44 +324,12 @@ export function RoomsScreen() {
                   Pause
                 </Button>
               )}
-              <MemberRoster
-                participants={participants}
-                onRemove={handleRemoveParticipant}
-              />
-              <MenuRoot>
-                <MenuTrigger type="button" className="inline-flex">
-                  <Button size="sm" variant="secondary">
-                    + Agent
-                  </Button>
-                </MenuTrigger>
-                <MenuContent>
-                  {availableAgents.map((agent) => (
-                    <MenuItem
-                      key={agent.id}
-                      onClick={() => handleAddAgent(agent)}
-                    >
-                      {agent.displayName}
-                      {agent.runtime && agent.runtime !== 'hermes' ? (
-                        <span className="ml-2 opacity-50 text-xs">
-                          {agent.runtime}
-                        </span>
-                      ) : null}
-                    </MenuItem>
-                  ))}
-                </MenuContent>
-              </MenuRoot>
             </div>
           </header>
 
           {pendingTurns.length > 0 && (
-            <div
-              className="px-4 py-3 border-b"
-              style={{
-                borderColor: 'var(--theme-border)',
-                background: 'rgba(245,158,11,0.06)',
-              }}
-            >
-              <div className="text-xs font-semibold uppercase tracking-wider opacity-70 mb-2">
+            <div className="border-b border-border bg-warning/5 px-4 py-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-fg-muted">
                 Human Gate
               </div>
               {pendingTurns.map((turn) => (
@@ -422,39 +344,51 @@ export function RoomsScreen() {
             </div>
           )}
 
-          <div className="flex-1 overflow-auto p-4 space-y-4">
-            {loading ? (
-              <div className="text-muted-foreground">Loading...</div>
-            ) : (
-              messages.map((msg) => (
-                <MessageBubble
-                  key={msg.id}
-                  message={msg}
-                  participants={participants}
-                  roomId={roomId}
-                />
-              ))
-            )}
-            <div ref={bottomRef} />
+          <div className="min-h-0 flex-1 overflow-auto">
+            <div className="mx-auto w-full max-w-[var(--chat-content-max-width)] space-y-4 px-4 py-4">
+              {loading ? (
+                <div className="text-sm text-fg-muted">Loading...</div>
+              ) : (
+                messages.map((msg) => (
+                  <MessageBubble
+                    key={msg.id}
+                    message={msg}
+                    participants={participants}
+                    roomId={roomId}
+                  />
+                ))
+              )}
+              <div ref={bottomRef} />
+            </div>
           </div>
 
-          <div
-            className="p-3 border-t flex gap-2 relative"
-            style={{ borderColor: 'var(--theme-border)' }}
-          >
-            <MentionPicker
-              value={input}
-              onChange={setInput}
-              onSubmit={handleSend}
-              participants={participants}
-              placeholder="Message... Use @name to mention"
-              aria-label="Group chat message"
-            />
-            <Button onClick={handleSend}>Send</Button>
+          <div className="shrink-0 px-3 pb-3 pt-2 sm:px-5">
+            <div
+              className="relative mx-auto flex w-full max-w-[var(--chat-content-max-width)] items-end gap-1 rounded-3xl py-1.5 pl-1 pr-1.5"
+              style={{
+                background: 'var(--composer-bg)',
+                border: '1px solid var(--composer-border)',
+                boxShadow: 'var(--theme-shadow-1)',
+              }}
+            >
+              <MentionPicker
+                value={input}
+                onChange={setInput}
+                onSubmit={handleSend}
+                participants={participants}
+                placeholder="Message... Use @name to mention"
+                aria-label="Group chat message"
+              />
+              <ComposerPrimaryButton
+                action={input.trim() ? 'send' : 'disabled'}
+                onSend={() => void handleSend()}
+                onStop={() => {}}
+              />
+            </div>
           </div>
         </>
       ) : (
-        <div className="h-full flex items-center justify-center text-muted-foreground">
+        <div className="flex h-full items-center justify-center text-sm text-fg-muted">
           {loading ? 'Loading...' : 'Room not found.'}
         </div>
       )}
@@ -475,7 +409,7 @@ export function RoomsScreen() {
               onChange={setWorkspaceDraft}
             />
             {workspaceError ? (
-              <div className="mt-3 text-xs text-red-400">{workspaceError}</div>
+              <div className="mt-3 text-xs text-danger">{workspaceError}</div>
             ) : null}
             <div className="mt-4 flex justify-end gap-2">
               <DialogClose type="button" className="inline-flex">
@@ -494,40 +428,58 @@ export function RoomsScreen() {
   )
 }
 
-function MessageBubble({
-  message,
-  participants,
-  roomId,
-}: {
+type MessageBubbleProps = {
   message: RoomMessage
   participants: Array<RoomParticipant>
   roomId: string
-}) {
+}
+
+// Room refetches replace every message object; compare by value so unchanged
+// messages skip the Markdown re-parse.
+const MessageBubble = memo(
+  MessageBubbleView,
+  (prev, next) =>
+    prev.roomId === next.roomId &&
+    prev.participants === next.participants &&
+    prev.message.id === next.message.id &&
+    prev.message.content === next.message.content &&
+    prev.message.senderName === next.message.senderName &&
+    prev.message.createdAt === next.message.createdAt,
+)
+
+function MessageBubbleView({
+  message,
+  participants,
+  roomId,
+}: MessageBubbleProps) {
   const sender = useMemo(
     () =>
       participants.find((p) => p.participantId === message.senderParticipantId),
     [participants, message.senderParticipantId],
   )
-  const color = sender
-    ? getMemberColor(sender.participantId, sender.displayName)
-    : message.senderKind === 'system'
-      ? '#64748b'
-      : '#1A2340'
   const isHuman = message.senderKind === 'human'
+  const nameColor =
+    sender && !isHuman
+      ? getMemberColor(sender.participantId, sender.displayName)
+      : undefined
   const isInteractionCard = message.content.includes(
     'agorax:managed-interaction:v1',
   )
 
   return (
     <div
-      className={cn('flex gap-3', isHuman ? 'flex-row-reverse' : 'flex-row')}
+      className={cn(
+        'flex gap-2 md:gap-3',
+        isHuman ? 'flex-row-reverse' : 'items-start',
+      )}
     >
       <MemberAvatar
         id={message.senderParticipantId ?? 'system'}
         name={message.senderName}
         kind={message.senderKind}
         status="idle"
-        size={36}
+        size={24}
+        className="mt-0.5 shrink-0"
         runtime={sender?.runtime}
         providerSiblingCount={countRoomAgentProviderSiblings(
           participants,
@@ -536,34 +488,56 @@ function MessageBubble({
       />
       <div
         className={cn(
-          'max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm',
-          isHuman ? 'rounded-br-md' : 'rounded-bl-md',
+          'flex min-w-0 max-w-[80%] flex-col gap-1',
+          isHuman ? 'items-end' : 'items-start',
         )}
-        style={{
-          background: isHuman ? '#1A2340' : color + '20',
-          color: isHuman ? '#E6EAF2' : 'var(--theme-text)',
-          borderLeft: isHuman ? undefined : `4px solid ${color}`,
-        }}
       >
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-xs font-semibold opacity-90">
+        <div className="flex items-center gap-2 px-1 text-xs">
+          <span
+            className="font-medium text-fg"
+            style={nameColor ? { color: nameColor } : undefined}
+          >
             {message.senderName}
           </span>
-          <span className="text-[10px] opacity-60">
+          <span className="text-[11px] text-fg-muted tabular-nums">
             {formatTime(message.createdAt)}
           </span>
         </div>
-        {isInteractionCard ? (
-          <ManagedInteractionRoomCard
-            roomId={roomId}
-            messageId={message.id}
-            content={message.content}
-          />
-        ) : (
-          <div className="whitespace-pre-wrap text-sm leading-relaxed">
-            {message.content}
-          </div>
-        )}
+        <div
+          data-chat-message-bubble={isHuman ? 'user' : 'assistant'}
+          className={cn(
+            'min-w-0 max-w-full break-words px-3 py-2',
+            isHuman
+              ? 'rounded-2xl rounded-tr-sm'
+              : 'rounded-2xl rounded-tl-sm border',
+          )}
+          style={
+            isHuman
+              ? {
+                  background: 'var(--chat-user-bg)',
+                  color: 'var(--chat-user-foreground)',
+                }
+              : {
+                  background: 'var(--chat-assistant-bg)',
+                  borderColor: 'var(--chat-assistant-border)',
+                  color: 'var(--chat-assistant-foreground)',
+                }
+          }
+        >
+          {isInteractionCard ? (
+            <ManagedInteractionRoomCard
+              roomId={roomId}
+              messageId={message.id}
+              content={message.content}
+            />
+          ) : isHuman ? (
+            <div className="whitespace-pre-wrap text-sm leading-relaxed">
+              {message.content}
+            </div>
+          ) : (
+            <Markdown className="text-sm">{message.content}</Markdown>
+          )}
+        </div>
       </div>
     </div>
   )

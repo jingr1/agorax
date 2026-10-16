@@ -236,7 +236,7 @@ export function MentionPicker({
                   )}
                 />
               ) : (
-                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold bg-slate-600 text-white">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold bg-card-2 text-fg-muted">
                   @
                 </span>
               )}
@@ -275,13 +275,8 @@ export function MentionPicker({
         autoFocus={autoFocus}
         aria-label={ariaLabel}
         rows={1}
-        className="field-bare w-full resize-none rounded-lg border bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-1"
-        style={{
-          minHeight: '2.5rem',
-          maxHeight: '10rem',
-          borderColor: 'var(--theme-border)',
-          color: 'var(--theme-text)',
-        }}
+        className="field-bare block w-full resize-none border-none bg-transparent px-3 py-2 text-sm text-fg shadow-none outline-none placeholder:text-fg-muted focus-visible:ring-0"
+        style={{ minHeight: '2.5rem', maxHeight: '10rem' }}
       />
     </div>
   )

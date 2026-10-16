@@ -231,7 +231,7 @@ function GraphCanvas({
   )
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-primary-200 bg-primary-50 dark:border-neutral-800 dark:bg-neutral-950">
+    <div className="overflow-hidden rounded-2xl border border-primary-200 bg-primary-50">
       <svg viewBox="0 0 900 520" className="h-[520px] w-full">
         {edges.map((edge, index) => {
           const source = byId.get(edge.source)
@@ -415,7 +415,9 @@ export function KnowledgeBrowserScreen() {
       try {
         const data = await fetchAgents()
         useAgentStore.getState().setAgents(data.agents)
-        const firstOnline = data.agents.find((agent) => agent.status === 'online')
+        const firstOnline = data.agents.find(
+          (agent) => agent.status === 'online',
+        )
         agentId =
           activeAgentId ||
           readLastAgent() ||
@@ -458,8 +460,8 @@ export function KnowledgeBrowserScreen() {
   }
 
   return (
-    <div className="min-h-full overflow-y-auto bg-surface text-ink">
-      <div className="mx-auto flex w-full max-w-[1200px] min-h-0 flex-col px-4 py-6 sm:px-6 lg:px-8">
+    <div className="flex h-full min-h-0 flex-col bg-surface text-ink">
+      <div className="flex min-h-0 w-full flex-1 flex-col">
         <div
           className="px-3 py-3 md:px-4"
           style={{
@@ -504,7 +506,7 @@ export function KnowledgeBrowserScreen() {
             <button
               type="button"
               onClick={() => setGraphOpen(true)}
-              className="inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors hover:bg-primary-100 dark:hover:bg-neutral-900"
+              className="inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors hover:bg-primary-100"
               style={{
                 border: '1px solid var(--theme-border)',
                 backgroundColor: 'var(--theme-card)',
@@ -732,9 +734,7 @@ export function KnowledgeBrowserScreen() {
                           }
                         } catch (err) {
                           setSyncError(
-                            err instanceof Error
-                              ? err.message
-                              : 'Sync failed',
+                            err instanceof Error ? err.message : 'Sync failed',
                           )
                         } finally {
                           setSyncing(false)
@@ -780,17 +780,17 @@ export function KnowledgeBrowserScreen() {
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 p-3 md:grid-cols-[320px_minmax(0,1fr)] md:p-4">
-          <aside className="flex min-h-0 flex-col rounded-2xl border border-primary-200 bg-primary-50 dark:border-neutral-800 dark:bg-neutral-950">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 md:grid-cols-[320px_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)] md:overflow-hidden md:p-4">
+          <aside className="flex min-h-0 flex-col rounded-2xl border border-primary-200 bg-primary-50">
             <button
               type="button"
               className="flex items-center justify-between px-3 py-2 text-left md:cursor-default"
               onClick={() => setMobileTreeOpen((value) => !value)}
             >
-              <span className="text-xs font-semibold uppercase tracking-wide text-primary-500 dark:text-neutral-400">
+              <span className="text-xs font-semibold uppercase tracking-wide text-primary-500">
                 Knowledge Pages ({filteredPages.length})
               </span>
-              <span className="text-primary-500 dark:text-neutral-400 md:hidden">
+              <span className="text-primary-500 md:hidden">
                 <HugeiconsIcon
                   icon={mobileTreeOpen ? ArrowUp01Icon : ArrowDown01Icon}
                   size={16}
@@ -805,7 +805,7 @@ export function KnowledgeBrowserScreen() {
               </div>
             ) : searchTerm ? (
               <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-                <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-primary-400 dark:text-neutral-500">
+                <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-primary-400">
                   Search Results
                 </div>
                 <div className="space-y-1">
@@ -821,12 +821,12 @@ export function KnowledgeBrowserScreen() {
                         onClick={() =>
                           handleSelectPath(result.path, result.line, result)
                         }
-                        className="w-full rounded-lg border border-primary-200 bg-primary-50/80 px-2.5 py-2 text-left hover:border-primary-300 hover:bg-primary-100 dark:border-neutral-800 dark:bg-neutral-900/60 dark:hover:border-neutral-700 dark:hover:bg-neutral-900"
+                        className="w-full rounded-lg border border-primary-200 bg-primary-50/80 px-2.5 py-2 text-left hover:border-primary-300 hover:bg-primary-100"
                       >
-                        <div className="truncate text-[11px] text-primary-500 dark:text-neutral-400">
+                        <div className="truncate text-[11px] text-primary-500">
                           {result.title || result.path}:{result.line}
                         </div>
-                        <div className="mt-0.5 line-clamp-3 text-xs text-primary-700 dark:text-neutral-200">
+                        <div className="mt-0.5 line-clamp-3 text-xs text-primary-700">
                           {highlightMatch(result.text, searchTerm).map(
                             (part, partIndex) => (
                               <span
@@ -855,8 +855,8 @@ export function KnowledgeBrowserScreen() {
                 )}
               >
                 <div className="space-y-3 overflow-y-auto pr-1 md:h-full">
-                  <section className="rounded-xl border border-primary-200 bg-primary-50/80 p-2 dark:border-neutral-800 dark:bg-neutral-900/60">
-                    <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-primary-400 dark:text-neutral-500">
+                  <section className="rounded-xl border border-primary-200 bg-primary-50/80 p-2">
+                    <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-primary-400">
                       Tags
                     </div>
                     <div className="flex flex-wrap gap-1.5">
@@ -878,7 +878,7 @@ export function KnowledgeBrowserScreen() {
                     </div>
                   </section>
 
-                  <section className="rounded-xl border border-primary-200 bg-primary-50/80 p-1 dark:border-neutral-800 dark:bg-neutral-900/60">
+                  <section className="rounded-xl border border-primary-200 bg-primary-50/80 p-1">
                     {listQuery.isLoading ? (
                       <StateBox label="Loading knowledge pages..." />
                     ) : listQuery.error instanceof Error ? (
@@ -906,14 +906,14 @@ export function KnowledgeBrowserScreen() {
             )}
           </aside>
 
-          <section className="min-h-0 rounded-2xl border border-primary-200 bg-primary-50 dark:border-neutral-800 dark:bg-neutral-950">
-            <div className="flex items-center justify-between border-b border-primary-200 px-3 py-2 dark:border-neutral-800">
+          <section className="flex min-h-0 flex-col rounded-2xl border border-primary-200 bg-primary-50">
+            <div className="flex shrink-0 items-center justify-between border-b border-primary-200 px-3 py-2">
               <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-primary-900 dark:text-neutral-100">
+                <div className="truncate text-sm font-semibold text-primary-900">
                   {page?.title || selectedPath || 'Select a page'}
                 </div>
                 {page ? (
-                  <div className="text-xs text-primary-400 dark:text-neutral-500">
+                  <div className="text-xs text-primary-400">
                     {page.path} · {formatBytes(page.size)} ·{' '}
                     {formatDate(page.updated || page.modified)}
                   </div>
@@ -923,7 +923,7 @@ export function KnowledgeBrowserScreen() {
                 <button
                   type="button"
                   onClick={handleAskAgent}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-primary-200 px-3 py-1.5 text-xs font-semibold transition-colors hover:border-primary-300 hover:bg-primary-100 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:border-neutral-600 dark:hover:bg-neutral-800"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-primary-200 px-3 py-1.5 text-xs font-semibold transition-colors hover:border-primary-300 hover:bg-primary-100"
                 >
                   <HugeiconsIcon
                     icon={Message01Icon}
@@ -935,7 +935,7 @@ export function KnowledgeBrowserScreen() {
               ) : null}
             </div>
 
-            <div className="h-full overflow-auto p-2 md:p-3">
+            <div className="min-h-0 flex-1 overflow-auto p-2 md:p-3">
               {listQuery.isLoading ? (
                 <StateBox label="Loading knowledge base..." />
               ) : listQuery.error instanceof Error ? (
@@ -972,7 +972,7 @@ export function KnowledgeBrowserScreen() {
                       ) : null}
 
                       {page.summary ? (
-                        <div className="rounded-xl border border-primary-200 bg-primary-50/70 px-3 py-2 text-sm text-primary-700 dark:border-neutral-800 dark:bg-neutral-900/60 dark:text-neutral-300">
+                        <div className="rounded-xl border border-primary-200 bg-primary-50/70 px-3 py-2 text-sm text-primary-700">
                           {page.summary}
                         </div>
                       ) : null}
@@ -992,7 +992,7 @@ export function KnowledgeBrowserScreen() {
                                     if (resolvedPath)
                                       handleSelectPath(resolvedPath)
                                   }}
-                                  className="inline-flex items-center gap-1 text-primary-950 underline decoration-primary-300 underline-offset-4 transition-colors hover:text-primary-950 hover:decoration-primary-500 dark:text-neutral-100"
+                                  className="inline-flex items-center gap-1 text-primary-950 underline decoration-primary-300 underline-offset-4 transition-colors hover:text-primary-950 hover:decoration-primary-500"
                                 >
                                   <HugeiconsIcon
                                     icon={Link01Icon}
@@ -1020,8 +1020,8 @@ export function KnowledgeBrowserScreen() {
                         {processedContent}
                       </Markdown>
 
-                      <section className="rounded-xl border border-primary-200 bg-primary-50/70 p-3 dark:border-neutral-800 dark:bg-neutral-900/60">
-                        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-primary-900 dark:text-neutral-100">
+                      <section className="rounded-xl border border-primary-200 bg-primary-50/70 p-3">
+                        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-primary-900">
                           <HugeiconsIcon
                             icon={Link01Icon}
                             size={16}
@@ -1030,7 +1030,7 @@ export function KnowledgeBrowserScreen() {
                           Backlinks
                         </div>
                         {backlinks.length === 0 ? (
-                          <div className="text-sm text-primary-500 dark:text-neutral-400">
+                          <div className="text-sm text-primary-500">
                             No pages link here yet.
                           </div>
                         ) : (
@@ -1043,7 +1043,7 @@ export function KnowledgeBrowserScreen() {
                                   key={backlink}
                                   type="button"
                                   onClick={() => handleSelectPath(backlinkPath)}
-                                  className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:bg-neutral-900"
+                                  className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100"
                                 >
                                   {backlink}
                                 </button>
@@ -1070,13 +1070,13 @@ export function KnowledgeBrowserScreen() {
                         label="Size"
                         value={formatBytes(page.size)}
                       />
-                      <div className="rounded-xl border border-primary-200 bg-primary-50/70 p-3 dark:border-neutral-800 dark:bg-neutral-900/60">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-primary-500 dark:text-neutral-400">
+                      <div className="rounded-xl border border-primary-200 bg-primary-50/70 p-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-primary-500">
                           Tags
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2">
                           {page.tags.length === 0 ? (
-                            <span className="text-sm text-primary-500 dark:text-neutral-400">
+                            <span className="text-sm text-primary-500">
                               No tags
                             </span>
                           ) : (
@@ -1085,7 +1085,7 @@ export function KnowledgeBrowserScreen() {
                                 key={tag}
                                 type="button"
                                 onClick={() => setSelectedTag(tag)}
-                                className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:bg-neutral-900"
+                                className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100"
                               >
                                 #{tag}
                               </button>
@@ -1093,8 +1093,8 @@ export function KnowledgeBrowserScreen() {
                           )}
                         </div>
                       </div>
-                      <div className="rounded-xl border border-primary-200 bg-primary-50/70 p-3 dark:border-neutral-800 dark:bg-neutral-900/60">
-                        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-primary-500 dark:text-neutral-400">
+                      <div className="rounded-xl border border-primary-200 bg-primary-50/70 p-3">
+                        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-primary-500">
                           <HugeiconsIcon
                             icon={CodeIcon}
                             size={14}
@@ -1103,7 +1103,7 @@ export function KnowledgeBrowserScreen() {
                           Wikilinks
                         </div>
                         {page.wikilinks.length === 0 ? (
-                          <div className="text-sm text-primary-500 dark:text-neutral-400">
+                          <div className="text-sm text-primary-500">
                             No outbound links
                           </div>
                         ) : (
@@ -1115,7 +1115,7 @@ export function KnowledgeBrowserScreen() {
                                   key={link}
                                   type="button"
                                   onClick={() => handleSelectPath(linkPath)}
-                                  className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:bg-neutral-900"
+                                  className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100"
                                 >
                                   {link}
                                 </button>
@@ -1134,7 +1134,7 @@ export function KnowledgeBrowserScreen() {
 
         <DialogRoot open={graphOpen} onOpenChange={setGraphOpen}>
           <DialogContent className="w-[min(980px,94vw)] max-w-none p-0">
-            <div className="border-b border-primary-200 px-5 py-4 dark:border-neutral-800">
+            <div className="border-b border-primary-200 px-5 py-4">
               <DialogTitle>Knowledge graph</DialogTitle>
               <DialogDescription>
                 Page relationships from wiki links. Click any node to open that
@@ -1181,7 +1181,7 @@ function TreeSection({
     <div className={cn('space-y-1', depth > 0 && 'mt-1')}>
       {node.path ? (
         <div
-          className="flex items-center gap-2 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-primary-500 dark:text-neutral-400"
+          className="flex items-center gap-2 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-primary-500"
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
           <HugeiconsIcon icon={Folder01Icon} size={14} strokeWidth={1.7} />
@@ -1198,7 +1198,7 @@ function TreeSection({
             'block w-full rounded-lg border px-2.5 py-2 text-left transition-colors',
             selectedPath === page.path
               ? 'border-accent-500/70 bg-accent-500/10'
-              : 'border-primary-200 bg-primary-50/80 hover:border-primary-300 hover:bg-primary-100 dark:border-neutral-800 dark:bg-neutral-900/60 dark:hover:border-neutral-700 dark:hover:bg-neutral-900',
+              : 'border-primary-200 bg-primary-50/80 hover:border-primary-300 hover:bg-primary-100',
           )}
           style={{ marginLeft: depth > 0 ? depth * 12 : 0 }}
         >
@@ -1210,7 +1210,7 @@ function TreeSection({
               className="mt-0.5 shrink-0"
             />
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-primary-900 dark:text-neutral-100">
+              <div className="truncate text-sm font-medium text-primary-900">
                 {page.title}
               </div>
               <div className="mt-1 flex flex-wrap gap-1.5">
@@ -1237,7 +1237,7 @@ function TreeSection({
 
 function InlineBadge({ label }: { label: string }) {
   return (
-    <span className="rounded-full border border-primary-200 bg-primary-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+    <span className="rounded-full border border-primary-200 bg-primary-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-600">
       {label}
     </span>
   )
@@ -1261,8 +1261,8 @@ function TagPill({
       className={cn(
         'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
         active
-          ? 'border-accent-500/70 bg-accent-500/10 text-primary-900 dark:text-neutral-100'
-          : 'border-primary-200 bg-primary-50 text-primary-600 hover:border-primary-300 hover:bg-primary-100 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:bg-neutral-900',
+          ? 'border-accent-500/70 bg-accent-500/10 text-primary-900'
+          : 'border-primary-200 bg-primary-50 text-primary-600 hover:border-primary-300 hover:bg-primary-100',
       )}
     >
       {label} <span className="opacity-70">{count}</span>
@@ -1279,21 +1279,19 @@ function MetadataCard({
 }) {
   if (!value) return null
   return (
-    <div className="rounded-xl border border-primary-200 bg-primary-50/70 p-3 dark:border-neutral-800 dark:bg-neutral-900/60">
-      <div className="text-xs font-semibold uppercase tracking-wide text-primary-500 dark:text-neutral-400">
+    <div className="rounded-xl border border-primary-200 bg-primary-50/70 p-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-primary-500">
         {label}
       </div>
-      <div className="mt-1 text-sm text-primary-900 dark:text-neutral-100">
-        {value}
-      </div>
+      <div className="mt-1 text-sm text-primary-900">{value}</div>
     </div>
   )
 }
 
 function EmptyKnowledgeState({ knowledgeRoot }: { knowledgeRoot: string }) {
   return (
-    <div className="flex min-h-32 flex-col justify-center rounded-xl border border-primary-200 bg-primary-50 px-4 py-5 text-sm text-primary-600 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300">
-      <div className="text-base font-semibold text-primary-900 dark:text-neutral-100">
+    <div className="flex min-h-32 flex-col justify-center rounded-xl border border-primary-200 bg-primary-50 px-4 py-5 text-sm text-primary-600">
+      <div className="text-base font-semibold text-primary-900">
         No knowledge base found
       </div>
       <p className="mt-2 text-pretty">
@@ -1303,7 +1301,7 @@ function EmptyKnowledgeState({ knowledgeRoot }: { knowledgeRoot: string }) {
         href="https://karpathy.ai/"
         target="_blank"
         rel="noopener noreferrer"
-        className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-primary-900 underline decoration-primary-300 underline-offset-4 hover:decoration-primary-500 dark:text-neutral-100"
+        className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-primary-900 underline decoration-primary-300 underline-offset-4 hover:decoration-primary-500"
       >
         <HugeiconsIcon icon={Link01Icon} size={14} strokeWidth={1.7} />
         See the Karpathy LLM wiki pattern
@@ -1319,7 +1317,7 @@ function StateBox({ label, error }: { label: string; error?: boolean }) {
         'flex min-h-32 items-center justify-center rounded-xl border px-4 text-sm',
         error
           ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300'
-          : 'border-primary-200 bg-primary-50 text-primary-500 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400',
+          : 'border-primary-200 bg-primary-50 text-primary-500',
       )}
     >
       {label}

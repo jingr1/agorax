@@ -25,7 +25,10 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import YAML from 'yaml'
 
-const PROFILE_CLIENT_CACHE = new Map<string, HermesApiClient>()
+const PROFILE_CLIENT_CACHE = new Map<
+  string,
+  { url: string; client: HermesApiClient }
+>()
 
 export type HermesSession = {
   id: string
@@ -349,12 +352,14 @@ export function resolveProfileGatewayUrl(profileName: string): string {
  */
 export function getHermesApiClient(profileName: string): HermesApiClient {
   const name = (profileName || 'default').trim() || 'default'
-  const cached = PROFILE_CLIENT_CACHE.get(name)
-  if (cached) return cached
-
+  // Routing can change at runtime (multiplex host restart, standalone toggled),
+  // so the cache is only valid while the resolved URL is unchanged.
   const url = resolveProfileGatewayUrl(name)
+  const cached = PROFILE_CLIENT_CACHE.get(name)
+  if (cached && cached.url === url) return cached.client
+
   const client = buildClient(name, url)
-  PROFILE_CLIENT_CACHE.set(name, client)
+  PROFILE_CLIENT_CACHE.set(name, { url, client })
   return client
 }
 

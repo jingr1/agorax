@@ -289,12 +289,18 @@ export async function getOrCreateSession(
   // a temporarily-down profile port (e.g. developer:8644) fails closed with
   // "fetch failed" and the runner never gets a chance to spawn it.
   if (profile) {
-    await ensureProfileGateway(profile).catch((error) => {
+    const ensured = await ensureProfileGateway(profile).catch((error) => {
       console.warn(
         `[agent-session-manager] could not ensure gateway for ${profile}:`,
         error instanceof Error ? error.message : String(error),
       )
+      return null
     })
+    if (ensured && !ensured.ok && ensured.misconfigured) {
+      throw new Error(
+        ensured.error || `gateway for ${profile} is misconfigured`,
+      )
+    }
   }
 
   // 1. Try in-memory cache first.
@@ -311,16 +317,12 @@ export async function getOrCreateSession(
           'SELECT session_id, profile FROM group_chat_sessions WHERE room_id = ? AND participant_id = ?',
         )
         .all(roomId, member.participantId)
-        if (rows.length > 0) {
+      if (rows.length > 0) {
         cached = String(rows[0].session_id)
         const storedProfile = rows[0].profile ? String(rows[0].profile) : null
         // Only hydrate Hermes profile onto hermes members — never promote a
         // stale profile string onto claude-code / codex participants.
-        if (
-          storedProfile &&
-          !member.profile &&
-          member.runtime === 'hermes'
-        ) {
+        if (storedProfile && !member.profile && member.runtime === 'hermes') {
           ;(member as { profile: string | null }).profile = storedProfile
         }
       }

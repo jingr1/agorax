@@ -3,6 +3,7 @@
 import {
   ArrowDown01Icon,
   ArrowRight01Icon,
+  File01Icon,
   Folder01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -14,6 +15,7 @@ export type WorkspaceFolderEntry = {
   name: string
   path: string
   fullPath: string
+  kind?: 'file' | 'folder'
 }
 
 type FolderListResponse = {
@@ -40,6 +42,8 @@ type WorkspaceFolderPickerProps = {
   className?: string
   /** Remount/refetch when the active profile changes. */
   reloadKey?: string
+  /** Attach-path mode. Workspace dialogs leave this off and stay folder-only. */
+  includeFiles?: boolean
 }
 
 type FolderCacheEntry = {
@@ -49,8 +53,12 @@ type FolderCacheEntry = {
 
 const folderCache = new Map<string, FolderCacheEntry>()
 
-function folderCacheKey(subPath: string, profileName: string): string {
-  return `${profileName}::${subPath}`
+function folderCacheKey(
+  subPath: string,
+  profileName: string,
+  includeFiles: boolean,
+): string {
+  return `${profileName}::${includeFiles ? 'files' : 'dirs'}::${subPath}`
 }
 
 function isAbortError(error: unknown): boolean {
@@ -65,6 +73,7 @@ function isAbortError(error: unknown): boolean {
 async function fetchFolders(
   subPath = '',
   profileName = '',
+  includeFiles = false,
 ): Promise<FolderListResponse | null> {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), 30_000)
@@ -72,6 +81,7 @@ async function fetchFolders(
     const params = new URLSearchParams()
     if (subPath) params.set('path', subPath)
     if (profileName) params.set('agent', profileName)
+    if (includeFiles) params.set('files', '1')
     const query = params.size ? `?${params.toString()}` : ''
     const response = await fetch(`/api/workspace/folders${query}`, {
       signal: controller.signal,
@@ -109,23 +119,29 @@ async function fetchFolders(
 function cachedFetchFolders(
   subPath = '',
   profileName = '',
+  includeFiles = false,
 ): Promise<FolderListResponse | null> {
-  const key = folderCacheKey(subPath, profileName)
+  const key = folderCacheKey(subPath, profileName, includeFiles)
   const cached = folderCache.get(key)
   if (cached?.data !== undefined) return Promise.resolve(cached.data)
   if (cached?.promise) return cached.promise
-  const promise = fetchFolders(subPath, profileName).then((result) => {
-    folderCache.set(key, { data: result })
-    return result
-  })
+  const promise = fetchFolders(subPath, profileName, includeFiles).then(
+    (result) => {
+      folderCache.set(key, { data: result })
+      return result
+    },
+  )
   folderCache.set(key, { promise })
   return promise
 }
 
-export function preloadWorkspaceFolders(profileName = ''): void {
+export function preloadWorkspaceFolders(
+  profileName = '',
+  includeFiles = false,
+): void {
   // Defer so chat boot (sessions/history) is not blocked by home directory listing.
   const run = () => {
-    void cachedFetchFolders('', profileName)
+    void cachedFetchFolders('', profileName, includeFiles)
   }
   if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
     window.requestIdleCallback(run, { timeout: 3000 })
@@ -139,6 +155,7 @@ export function WorkspaceFolderPicker({
   onChange,
   className,
   reloadKey = '',
+  includeFiles = false,
 }: WorkspaceFolderPickerProps) {
   const [loading, setLoading] = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
@@ -159,7 +176,9 @@ export function WorkspaceFolderPicker({
     setExpandedPaths(new Set())
     setChildrenCache(new Map())
     setLoadingPaths(new Set())
-    const cached = folderCache.get(folderCacheKey('', reloadKey))?.data
+    const cached = folderCache.get(
+      folderCacheKey('', reloadKey, includeFiles),
+    )?.data
     if (cached) {
       setLoading(false)
       if (cached.error) {
@@ -181,7 +200,7 @@ export function WorkspaceFolderPicker({
       setRemoteHost('')
       setFolders([])
     }
-    void cachedFetchFolders('', reloadKey)
+    void cachedFetchFolders('', reloadKey, includeFiles)
       .then((res) => {
         if (cancelled) return
         setLoading(false)
@@ -210,7 +229,7 @@ export function WorkspaceFolderPicker({
     return () => {
       cancelled = true
     }
-  }, [reloadKey])
+  }, [includeFiles, reloadKey])
 
   const toggleExpand = useCallback((folder: WorkspaceFolderEntry) => {
     setExpandedPaths((current) => {
@@ -237,20 +256,22 @@ export function WorkspaceFolderPicker({
       return next
     })
     for (const entryPath of pending) {
-      void cachedFetchFolders(entryPath, reloadKey).then((res) => {
-        setChildrenCache((current) => {
-          const next = new Map(current)
-          next.set(entryPath, res?.folders ?? [])
-          return next
-        })
-        setLoadingPaths((current) => {
-          const next = new Set(current)
-          next.delete(entryPath)
-          return next
-        })
-      })
+      void cachedFetchFolders(entryPath, reloadKey, includeFiles).then(
+        (res) => {
+          setChildrenCache((current) => {
+            const next = new Map(current)
+            next.set(entryPath, res?.folders ?? [])
+            return next
+          })
+          setLoadingPaths((current) => {
+            const next = new Set(current)
+            next.delete(entryPath)
+            return next
+          })
+        },
+      )
     }
-  }, [expandedPaths, childrenCache, loadingPaths])
+  }, [childrenCache, expandedPaths, includeFiles, loadingPaths, reloadKey])
 
   const flatNodes = useMemo<Array<FlatNode>>(() => {
     const result: Array<FlatNode> = []
@@ -319,67 +340,74 @@ export function WorkspaceFolderPicker({
             </button>
           ) : null}
 
-          {flatNodes.map((node) => (
-            <div key={node.folder.path}>
-              <div
-                className={cn(
-                  'flex w-full items-center gap-1 rounded-md py-1 pr-2 transition-colors',
-                  value === node.folder.fullPath
-                    ? 'bg-[var(--theme-accent-soft)] outline outline-1 outline-[var(--theme-accent)]'
-                    : 'hover:bg-[var(--theme-card2)]',
-                )}
-                style={{ paddingLeft: `${12 + node.depth * 16}px` }}
-              >
-                <button
-                  type="button"
-                  aria-label={
-                    node.isExpanded
-                      ? `Collapse ${node.folder.name}`
-                      : `Expand ${node.folder.name}`
-                  }
-                  className="inline-flex w-3.5 shrink-0 items-center justify-center text-[10px] text-[var(--theme-muted)]"
-                  onClick={() => {
-                    void toggleExpand(node.folder)
-                  }}
-                >
-                  {node.isLoading ? (
-                    '…'
-                  ) : (
-                    <HugeiconsIcon
-                      icon={
-                        node.isExpanded ? ArrowDown01Icon : ArrowRight01Icon
-                      }
-                      size={11}
-                      strokeWidth={1.8}
-                    />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onChange(node.folder.fullPath)}
-                  className="flex min-w-0 flex-1 items-center gap-1 text-left"
-                >
-                  <HugeiconsIcon
-                    icon={Folder01Icon}
-                    size={14}
-                    strokeWidth={1.8}
-                    className="shrink-0"
-                  />
-                  <span className="min-w-0 truncate">{node.folder.name}</span>
-                </button>
-              </div>
-              {node.isExpanded &&
-              !node.isLoading &&
-              node.hasChildren === false ? (
+          {flatNodes.map((node) => {
+            const isFile = node.folder.kind === 'file'
+            return (
+              <div key={node.folder.path}>
                 <div
-                  className="px-2 py-0.5 text-[11px] italic text-[var(--theme-muted)]"
-                  style={{ paddingLeft: `${28 + node.depth * 16}px` }}
+                  className={cn(
+                    'flex w-full items-center gap-1 rounded-md py-1 pr-2 transition-colors',
+                    value === node.folder.fullPath
+                      ? 'bg-[var(--theme-accent-soft)] outline outline-1 outline-[var(--theme-accent)]'
+                      : 'hover:bg-[var(--theme-card2)]',
+                  )}
+                  style={{ paddingLeft: `${12 + node.depth * 16}px` }}
                 >
-                  (Empty)
+                  {isFile ? (
+                    <span className="inline-flex w-3.5 shrink-0" />
+                  ) : (
+                    <button
+                      type="button"
+                      aria-label={
+                        node.isExpanded
+                          ? `Collapse ${node.folder.name}`
+                          : `Expand ${node.folder.name}`
+                      }
+                      className="inline-flex w-3.5 shrink-0 items-center justify-center text-[10px] text-[var(--theme-muted)]"
+                      onClick={() => {
+                        void toggleExpand(node.folder)
+                      }}
+                    >
+                      {node.isLoading ? (
+                        '…'
+                      ) : (
+                        <HugeiconsIcon
+                          icon={
+                            node.isExpanded ? ArrowDown01Icon : ArrowRight01Icon
+                          }
+                          size={11}
+                          strokeWidth={1.8}
+                        />
+                      )}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onChange(node.folder.fullPath)}
+                    className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                  >
+                    <HugeiconsIcon
+                      icon={isFile ? File01Icon : Folder01Icon}
+                      size={14}
+                      strokeWidth={1.8}
+                      className="shrink-0"
+                    />
+                    <span className="min-w-0 truncate">{node.folder.name}</span>
+                  </button>
                 </div>
-              ) : null}
-            </div>
-          ))}
+                {node.isExpanded &&
+                !node.isLoading &&
+                node.hasChildren === false ? (
+                  <div
+                    className="px-2 py-0.5 text-[11px] italic text-[var(--theme-muted)]"
+                    style={{ paddingLeft: `${28 + node.depth * 16}px` }}
+                  >
+                    (Empty)
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
 
           {(folders.length === 0 || loadFailed) && !loading ? (
             <div className="px-3 py-4 text-center text-[var(--theme-muted)]">

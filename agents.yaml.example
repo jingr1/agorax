@@ -11,7 +11,7 @@ agents:
 # NousResearch/hermes-agent DEFAULT_SOUL_MD (SOUL.md); see upstream README.
 - id: default
   name: Default
-  displayName: Hermes Agent
+  displayName: default
   role: Primary Hermes Agent (Nous Research)
   specialty: >
     General-purpose self-improving agent — coding, research, tools/skills/MCP,

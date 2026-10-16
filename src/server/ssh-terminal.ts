@@ -262,6 +262,7 @@ export function resolveRemoteListTarget(
 export async function listSshWorkspaceFolders(
   config: Record<string, unknown>,
   subPath = '',
+  options: { includeFiles?: boolean } = {},
 ): Promise<WorkspaceFolderListResponse> {
   const ssh = readSshTerminalConfig(config)
   if (!ssh) {
@@ -285,16 +286,24 @@ export async function listSshWorkspaceFolders(
     )
   }
 
-  let names = result.stdout
+  const listed = result.stdout
     .toString('utf8')
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.endsWith('/'))
-    .map((line) => line.replace(/\/+$/, ''))
-    .map((name) => path.posix.basename(name))
-    .filter((name) => name && !name.startsWith('.'))
+    .filter(Boolean)
+    .flatMap((line) => {
+      const isDir = line.endsWith('/')
+      if (!isDir && !options.includeFiles) return []
+      const name = path.posix.basename(isDir ? line.replace(/\/+$/, '') : line)
+      if (!name || name.startsWith('.')) return []
+      return [{ name, kind: isDir ? ('folder' as const) : ('file' as const) }]
+    })
 
-  if (names.length === 0) {
+  let names = listed
+    .filter((entry) => entry.kind === 'folder')
+    .map((entry) => entry.name)
+
+  if (names.length === 0 && !options.includeFiles) {
     const findResult = await runSsh(
       ssh,
       [
@@ -323,11 +332,22 @@ export async function listSshWorkspaceFolders(
     }
   }
 
-  const folders: Array<WorkspaceFolderEntry> = names
-    .sort((a, b) => a.localeCompare(b))
-    .map((name) => {
-      const fullPath = path.posix.join(target, name)
-      return { name, path: fullPath, fullPath }
+  const entries = options.includeFiles
+    ? listed
+    : names.map((name) => ({ name, kind: 'folder' as const }))
+  const folders: Array<WorkspaceFolderEntry> = entries
+    .sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+    .map((entry) => {
+      const fullPath = path.posix.join(target, entry.name)
+      return {
+        name: entry.name,
+        path: fullPath,
+        fullPath,
+        ...(options.includeFiles ? { kind: entry.kind } : {}),
+      }
     })
 
   return {
@@ -343,11 +363,12 @@ export async function listSshWorkspaceFolders(
 export async function listActiveWorkspaceFolders(
   subPath = '',
   profileName?: string | null,
+  options: { includeFiles?: boolean } = {},
 ): Promise<WorkspaceFolderListResponse> {
   const scope = workspaceProfileScope(profileName)
   const remote = remoteWorkspaceContextForScope(scope)
   if (!remote) {
-    return listWorkspaceFolders(subPath)
+    return listWorkspaceFolders(subPath, options)
   }
   if (
     String((remote.config.terminal as TerminalConfig)?.backend ?? '')
@@ -364,7 +385,7 @@ export async function listActiveWorkspaceFolders(
       `Folder browsing for terminal.backend=${backend} is not supported yet. Enter a remote path under ${remote.remoteCwd}.`,
     )
   }
-  return listSshWorkspaceFolders(remote.config, subPath)
+  return listSshWorkspaceFolders(remote.config, subPath, options)
 }
 
 export type RemoteFileEntry = {

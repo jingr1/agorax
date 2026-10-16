@@ -276,3 +276,23 @@ describe('bindProfileToPort', () => {
     expect(mod.resolveProfileGatewayPort('writer')).toBe(8643)
   })
 })
+
+describe('ensureProfileGateway mixed-mode guard', () => {
+  it('rejects a standalone profile under a multiplexing default gateway', async () => {
+    const home = makeHome()
+    writeFileSync(
+      path.join(home, 'config.yaml'),
+      'gateway:\n  multiplex_profiles: true\n',
+    )
+    const dir = addProfile(home, 'aider')
+    writeFileSync(
+      path.join(dir, 'config.yaml'),
+      'gateway:\n  standalone: true\n',
+    )
+    const pool = await import('./gateway-pool')
+    const result = await pool.ensureProfileGateway('aider')
+    if (result.ok) throw new Error('expected mixed mode to be rejected')
+    expect(result.misconfigured).toBe(true)
+    expect(result.error).toMatch(/gateway\.standalone/)
+  })
+})

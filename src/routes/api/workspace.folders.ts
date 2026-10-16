@@ -16,7 +16,12 @@ export const Route = createFileRoute('/api/workspace/folders')({
           const url = new URL(request.url)
           const subPath = url.searchParams.get('path') || ''
           const scopeKey = readWorkspaceScopeQueryParam(request)
-          return json(await listActiveWorkspaceFolders(subPath, scopeKey))
+          const includeFiles = url.searchParams.get('files') === '1'
+          return json(
+            await listActiveWorkspaceFolders(subPath, scopeKey, {
+              includeFiles,
+            }),
+          )
         } catch (err) {
           if (err instanceof WorkspaceFolderAccessError) {
             return json(

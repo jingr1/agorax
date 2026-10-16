@@ -2,21 +2,16 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import { seedAgentPresets } from './agent-presets'
-import {
-  AiBrain03Icon,
-  Settings01Icon,
-  PlusSignIcon,
-} from '@hugeicons/core-free-icons'
-import { cn } from '@/lib/utils'
+import { PlusSignIcon, UserMultipleIcon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { PageHeader } from '@/components/layout/page-header'
+import { PageShell } from '@/components/layout/page-shell'
+import { Section } from '@/components/layout/section'
 import { Button } from '@/components/ui/button'
 import { formatRelativeTime } from '@/screens/dashboard/lib/formatters'
-import { OrchestratorCard } from './components/orchestrator-card'
 import { OperationsAgentCard } from './components/operations-agent-card'
 import { OperationsAgentDetail } from './components/operations-agent-detail'
 import { OperationsNewAgentModal } from './components/operations-new-agent-modal'
-import { OperationsSettingsModal } from './components/operations-settings-modal'
-import { FullOutputsView } from './components/full-outputs-view'
 import { AgentBusPanel as SwarmHealthBar } from './components/agent-bus-panel'
 import {
   TeamOverview,
@@ -64,11 +59,9 @@ export function OperationsScreen() {
   const navigate = useNavigate()
   const { agent: agentFromSearch } = useSearch({ from: '/agents' })
   const [newAgentOpen, setNewAgentOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsAgentId, setSettingsAgentId] = useState<string | null>(
     agentFromSearch ?? null,
   )
-  const [view, setView] = useState<'overview' | 'outputs'>('overview')
   const [filter, setFilter] = useState<TeamOverviewFilter>('all')
   const {
     agents,
@@ -79,8 +72,6 @@ export function OperationsScreen() {
     snapshotQuery,
     healthSummary,
     enableUsagePolling,
-    settings,
-    saveSettings,
     defaultModel,
     createAgent,
     isCreatingAgent,
@@ -133,203 +124,130 @@ export function OperationsScreen() {
   }
 
   return (
-    <main
-      className="min-h-full bg-surface px-3 pb-24 pt-5 text-primary-900 md:px-5 md:pt-8"
-      style={THEME_STYLE}
-    >
-      <section className="mx-auto w-full max-w-[1320px] space-y-4">
-        <header className="flex flex-col gap-4 rounded-xl border border-primary-200 bg-primary-50/80 px-5 py-4 shadow-sm md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[var(--theme-border)] bg-[var(--theme-card)] text-[var(--theme-accent)] shadow-sm">
-              <HugeiconsIcon icon={AiBrain03Icon} size={22} strokeWidth={1.8} />
-            </div>
-            <div>
-              <h1 className="text-base font-semibold text-primary-900">
-                Agents
-              </h1>
-              <p className="mt-1 text-sm text-primary-600">
-                Configure your persistent agent team
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="inline-flex rounded-xl border border-[var(--theme-border)] bg-[var(--theme-card)] p-1 shadow-sm">
-              <button
-                type="button"
-                onClick={() => setView('overview')}
-                className={cn(
-                  'rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                  view === 'overview'
-                    ? 'bg-[var(--theme-accent)] text-primary-950'
-                    : 'text-[var(--theme-muted)] hover:bg-[var(--theme-card2)]',
-                )}
-              >
-                Overview
-              </button>
-              <button
-                type="button"
-                onClick={() => setView('outputs')}
-                className={cn(
-                  'rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                  view === 'outputs'
-                    ? 'bg-[var(--theme-accent)] text-primary-950'
-                    : 'text-[var(--theme-muted)] hover:bg-[var(--theme-card2)]',
-                )}
-              >
-                Outputs
-              </button>
-            </div>
-            <Button
-              className="bg-[var(--theme-accent)] text-primary-950 hover:bg-[var(--theme-accent-strong)]"
-              onClick={() => setNewAgentOpen(true)}
-            >
-              <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={1.8} />
-              New Agent
-            </Button>
-            <Button
-              variant="secondary"
-              className="border border-[var(--theme-border)] bg-[var(--theme-card)] text-[var(--theme-text)] hover:bg-[var(--theme-card2)]"
-              onClick={() => setSettingsOpen(true)}
-            >
-              <HugeiconsIcon
-                icon={Settings01Icon}
-                size={16}
-                strokeWidth={1.8}
-              />
-              Settings
-            </Button>
-          </div>
-        </header>
+    <PageShell style={THEME_STYLE} contentClassName="gap-4">
+      <PageHeader
+        icon={UserMultipleIcon}
+        title="Agents"
+        description="Configure your persistent agent team"
+        actions={
+          <Button onClick={() => setNewAgentOpen(true)}>
+            <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={1.8} />
+            New Agent
+          </Button>
+        }
+      />
 
-        {isLoading ? (
-          <section className="rounded-3xl border border-[var(--theme-border)] bg-[var(--theme-card)] px-6 py-12 text-center text-sm text-[var(--theme-muted)] shadow-[0_24px_80px_var(--theme-shadow)]">
-            Loading Agents roster…
-          </section>
-        ) : error ? (
-          <section className="rounded-3xl border border-[var(--theme-danger-border)] bg-[var(--theme-danger-soft)] px-6 py-12 text-center text-sm text-[var(--theme-text)] shadow-[0_24px_80px_var(--theme-shadow)]">
-            {error}
-          </section>
-        ) : view === 'outputs' ? (
-          <FullOutputsView />
-        ) : (
-          <>
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25 }}
-            >
-              <OrchestratorCard totalAgents={agents.length} />
-            </motion.div>
+      {isLoading ? (
+        <Section className="py-12 text-center text-sm text-fg-muted">
+          Loading Agents roster…
+        </Section>
+      ) : error ? (
+        <Section className="border-danger/35 bg-danger/10 py-12 text-center text-sm text-fg">
+          {error}
+        </Section>
+      ) : (
+        <>
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <TeamOverview
+              agents={agents}
+              filter={filter}
+              onFilterChange={setFilter}
+            />
+          </motion.div>
 
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.05, duration: 0.25 }}
-            >
-              <TeamOverview
-                agents={agents}
-                filter={filter}
-                onFilterChange={setFilter}
-              />
-            </motion.div>
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.05, duration: 0.25 }}
+          >
+            <SwarmHealthBar
+              health={healthSummary}
+              checkedAt={snapshotQuery.data?.checkedAt ?? null}
+              agentCount={agents.length}
+            />
+          </motion.div>
 
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.08, duration: 0.25 }}
-            >
-              <SwarmHealthBar
-                health={healthSummary}
-                checkedAt={snapshotQuery.data?.checkedAt ?? null}
-                agentCount={agents.length}
-              />
-            </motion.div>
-
-            <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {filteredAgents.map((agent, index) => (
-                <motion.div
-                  key={agent.id}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.04, duration: 0.22 }}
-                >
-                  <OperationsAgentCard
-                    agent={agent}
-                    providerSiblingCount={agents.length}
-                    onOpenSettings={(agentId) => setSettingsAgentId(agentId)}
-                  />
-                </motion.div>
-              ))}
-              <motion.button
-                type="button"
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {filteredAgents.map((agent, index) => (
+              <motion.div
+                key={agent.id}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{
-                  delay: filteredAgents.length * 0.04,
-                  duration: 0.22,
-                }}
-                onClick={() => setNewAgentOpen(true)}
-                className="flex min-h-[19rem] flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-[var(--theme-border)] bg-[var(--theme-card)] p-4 text-center shadow-[0_20px_60px_color-mix(in_srgb,var(--theme-shadow)_10%,transparent)] transition-colors hover:border-[var(--theme-accent)] hover:bg-[var(--theme-accent-soft)]"
+                transition={{ delay: index * 0.04, duration: 0.22 }}
               >
-                <HugeiconsIcon
-                  icon={PlusSignIcon}
-                  size={32}
-                  strokeWidth={1.7}
-                  className="text-[var(--theme-muted)]"
+                <OperationsAgentCard
+                  agent={agent}
+                  providerSiblingCount={agents.length}
+                  onOpenSettings={(agentId) => setSettingsAgentId(agentId)}
                 />
-                <span className="mt-3 text-sm text-[var(--theme-muted)]">
-                  Add Agent
-                </span>
-              </motion.button>
-            </section>
+              </motion.div>
+            ))}
+            <motion.button
+              type="button"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{
+                delay: filteredAgents.length * 0.04,
+                duration: 0.22,
+              }}
+              onClick={() => setNewAgentOpen(true)}
+              className="flex min-h-[19rem] flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-[var(--theme-border)] bg-[var(--theme-card)] p-4 text-center shadow-[0_20px_60px_color-mix(in_srgb,var(--theme-shadow)_10%,transparent)] transition-colors hover:border-[var(--theme-accent)] hover:bg-[var(--theme-accent-soft)]"
+            >
+              <HugeiconsIcon
+                icon={PlusSignIcon}
+                size={32}
+                strokeWidth={1.7}
+                className="text-[var(--theme-muted)]"
+              />
+              <span className="mt-3 text-sm text-[var(--theme-muted)]">
+                Add Agent
+              </span>
+            </motion.button>
+          </section>
 
-            <section className="rounded-3xl border border-[var(--theme-border)] bg-[var(--theme-card)] p-5 shadow-[0_24px_80px_var(--theme-shadow)]">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold text-[var(--theme-text)]">
-                    Recent Activity
-                  </h2>
-                  <p className="mt-1 text-sm text-[var(--theme-muted-2)]">
-                    Latest outputs across the team
-                  </p>
-                </div>
-              </div>
-              <div className="mt-4 space-y-3">
-                {recentActivity.length > 0 ? (
-                  recentActivity.map((activity) => {
-                    const agent = agents.find(
-                      (entry) => entry.id === activity.agentId,
-                    )
-                    return (
-                      <div
-                        key={activity.id}
-                        className="flex flex-col gap-2 rounded-2xl border border-[var(--theme-border)] bg-[var(--theme-bg)] px-4 py-3 md:flex-row md:items-center md:justify-between"
-                      >
-                        <p className="text-sm text-[var(--theme-text)]">
-                          <span className="mr-2">
-                            {agent?.meta.emoji ?? '🤖'}
-                          </span>
-                          <span className="font-medium">
-                            {agent?.name ?? activity.agentId}:
-                          </span>{' '}
-                          {activity.summary}
-                        </p>
-                        <span className="shrink-0 text-sm text-[var(--theme-muted)]">
-                          {formatRelativeTime(activity.timestamp)}
+          <Section
+            title="Recent Activity"
+            description="Latest outputs across the team"
+          >
+            <div className="space-y-2">
+              {recentActivity.length > 0 ? (
+                recentActivity.map((activity) => {
+                  const agent = agents.find(
+                    (entry) => entry.id === activity.agentId,
+                  )
+                  return (
+                    <div
+                      key={activity.id}
+                      className="flex flex-col gap-2 rounded-lg border border-border bg-surface px-3 py-2.5 md:flex-row md:items-center md:justify-between"
+                    >
+                      <p className="text-sm text-fg">
+                        <span className="mr-2">
+                          {agent?.meta.emoji ?? '🤖'}
                         </span>
-                      </div>
-                    )
-                  })
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-[var(--theme-border)] bg-[var(--theme-bg)] px-4 py-6 text-sm text-[var(--theme-muted)]">
-                    No recent activity yet.
-                  </div>
-                )}
-              </div>
-            </section>
-          </>
-        )}
-      </section>
+                        <span className="font-medium">
+                          {agent?.name ?? activity.agentId}:
+                        </span>{' '}
+                        {activity.summary}
+                      </p>
+                      <span className="shrink-0 text-xs text-fg-muted tabular-nums">
+                        {formatRelativeTime(activity.timestamp)}
+                      </span>
+                    </div>
+                  )
+                })
+              ) : (
+                <div className="rounded-lg border border-dashed border-border bg-surface px-4 py-6 text-sm text-fg-muted">
+                  No recent activity yet.
+                </div>
+              )}
+            </div>
+          </Section>
+        </>
+      )}
 
       <OperationsNewAgentModal
         open={newAgentOpen}
@@ -341,13 +259,6 @@ export function OperationsScreen() {
         onClose={() => setNewAgentOpen(false)}
         onCreate={createAgent}
         isSaving={isCreatingAgent}
-      />
-
-      <OperationsSettingsModal
-        open={settingsOpen}
-        settings={settings}
-        onClose={() => setSettingsOpen(false)}
-        onSave={saveSettings}
       />
 
       <OperationsAgentDetail
@@ -377,6 +288,6 @@ export function OperationsScreen() {
         onRemoveMcp={removeMcp}
         isRemovingMcp={isRemovingMcp}
       />
-    </main>
+    </PageShell>
   )
 }

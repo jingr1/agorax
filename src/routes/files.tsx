@@ -2,8 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Editor } from '@monaco-editor/react'
 import { createFileRoute } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Download01Icon, ExternalLink } from '@hugeicons/core-free-icons'
+import {
+  Download01Icon,
+  ExternalLink,
+  File01Icon,
+} from '@hugeicons/core-free-icons'
+import { PageHeader } from '@/components/layout/page-header'
 import { Markdown } from '@/components/prompt-kit/markdown'
+import { Button } from '@/components/ui/button'
 import {
   ScrollAreaCorner,
   ScrollAreaRoot,
@@ -254,99 +260,85 @@ function FilesRoute() {
   )
 
   return (
-    <div className="h-full min-h-0 overflow-hidden bg-surface text-primary-900">
+    <div className="h-full min-h-0 overflow-hidden bg-surface text-fg">
       <div className="flex h-full min-h-0 overflow-hidden">
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="flex items-center gap-3 border-b border-primary-200 px-3 py-2 md:px-4 md:py-3">
-            <div className="min-w-0 flex-1">
-              {loaded ? (
+          <PageHeader
+            variant="bar"
+            icon={File01Icon}
+            title={
+              loaded ? <span title={loaded.path}>{loaded.name}</span> : 'Files'
+            }
+            meta={
+              loaded?.dirty ? (
+                <span className="text-accent">unsaved changes</span>
+              ) : savedFlash ? (
+                <span className="text-success">saved</span>
+              ) : undefined
+            }
+            description={
+              loaded
+                ? loaded.path
+                : 'Click a file in the sidebar to load it into the editor.'
+            }
+            actions={
+              loaded ? (
                 <>
-                  <h1
-                    className="truncate text-base font-medium md:text-lg"
-                    title={loaded.path}
+                  {isMarkdown && !isImage ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setRenderMarkdown((v) => !v)}
+                    >
+                      {renderMarkdown ? 'Edit' : 'Preview'}
+                    </Button>
+                  ) : null}
+                  {!isImage ? (
+                    <Button
+                      size="sm"
+                      onClick={handleSave}
+                      disabled={!loaded.dirty || saving}
+                    >
+                      {saving ? 'Saving…' : 'Save'}
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleOpenInTab}
+                    title="Open this file in a new browser tab"
                   >
-                    {loaded.name}
-                  </h1>
-                  <p className="hidden truncate text-xs text-primary-500 sm:block">
-                    {loaded.path}
-                    {loaded.dirty && (
-                      <span className="ml-2 text-accent-500">
-                        · unsaved changes
-                      </span>
-                    )}
-                    {savedFlash && (
-                      <span className="ml-2 text-emerald-600">· saved</span>
-                    )}
-                  </p>
+                    <HugeiconsIcon
+                      icon={ExternalLink}
+                      size={14}
+                      strokeWidth={1.6}
+                    />
+                    Open
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleDownload}
+                    title="Download this file to your computer"
+                  >
+                    <HugeiconsIcon
+                      icon={Download01Icon}
+                      size={14}
+                      strokeWidth={1.6}
+                    />
+                    Download
+                  </Button>
                 </>
-              ) : (
-                <>
-                  <h1 className="hidden text-base font-medium md:block md:text-lg">
-                    Files
-                  </h1>
-                  <p className="hidden text-sm text-primary-600 sm:block">
-                    Click a file in the sidebar to load it into the editor.
-                  </p>
-                </>
-              )}
-            </div>
-            {loaded ? (
-              <div className="flex shrink-0 items-center gap-2">
-                {isMarkdown && !isImage ? (
-                  <button
-                    type="button"
-                    onClick={() => setRenderMarkdown((v) => !v)}
-                    className="rounded-md border border-primary-200 px-2.5 py-1 text-xs font-medium text-primary-700 hover:bg-primary-100"
-                  >
-                    {renderMarkdown ? 'Edit' : 'Preview'}
-                  </button>
-                ) : null}
-                {!isImage ? (
-                  <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={!loaded.dirty || saving}
-                    className="rounded-md bg-accent-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-accent-600 disabled:opacity-50"
-                  >
-                    {saving ? 'Saving…' : 'Save'}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={handleOpenInTab}
-                  className="inline-flex items-center gap-1 rounded-md border border-primary-200 px-2.5 py-1 text-xs font-medium text-primary-700 hover:bg-primary-100"
-                  title="Open this file in a new browser tab"
-                >
-                  <HugeiconsIcon
-                    icon={ExternalLink}
-                    size={14}
-                    strokeWidth={1.6}
-                  />
-                  Open
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  className="inline-flex items-center gap-1 rounded-md border border-primary-200 px-2.5 py-1 text-xs font-medium text-primary-700 hover:bg-primary-100"
-                  title="Download this file to your computer"
-                >
-                  <HugeiconsIcon
-                    icon={Download01Icon}
-                    size={14}
-                    strokeWidth={1.6}
-                  />
-                  Download
-                </button>
-              </div>
-            ) : null}
-          </header>
+              ) : undefined
+            }
+          />
           <div className="min-h-0 flex-1 pb-24 md:pb-0">
             {loaded?.loading ? (
-              <div className="flex h-full items-center justify-center text-sm text-primary-500">
+              <div className="flex h-full items-center justify-center text-sm text-fg-muted">
                 Loading…
               </div>
             ) : loaded?.error ? (
-              <div className="flex h-full items-center justify-center p-6 text-sm text-red-600">
+              <div className="flex h-full items-center justify-center p-6 text-sm text-danger">
                 {loaded.error}
               </div>
             ) : isImage && loaded?.imageDataUrl ? (

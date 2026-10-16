@@ -218,11 +218,11 @@ export function SwarmOrchestratorCard({
     <>
       <article
         className={cn(
-          'relative flex min-h-[23rem] flex-col rounded-[1.75rem] border border-[var(--theme-border)] border-l-4 border-l-[var(--theme-accent)] bg-[var(--theme-card)] px-5 pt-6 pb-4 shadow-[0_22px_64px_var(--theme-shadow)]',
+          'relative flex min-h-[23rem] w-full flex-col rounded-[1.75rem] border border-[var(--theme-border)] border-l-4 border-l-[var(--theme-accent)] bg-[var(--theme-card)] px-5 pt-6 pb-4 shadow-[0_22px_64px_var(--theme-shadow)]',
           className,
         )}
       >
-        <div className="relative flex flex-col items-center gap-3 text-center">
+        <div className="relative flex w-full flex-col items-center gap-3 text-center">
           <div className="absolute left-0 top-0 flex shrink-0 items-center gap-1 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-card)] p-1 shadow-sm">
             {(
               [
@@ -320,7 +320,7 @@ export function SwarmOrchestratorCard({
           </div>
         </div>
 
-        <div className="mt-6 min-h-[12.5rem] flex-1">
+        <div className="mt-6 min-h-[12.5rem] w-full">
           <RouterChat
             members={members}
             roomIds={roomIds}

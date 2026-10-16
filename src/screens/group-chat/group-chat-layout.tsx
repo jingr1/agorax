@@ -1,4 +1,4 @@
-import { createContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet, useNavigate, useRouterState } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -27,23 +27,33 @@ import {
   Add01Icon,
 } from '@hugeicons/core-free-icons'
 import {
+  addParticipant as apiAddParticipant,
+  removeParticipant as apiRemoveParticipant,
   createRoom,
   deleteRoom,
+  listAvailableAgents,
+  listParticipants,
   listRooms,
   updateRoom,
 } from '@/lib/group-chat-api'
-import type { Room } from '@/lib/group-chat-types'
+import type { Room, RoomParticipant } from '@/lib/group-chat-types'
 import { clearLastRoom, resolveRoomToOpen } from './last-room'
 import {
   RoomWorkspaceField,
   shortPathLabel,
 } from './components/room-workspace-field'
+import { MemberList } from './components/member-list'
+import type { AvailableAgent } from './components/member-list'
+import { getInitials, getMemberColor } from './lib/avatar-utils'
 
-/** Shared header height so the sidebar/main divider lines align. */
-const ROOM_HEADER_CLASS =
-  'h-16 shrink-0 border-b flex items-center justify-between'
+const SIDEBAR_MIN_WIDTH = 220
+const SIDEBAR_MAX_WIDTH = 420
+const ROOMS_MIN_HEIGHT = 120
+const MEMBERS_MIN_HEIGHT = 140
 
 export const GroupChatRoomsContext = createContext<Array<Room>>([])
+
+export const GroupChatMembersContext = createContext<Array<RoomParticipant>>([])
 
 export function GroupChatLayout() {
   const navigate = useNavigate()
@@ -64,10 +74,129 @@ export function GroupChatLayout() {
   const [renameTarget, setRenameTarget] = useState<Room | null>(null)
   const [renameTitle, setRenameTitle] = useState('')
   const [renaming, setRenaming] = useState(false)
+  const [participants, setParticipants] = useState<Array<RoomParticipant>>([])
+  const [availableAgents, setAvailableAgents] = useState<Array<AvailableAgent>>(
+    [],
+  )
+  const roomIdRef = useRef(roomId)
+  roomIdRef.current = roomId
+  const [sidebarWidth, setSidebarWidth] = useState(260)
+  const [roomsHeight, setRoomsHeight] = useState(320)
+  const sidebarRef = useRef<HTMLElement>(null)
+  const roomsSectionRef = useRef<HTMLDivElement>(null)
+
+  // Drag writes the size straight to the DOM and commits state on release, so
+  // mousemove never re-renders the layout (and the chat Outlet under it).
+  const startSidebarResize = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      const el = sidebarRef.current
+      if (!el) return
+      const startX = event.clientX
+      const startWidth = el.offsetWidth
+      let next = startWidth
+      const previousUserSelect = document.body.style.userSelect
+      document.body.style.userSelect = 'none'
+      const onMove = (e: MouseEvent) => {
+        next = Math.min(
+          SIDEBAR_MAX_WIDTH,
+          Math.max(SIDEBAR_MIN_WIDTH, startWidth + (e.clientX - startX)),
+        )
+        el.style.width = `${next}px`
+      }
+      const onUp = () => {
+        document.body.style.userSelect = previousUserSelect
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        setSidebarWidth(next)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [],
+  )
+
+  const startSectionResize = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      const el = roomsSectionRef.current
+      if (!el) return
+      const startY = event.clientY
+      const startHeight = el.offsetHeight
+      const containerHeight =
+        sidebarRef.current?.clientHeight ?? window.innerHeight
+      const maxHeight = Math.max(
+        ROOMS_MIN_HEIGHT,
+        containerHeight - MEMBERS_MIN_HEIGHT,
+      )
+      let next = startHeight
+      const previousUserSelect = document.body.style.userSelect
+      document.body.style.userSelect = 'none'
+      const onMove = (e: MouseEvent) => {
+        next = Math.min(
+          maxHeight,
+          Math.max(ROOMS_MIN_HEIGHT, startHeight + (e.clientY - startY)),
+        )
+        el.style.height = `${next}px`
+      }
+      const onUp = () => {
+        document.body.style.userSelect = previousUserSelect
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        setRoomsHeight(next)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [],
+  )
 
   useEffect(() => {
     void loadRooms()
+    void listAvailableAgents().then((res) => setAvailableAgents(res.agents))
   }, [])
+
+  const reloadParticipants = useCallback(async () => {
+    const id = roomId
+    if (!id) {
+      setParticipants([])
+      return
+    }
+    const res = await listParticipants(id)
+    // Drop responses for a room the user already navigated away from.
+    if (roomIdRef.current === id) setParticipants(res.participants)
+  }, [roomId])
+
+  useEffect(() => {
+    setParticipants([])
+    void reloadParticipants()
+  }, [reloadParticipants])
+
+  async function handleAddAgent(agent: AvailableAgent) {
+    if (!roomId) return
+    const runtime = agent.runtime || 'hermes'
+    // Non-Hermes runtimes never carry a Hermes profile (mirrors RoomRuntime).
+    const isManaged = runtime !== 'hermes'
+    await apiAddParticipant(roomId, {
+      participantId: agent.id,
+      kind: 'agent',
+      displayName: agent.displayName,
+      mentionName: agent.mentionName,
+      runtime,
+      profile: isManaged ? null : (agent.profile ?? null),
+    })
+    await reloadParticipants()
+  }
+
+  async function handleRemoveParticipant(participantId: string) {
+    if (!roomId) return
+    try {
+      await apiRemoveParticipant(roomId, participantId)
+      await reloadParticipants()
+    } catch (error) {
+      console.error('[group-chat] remove participant failed:', error)
+    }
+  }
 
   async function loadRooms() {
     const res = await listRooms()
@@ -148,177 +277,253 @@ export function GroupChatLayout() {
   return (
     <div className="flex h-full" style={{ color: 'var(--theme-text)' }}>
       <aside
-        className="theme-sidebar theme-border w-64 flex flex-col border-r"
+        ref={sidebarRef}
+        className="relative flex shrink-0 flex-col border-r border-border bg-[var(--theme-sidebar)]"
+        style={{ width: `${sidebarWidth}px` }}
       >
         <div
-          className={cn(ROOM_HEADER_CLASS, 'px-3')}
-          style={{ borderColor: 'var(--theme-border)' }}
+          ref={roomsSectionRef}
+          className={cn(
+            'flex min-h-0 flex-col',
+            roomId ? 'shrink-0' : 'flex-1',
+          )}
+          style={
+            roomId
+              ? {
+                  height: `${roomsHeight}px`,
+                  maxHeight: `calc(100% - ${MEMBERS_MIN_HEIGHT}px)`,
+                }
+              : undefined
+          }
         >
-          <h2 className="font-semibold">Group Chat</h2>
-          <DialogRoot
-            open={isCreateOpen}
-            onOpenChange={(open) => {
-              setIsCreateOpen(open)
-              if (!open) {
-                setCreateError(null)
-                setCreateWorkspacePath('')
-              }
-            }}
-          >
-            <DialogTrigger type="button" className="inline-flex">
-              <Button size="sm" variant="secondary">
-                <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.8} />
-                New
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="w-[min(520px,92vw)]">
-              <div className="p-4">
-                <DialogTitle className="mb-1">New Room</DialogTitle>
-                <DialogDescription className="mb-3">
-                  Start a multi-agent room. Optionally bind a sticky workspace —
-                  enter a project path or pick a folder.
-                </DialogDescription>
-                <div className="flex flex-col gap-3">
-                  <Input
-                    placeholder="Room title"
-                    value={createTitle}
-                    onChange={(e) => setCreateTitle(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleCreateRoom()}
-                  />
-                  <RoomWorkspaceField
-                    value={createWorkspacePath}
-                    onChange={setCreateWorkspacePath}
-                  />
-                  {createError ? (
-                    <div className="text-xs text-red-400">{createError}</div>
-                  ) : null}
-                  <div className="flex justify-end gap-2">
-                    <DialogClose type="button" className="inline-flex">
-                      <Button variant="ghost">Cancel</Button>
-                    </DialogClose>
-                    <Button onClick={handleCreateRoom}>Create</Button>
+          <div className="flex shrink-0 items-center justify-between px-3 py-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-primary-500">
+              Rooms
+            </span>
+            <DialogRoot
+              open={isCreateOpen}
+              onOpenChange={(open) => {
+                setIsCreateOpen(open)
+                if (!open) {
+                  setCreateError(null)
+                  setCreateWorkspacePath('')
+                }
+              }}
+            >
+              <DialogTrigger
+                type="button"
+                className="inline-flex size-6 items-center justify-center rounded-md text-primary-500 hover:bg-primary-200"
+                title="New room"
+                aria-label="New room"
+              >
+                <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.5} />
+              </DialogTrigger>
+              <DialogContent className="w-[min(520px,92vw)]">
+                <div className="p-4">
+                  <DialogTitle className="mb-1">New Room</DialogTitle>
+                  <DialogDescription className="mb-3">
+                    Start a multi-agent room. Optionally bind a sticky workspace
+                    — enter a project path or pick a folder.
+                  </DialogDescription>
+                  <div className="flex flex-col gap-3">
+                    <Input
+                      placeholder="Room title"
+                      value={createTitle}
+                      onChange={(e) => setCreateTitle(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleCreateRoom()}
+                    />
+                    <RoomWorkspaceField
+                      value={createWorkspacePath}
+                      onChange={setCreateWorkspacePath}
+                    />
+                    {createError ? (
+                      <div className="text-xs text-danger">{createError}</div>
+                    ) : null}
+                    <div className="flex justify-end gap-2">
+                      <DialogClose type="button" className="inline-flex">
+                        <Button variant="ghost">Cancel</Button>
+                      </DialogClose>
+                      <Button onClick={handleCreateRoom}>Create</Button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </DialogContent>
-          </DialogRoot>
-        </div>
-        <div className="flex-1 overflow-auto">
-          {rooms.map((room) => (
-            <div
-              key={room.id}
-              className={cn(
-                'group w-full text-left px-3 py-2 border-b transition-colors flex items-center justify-between gap-2',
-                roomId === room.id && 'bg-accent/30',
-              )}
-              style={{ borderColor: 'var(--theme-border)' }}
-            >
-              <button
-                onClick={() =>
-                  navigate({
-                    to: '/group-chat/$roomId',
-                    params: { roomId: room.id },
-                  })
-                }
-                className="flex-1 min-w-0 text-left"
-              >
-                <div className="font-medium truncate flex items-center gap-1.5">
-                  {room.state === 'needs_human' ? (
-                    <span
-                      className="inline-block h-2 w-2 shrink-0 rounded-full bg-red-500"
-                      title="Needs human"
-                      aria-label="Needs human"
-                    />
-                  ) : null}
-                  <span className="truncate">{room.title}</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs opacity-70">
-                  <span>{room.state}</span>
-                  {room.missionId ? <span>mission</span> : null}
-                  {room.workspacePath ? (
-                    <span className="truncate" title={room.workspacePath}>
-                      {shortPathLabel(room.workspacePath)}
-                    </span>
-                  ) : null}
-                </div>
-              </button>
-              <div className="shrink-0">
-                <MenuRoot>
-                  <MenuTrigger
-                    type="button"
-                    className="inline-flex items-center justify-center size-8 rounded-md"
-                    style={{ color: 'var(--theme-muted)' }}
-                    aria-label={`Room options for ${room.title}`}
+              </DialogContent>
+            </DialogRoot>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+            <div className="space-y-0.5">
+              {rooms.map((room) => {
+                const isActive = roomId === room.id
+                const color = getMemberColor(room.id, room.title)
+                return (
+                  <div
+                    key={room.id}
+                    className={cn(
+                      'group flex items-center gap-1 rounded-lg transition-colors hover:bg-primary-200',
+                      isActive && 'bg-primary-200',
+                    )}
                   >
-                    <HugeiconsIcon
-                      icon={MoreVerticalCircle01Icon}
-                      size={18}
-                      strokeWidth={2}
-                      color="currentColor"
-                    />
-                  </MenuTrigger>
-                  <MenuContent align="end" side="bottom">
-                    <MenuItem
-                      onClick={() => {
-                        setRenameTarget(room)
-                        setRenameTitle(room.title)
-                      }}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigate({
+                          to: '/group-chat/$roomId',
+                          params: { roomId: room.id },
+                        })
+                      }
+                      className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left"
                     >
-                      <HugeiconsIcon
-                        icon={Edit02Icon}
-                        size={16}
-                        strokeWidth={1.5}
-                      />
-                      Rename
-                    </MenuItem>
-                    {room.state === 'paused' ? (
-                      <MenuItem
-                        onClick={() => {
-                          void updateRoom(room.id, { state: 'active' }).then(
-                            () => loadRooms(),
-                          )
-                        }}
-                      >
-                        <HugeiconsIcon
-                          icon={PlayIcon}
-                          size={16}
-                          strokeWidth={1.5}
-                        />
-                        Resume room
-                      </MenuItem>
-                    ) : room.state === 'active' ? (
-                      <MenuItem
-                        onClick={() => {
-                          void updateRoom(room.id, { state: 'paused' }).then(
-                            () => loadRooms(),
-                          )
-                        }}
-                      >
-                        <HugeiconsIcon
-                          icon={PauseIcon}
-                          size={16}
-                          strokeWidth={1.5}
-                        />
-                        Pause room
-                      </MenuItem>
-                    ) : null}
-                    <MenuItem
-                      className="text-red-400 focus:text-red-400"
-                      onClick={() => setDeleteTarget(room)}
-                    >
-                      <HugeiconsIcon
-                        icon={Delete01Icon}
-                        size={16}
-                        strokeWidth={1.5}
-                      />
-                      Delete room
-                    </MenuItem>
-                  </MenuContent>
-                </MenuRoot>
-              </div>
+                      <span className="relative shrink-0">
+                        <span
+                          className="flex size-9 items-center justify-center rounded-full text-xs font-semibold"
+                          style={{ background: `${color}26`, color }}
+                        >
+                          {getInitials(room.title)}
+                        </span>
+                        {room.state === 'needs_human' ? (
+                          <span
+                            className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-danger ring-2 ring-[var(--theme-sidebar)]"
+                            title="Needs human"
+                            aria-label="Needs human"
+                          />
+                        ) : null}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={cn(
+                            'block truncate text-sm font-medium',
+                            isActive ? 'text-accent-500' : 'text-primary-900',
+                          )}
+                        >
+                          {room.title}
+                        </span>
+                        <span
+                          className="block truncate text-xs text-primary-500"
+                          title={room.workspacePath ?? undefined}
+                        >
+                          {[
+                            room.state,
+                            room.missionId ? 'mission' : null,
+                            room.workspacePath
+                              ? shortPathLabel(room.workspacePath)
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </span>
+                      </span>
+                    </button>
+                    <div className="shrink-0 pr-1">
+                      <MenuRoot>
+                        <MenuTrigger
+                          type="button"
+                          className={cn(
+                            'inline-flex size-7 items-center justify-center rounded-md text-primary-500 transition-opacity hover:bg-primary-300/60',
+                            'md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100',
+                            'aria-expanded:opacity-100',
+                            isActive && 'md:opacity-100',
+                          )}
+                          aria-label={`Room options for ${room.title}`}
+                        >
+                          <HugeiconsIcon
+                            icon={MoreVerticalCircle01Icon}
+                            size={18}
+                            strokeWidth={2}
+                            color="currentColor"
+                          />
+                        </MenuTrigger>
+                        <MenuContent align="end" side="bottom">
+                          <MenuItem
+                            onClick={() => {
+                              setRenameTarget(room)
+                              setRenameTitle(room.title)
+                            }}
+                          >
+                            <HugeiconsIcon
+                              icon={Edit02Icon}
+                              size={16}
+                              strokeWidth={1.5}
+                            />
+                            Rename
+                          </MenuItem>
+                          {room.state === 'paused' ? (
+                            <MenuItem
+                              onClick={() => {
+                                void updateRoom(room.id, {
+                                  state: 'active',
+                                }).then(() => loadRooms())
+                              }}
+                            >
+                              <HugeiconsIcon
+                                icon={PlayIcon}
+                                size={16}
+                                strokeWidth={1.5}
+                              />
+                              Resume room
+                            </MenuItem>
+                          ) : room.state === 'active' ? (
+                            <MenuItem
+                              onClick={() => {
+                                void updateRoom(room.id, {
+                                  state: 'paused',
+                                }).then(() => loadRooms())
+                              }}
+                            >
+                              <HugeiconsIcon
+                                icon={PauseIcon}
+                                size={16}
+                                strokeWidth={1.5}
+                              />
+                              Pause room
+                            </MenuItem>
+                          ) : null}
+                          <MenuItem
+                            className="text-danger focus:text-danger"
+                            onClick={() => setDeleteTarget(room)}
+                          >
+                            <HugeiconsIcon
+                              icon={Delete01Icon}
+                              size={16}
+                              strokeWidth={1.5}
+                            />
+                            Delete room
+                          </MenuItem>
+                        </MenuContent>
+                      </MenuRoot>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
-          ))}
+          </div>
         </div>
+        {roomId ? (
+          <>
+            <div
+              className="relative shrink-0"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize sidebar sections"
+              onMouseDown={startSectionResize}
+            >
+              <div className="h-px bg-border" />
+              <div className="absolute inset-x-0 -top-1.5 -bottom-1.5 z-10 cursor-row-resize" />
+            </div>
+            <MemberList
+              participants={participants}
+              availableAgents={availableAgents}
+              onAdd={(agent) => void handleAddAgent(agent)}
+              onRemove={(id) => void handleRemoveParticipant(id)}
+            />
+          </>
+        ) : null}
+        <div
+          className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize bg-transparent hover:bg-primary-300/50"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar width"
+          onMouseDown={startSidebarResize}
+        />
       </aside>
 
       <DialogRoot
@@ -383,7 +588,9 @@ export function GroupChatLayout() {
 
       <main className="flex-1 min-w-0 bg-[var(--theme-bg)]">
         <GroupChatRoomsContext.Provider value={rooms}>
-          <Outlet />
+          <GroupChatMembersContext.Provider value={participants}>
+            <Outlet />
+          </GroupChatMembersContext.Provider>
         </GroupChatRoomsContext.Provider>
       </main>
     </div>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'motion/react'
+import { McpServerIcon } from '@hugeicons/core-free-icons'
 import { McpServerCard } from './components/mcp-server-card'
 import { McpServerDialog } from './components/mcp-server-dialog'
 import { InstallConfirmationDialog } from './components/install-confirmation-dialog'
@@ -10,6 +11,14 @@ import { useMcpHub } from './hooks/use-mcp-hub'
 import { SourcesManagerDialog } from './components/sources-manager-dialog'
 import type { HubMcpEntry } from './hooks/use-mcp-hub'
 import type { McpClientInput, McpServer } from '@/types/mcp'
+import { PageHeader } from '@/components/layout/page-header'
+import { PageShell } from '@/components/layout/page-shell'
+import { Section } from '@/components/layout/section'
+import {
+  Toolbar,
+  ToolbarSearch,
+  ToolbarSelect,
+} from '@/components/layout/toolbar'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -24,9 +33,6 @@ import {
 } from './hooks/use-platform-mcp'
 
 type Tab = 'library' | 'agents' | 'installed' | 'marketplace'
-
-const TOOLBAR_FIELD =
-  'h-9 w-full min-w-0 rounded-lg border border-primary-200 bg-primary-100/60 px-3 text-sm text-ink outline-none transition-colors focus:border-primary sm:min-w-[220px]'
 
 export function McpScreen() {
   const queryClient = useQueryClient()
@@ -43,9 +49,10 @@ export function McpScreen() {
 
   const { mode: capabilityMode } = useMcpCapabilityMode()
   const libraryQuery = usePlatformMcpLibrary()
-  const serverListTab = tab === 'marketplace' || tab === 'library' || tab === 'agents'
-    ? 'installed'
-    : tab
+  const serverListTab =
+    tab === 'marketplace' || tab === 'library' || tab === 'agents'
+      ? 'installed'
+      : tab
   const query = useMcpServers({
     tab: serverListTab as 'installed',
     category,
@@ -127,252 +134,240 @@ export function McpScreen() {
           : `${servers.length.toLocaleString()} on profile`
 
   return (
-    <div className="min-h-full overflow-y-auto bg-surface text-ink">
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-5 px-4 py-6 pb-[calc(var(--tabbar-h,80px)+1.5rem)] sm:px-6 lg:px-8">
-        <header className="rounded-2xl border border-primary-200 bg-primary-50/85 p-4 backdrop-blur-xl">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1.5">
-              <p className="text-xs font-medium uppercase text-primary-500 tabular-nums">
-                Agorax · MCP
+    <PageShell>
+      <PageHeader
+        icon={McpServerIcon}
+        title="MCP Servers"
+        description="Platform library + per-agent assignment (like Skills). Library entries are not granted until you assign them."
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setEditing(null)
+              setDialogOpen(true)
+            }}
+          >
+            Add to Library
+          </Button>
+        }
+      >
+        {capabilityMode === 'fallback' ? (
+          <div
+            role="status"
+            className="mt-3 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
+          >
+            Local profile mode — MCP CRUD uses config.yaml. Test, Discover, and
+            Logs need native hermes-agent /api/mcp endpoints.
+          </div>
+        ) : null}
+      </PageHeader>
+
+      <Section className="p-3">
+        <Tabs value={tab} onValueChange={handleTabChange}>
+          <Toolbar>
+            <TabsList
+              className="rounded-lg border border-border bg-input p-1"
+              variant="default"
+            >
+              <TabsTab value="library" className="min-w-[100px]">
+                Library
+              </TabsTab>
+              <TabsTab value="agents" className="min-w-[100px]">
+                Agents
+              </TabsTab>
+              <TabsTab value="installed" className="min-w-[100px]">
+                Profile
+              </TabsTab>
+              <TabsTab value="marketplace" className="min-w-[110px]">
+                Marketplace
+              </TabsTab>
+            </TabsList>
+
+            <ToolbarSearch
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={
+                tab === 'marketplace'
+                  ? 'Search MCP catalog…'
+                  : tab === 'library'
+                    ? 'Search library by name'
+                    : 'Search…'
+              }
+            />
+
+            {tab === 'installed' ? (
+              <ToolbarSelect
+                label="Category"
+                value={category}
+                onChange={(event) => setCategory(event.target.value)}
+              >
+                {categories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </ToolbarSelect>
+            ) : null}
+
+            {tab === 'agents' ? (
+              <ToolbarSelect
+                label="Agent"
+                value={selectedAgent}
+                onChange={(event) => setSelectedAgent(event.target.value)}
+              >
+                {agents.map((a) => (
+                  <option key={a.agentId} value={a.agentId}>
+                    {a.name} ({a.runtime})
+                  </option>
+                ))}
+              </ToolbarSelect>
+            ) : null}
+          </Toolbar>
+
+          <TabsPanel value="library" className="pt-3">
+            <LibraryList
+              servers={libraryServers}
+              loading={libraryQuery.isPending}
+              error={
+                libraryQuery.error instanceof Error
+                  ? libraryQuery.error.message
+                  : null
+              }
+              onDelete={(id) => deleteLibrary.mutate(id)}
+              deleting={deleteLibrary.isPending}
+            />
+          </TabsPanel>
+
+          <TabsPanel value="agents" className="pt-3 space-y-4">
+            {!selectedIsHermes ? (
+              <p className="text-xs text-primary-500">
+                Managed runtime ({selectedRuntime}): bindings are stored in the
+                platform library and injected at run start (Claude Code per-run
+                mcp-config). No Hermes profile config.yaml write.
               </p>
-              <h1 className="text-2xl font-medium text-ink text-balance sm:text-3xl">
-                MCP Servers
-              </h1>
-              <p className="text-sm text-primary-500 text-pretty sm:text-base">
-                Platform library + per-agent assignment (like Skills). Library
-                entries are not granted until you assign them.
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setEditing(null)
+            ) : null}
+            <AgentAssignPanel
+              agentId={selectedAgent}
+              library={libraryQuery.data ?? []}
+              bindings={bindingsQuery.data ?? []}
+              loading={bindingsQuery.isPending}
+              onAssign={(serverId) =>
+                assignMcp.mutate({
+                  agentId: selectedAgent,
+                  serverIds: [serverId],
+                })
+              }
+              onToggle={(serverId, enabled) =>
+                setEnabled.mutate({
+                  agentId: selectedAgent,
+                  serverId,
+                  enabled,
+                })
+              }
+              onRemove={(serverId) =>
+                removeBinding.mutate({
+                  agentId: selectedAgent,
+                  serverId,
+                })
+              }
+              busy={
+                assignMcp.isPending ||
+                setEnabled.isPending ||
+                removeBinding.isPending
+              }
+            />
+          </TabsPanel>
+
+          <TabsPanel value="installed" className="pt-3">
+            <p className="mb-3 text-xs text-primary-500">
+              Active profile snapshot of mcp_servers (includes materialized
+              platform bindings and private entries). Prefer Library + Agents
+              for shared servers.
+            </p>
+            <ServerList
+              query={query}
+              onEdit={(s) => {
+                setEditing(s)
                 setDialogOpen(true)
               }}
-            >
-              Add to Library
-            </Button>
-          </div>
-          {capabilityMode === 'fallback' ? (
-            <div
-              role="status"
-              className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
-            >
-              Local profile mode — MCP CRUD uses config.yaml. Test, Discover,
-              and Logs need native hermes-agent /api/mcp endpoints.
-            </div>
-          ) : null}
-        </header>
+            />
+          </TabsPanel>
 
-        <section className="rounded-2xl border border-primary-200 bg-primary-50/80 p-3 backdrop-blur-xl sm:p-4">
-          <Tabs value={tab} onValueChange={handleTabChange}>
-            <div className="flex flex-wrap items-center gap-2">
-              <TabsList
-                className="rounded-xl border border-primary-200 bg-primary-100/60 p-1"
-                variant="default"
+          <TabsPanel value="marketplace" className="pt-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              {hubQuery.data?.source ? (
+                <div className="text-xs text-primary-500">
+                  Source: {hubQuery.data.source}
+                </div>
+              ) : (
+                <div />
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setSourcesOpen(true)}
               >
-                <TabsTab value="library" className="min-w-[100px]">
-                  Library
-                </TabsTab>
-                <TabsTab value="agents" className="min-w-[100px]">
-                  Agents
-                </TabsTab>
-                <TabsTab value="installed" className="min-w-[100px]">
-                  Profile
-                </TabsTab>
-                <TabsTab value="marketplace" className="min-w-[110px]">
-                  Marketplace
-                </TabsTab>
-              </TabsList>
-
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={
-                  tab === 'marketplace'
-                    ? 'Search MCP catalog…'
-                    : tab === 'library'
-                      ? 'Search library by name'
-                      : 'Search…'
-                }
-                className={`${TOOLBAR_FIELD} flex-1`}
-              />
-
-              {tab === 'installed' ? (
-                <select
-                  value={category}
-                  onChange={(event) => setCategory(event.target.value)}
-                  className="h-9 rounded-lg border border-primary-200 bg-primary-100/60 px-3 text-sm text-ink outline-none"
-                >
-                  {categories.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              ) : null}
-
-              {tab === 'agents' ? (
-                <select
-                  value={selectedAgent}
-                  onChange={(event) => setSelectedAgent(event.target.value)}
-                  className="h-9 rounded-lg border border-primary-200 bg-primary-100/60 px-3 text-sm text-ink outline-none"
-                >
-                  {agents.map((a) => (
-                    <option key={a.agentId} value={a.agentId}>
-                      {a.name} ({a.runtime})
-                    </option>
-                  ))}
-                </select>
-              ) : null}
+                Sources
+              </Button>
             </div>
 
-            <TabsPanel value="library" className="pt-3">
-              <LibraryList
-                servers={libraryServers}
-                loading={libraryQuery.isPending}
-                error={
-                  libraryQuery.error instanceof Error
-                    ? libraryQuery.error.message
-                    : null
-                }
-                onDelete={(id) => deleteLibrary.mutate(id)}
-                deleting={deleteLibrary.isPending}
-              />
-            </TabsPanel>
-
-            <TabsPanel value="agents" className="pt-3 space-y-4">
-              {!selectedIsHermes ? (
-                <p className="text-xs text-primary-500">
-                  Managed runtime ({selectedRuntime}): bindings are stored in
-                  the platform library and injected at run start (Claude Code
-                  per-run mcp-config). No Hermes profile config.yaml write.
+            {hubQuery.data?.warnings && hubQuery.data.warnings.length > 0 ? (
+              hubQuery.data.results && hubQuery.data.results.length > 0 ? (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  One or more sources unavailable; showing local results.
+                  <span className="ml-1 text-[11px] text-primary-500">
+                    ({hubQuery.data.warnings[0]})
+                  </span>
                 </p>
-              ) : null}
-              <AgentAssignPanel
-                agentId={selectedAgent}
-                library={libraryQuery.data ?? []}
-                bindings={bindingsQuery.data ?? []}
-                loading={bindingsQuery.isPending}
-                onAssign={(serverId) =>
-                  assignMcp.mutate({
-                    agentId: selectedAgent,
-                    serverIds: [serverId],
-                  })
-                }
-                onToggle={(serverId, enabled) =>
-                  setEnabled.mutate({
-                    agentId: selectedAgent,
-                    serverId,
-                    enabled,
-                  })
-                }
-                onRemove={(serverId) =>
-                  removeBinding.mutate({
-                    agentId: selectedAgent,
-                    serverId,
-                  })
-                }
-                busy={
-                  assignMcp.isPending ||
-                  setEnabled.isPending ||
-                  removeBinding.isPending
-                }
-              />
-            </TabsPanel>
+              ) : (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+                  {hubQuery.data.warnings[0]}
+                </div>
+              )
+            ) : null}
 
-            <TabsPanel value="installed" className="pt-3">
-              <p className="mb-3 text-xs text-primary-500">
-                Active profile snapshot of mcp_servers (includes materialized
-                platform bindings and private entries). Prefer Library + Agents
-                for shared servers.
-              </p>
-              <ServerList
-                query={query}
-                onEdit={(s) => {
-                  setEditing(s)
-                  setDialogOpen(true)
-                }}
-              />
-            </TabsPanel>
+            {hubQuery.error ? (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200">
+                {hubQuery.error instanceof Error
+                  ? hubQuery.error.message
+                  : 'Failed to load marketplace.'}
+              </div>
+            ) : null}
 
-            <TabsPanel value="marketplace" className="pt-3 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                {hubQuery.data?.source ? (
-                  <div className="text-xs text-primary-500">
-                    Source: {hubQuery.data.source}
-                  </div>
-                ) : (
-                  <div />
-                )}
+            <MarketplaceGrid
+              entries={(hubQuery.data?.results ?? []).filter(
+                (e) => !e.installed,
+              )}
+              loading={hubQuery.isPending}
+              onInstall={setInstallEntry}
+            />
+
+            {hubQuery.hasNextPage ? (
+              <div className="flex items-center justify-center pt-4">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => setSourcesOpen(true)}
+                  disabled={hubQuery.isFetchingNextPage}
+                  onClick={() => hubQuery.fetchNextPage()}
                 >
-                  Sources
+                  {hubQuery.isFetchingNextPage
+                    ? 'Loading…'
+                    : `Load more (${(hubQuery.data?.results.length ?? 0).toLocaleString()} of ${(hubQuery.data?.total ?? 0).toLocaleString()})`}
                 </Button>
               </div>
+            ) : null}
+          </TabsPanel>
+        </Tabs>
+      </Section>
 
-              {hubQuery.data?.warnings && hubQuery.data.warnings.length > 0 ? (
-                hubQuery.data.results && hubQuery.data.results.length > 0 ? (
-                  <p className="text-xs text-amber-700 dark:text-amber-300">
-                    One or more sources unavailable; showing local results.
-                    <span className="ml-1 text-[11px] text-primary-500">
-                      ({hubQuery.data.warnings[0]})
-                    </span>
-                  </p>
-                ) : (
-                  <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
-                    {hubQuery.data.warnings[0]}
-                  </div>
-                )
-              ) : null}
-
-              {hubQuery.error ? (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200">
-                  {hubQuery.error instanceof Error
-                    ? hubQuery.error.message
-                    : 'Failed to load marketplace.'}
-                </div>
-              ) : null}
-
-              <MarketplaceGrid
-                entries={(hubQuery.data?.results ?? []).filter(
-                  (e) => !e.installed,
-                )}
-                loading={hubQuery.isPending}
-                onInstall={setInstallEntry}
-              />
-
-              {hubQuery.hasNextPage ? (
-                <div className="flex items-center justify-center pt-4">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={hubQuery.isFetchingNextPage}
-                    onClick={() => hubQuery.fetchNextPage()}
-                  >
-                    {hubQuery.isFetchingNextPage
-                      ? 'Loading…'
-                      : `Load more (${(hubQuery.data?.results.length ?? 0).toLocaleString()} of ${(hubQuery.data?.total ?? 0).toLocaleString()})`}
-                  </Button>
-                </div>
-              ) : null}
-            </TabsPanel>
-          </Tabs>
-        </section>
-
-        <footer className="flex items-center justify-between rounded-xl border border-primary-200 bg-primary-50/80 px-3 py-2.5 text-sm text-primary-500 tabular-nums">
-          <span>{totalLabel}</span>
-          <span className="text-xs">
-            mode:{' '}
-            {capabilityMode === 'fallback' ? 'profile fallback' : 'native'}
-          </span>
-        </footer>
-      </div>
+      <footer className="flex items-center justify-between rounded-xl border border-border bg-panel px-3 py-2.5 text-sm text-fg-muted tabular-nums">
+        <span>{totalLabel}</span>
+        <span className="text-xs">
+          mode: {capabilityMode === 'fallback' ? 'profile fallback' : 'native'}
+        </span>
+      </footer>
 
       <McpServerDialog
         open={dialogOpen}
@@ -395,7 +390,7 @@ export function McpScreen() {
         open={sourcesOpen}
         onClose={() => setSourcesOpen(false)}
       />
-    </div>
+    </PageShell>
   )
 }
 
@@ -421,7 +416,13 @@ function LibraryList({
     )
   }
   if (error) {
-    return <EmptyCard title="Failed to load library" description={error} tone="danger" />
+    return (
+      <EmptyCard
+        title="Failed to load library"
+        description={error}
+        tone="danger"
+      />
+    )
   }
   if (servers.length === 0) {
     return (
@@ -550,9 +551,7 @@ function AgentAssignPanel({
       </div>
 
       <div>
-        <h3 className="mb-2 text-sm font-medium text-ink">
-          Add from library
-        </h3>
+        <h3 className="mb-2 text-sm font-medium text-ink">Add from library</h3>
         {available.length === 0 ? (
           <p className="text-sm text-primary-500">
             {library.length === 0

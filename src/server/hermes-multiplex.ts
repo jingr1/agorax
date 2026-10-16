@@ -5,7 +5,7 @@
  *
  * Leaf module: do not import gateway-ports / gateway-pool (cycle risk).
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import YAML from 'yaml'
@@ -92,6 +92,45 @@ export function readLiveMultiplexGateway(): MultiplexGatewayState | null {
   if (listenerPid == null && !isPortInUse(port)) return null
 
   return { pid, servedProfiles: profiles, port }
+}
+
+const standaloneCache = new Map<string, { mtimeMs: number; value: boolean }>()
+
+/**
+ * Named profile opted out of the host multiplexer (`gateway.standalone: true`
+ * in its own config.yaml) — the host answers `/p/<name>/` with 404. Agorax
+ * runs either all-multiplex or all-per-port, never mixed, so this is only used
+ * to reject that config with an actionable error. Memoised by config mtime.
+ */
+export function isProfileStandalone(profileName: string): boolean {
+  const name = (profileName || 'default').trim() || 'default'
+  if (name === 'default') return false
+  const path = join(hermesRoot(), 'profiles', name, 'config.yaml')
+  let mtimeMs: number
+  try {
+    mtimeMs = statSync(path).mtimeMs
+  } catch {
+    standaloneCache.delete(name)
+    return false
+  }
+  const cached = standaloneCache.get(name)
+  if (cached && cached.mtimeMs === mtimeMs) return cached.value
+  let value = false
+  try {
+    const raw = YAML.parse(readFileSync(path, 'utf-8')) as unknown
+    const gateway =
+      raw !== null && typeof raw === 'object'
+        ? (raw as Record<string, unknown>).gateway
+        : null
+    value =
+      gateway !== null &&
+      typeof gateway === 'object' &&
+      (gateway as Record<string, unknown>).standalone === true
+  } catch {
+    value = false
+  }
+  standaloneCache.set(name, { mtimeMs, value })
+  return value
 }
 
 export function isProfileMultiplexServed(profileName: string): boolean {

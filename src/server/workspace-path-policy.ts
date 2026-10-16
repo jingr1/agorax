@@ -13,6 +13,8 @@ export type WorkspaceFolderEntry = {
   path: string
   fullPath: string
   readonly?: boolean
+  /** Set when the listing includes files. Folder-only responses omit it. */
+  kind?: 'file' | 'folder'
 }
 
 export type WorkspaceFolderListResponse = {
@@ -251,7 +253,7 @@ async function listDirectoryEntries(
   fullPath: string,
   basePath: string,
   subPath: string,
-  options: { absoluteChildPaths?: boolean } = {},
+  options: { absoluteChildPaths?: boolean; includeFiles?: boolean } = {},
 ): Promise<Array<WorkspaceFolderEntry>> {
   const entries = await fs.readdir(fullPath, { withFileTypes: true })
   // Resolve once per listing — isHermesStatePath used to re-read the active
@@ -266,7 +268,22 @@ async function listDirectoryEntries(
     const isSymlink =
       typeof entry.isSymbolicLink === 'function' && entry.isSymbolicLink()
     const isDir = entry.isDirectory() || isSymlink
-    if (!isDir) continue
+    const relativePath = options.absoluteChildPaths
+      ? entryFullPath
+      : subPath
+        ? `${subPath.replace(/\\/g, '/')}/${entry.name}`
+        : entry.name
+    if (!isDir) {
+      if (!options.includeFiles) continue
+      if (!isPathWithin(entryFullPath, basePath)) continue
+      folders.push({
+        name: entry.name,
+        path: relativePath,
+        fullPath: entryFullPath,
+        kind: 'file',
+      })
+      continue
+    }
 
     if (entry.isDirectory() && !isSymlink) {
       if (!isPathWithin(entryFullPath, basePath)) continue
@@ -283,24 +300,26 @@ async function listDirectoryEntries(
       continue
     }
 
-    const relativePath = options.absoluteChildPaths
-      ? entryFullPath
-      : subPath
-        ? `${subPath.replace(/\\/g, '/')}/${entry.name}`
-        : entry.name
     folders.push({
       name: entry.name,
       path: relativePath,
       fullPath: entryFullPath,
+      ...(options.includeFiles ? { kind: 'folder' as const } : {}),
     })
   }
 
-  folders.sort((a, b) => a.name.localeCompare(b.name))
+  folders.sort((a, b) => {
+    if (options.includeFiles && a.kind !== b.kind) {
+      return a.kind === 'folder' ? -1 : 1
+    }
+    return a.name.localeCompare(b.name)
+  })
   return folders
 }
 
 export async function listWorkspaceFolders(
   subPath = '',
+  options: { includeFiles?: boolean } = {},
 ): Promise<WorkspaceFolderListResponse> {
   const rawPath = String(subPath || '').trim()
 
@@ -325,7 +344,7 @@ export async function listWorkspaceFolders(
         resolved.fullPath,
         resolved.base,
         resolved.fullPath,
-        { absoluteChildPaths: true },
+        { absoluteChildPaths: true, includeFiles: options.includeFiles },
       )
       return {
         base: resolved.base,
@@ -363,7 +382,9 @@ export async function listWorkspaceFolders(
   const current = rawPath ? toRelativeBrowsePath(fullPath, base) : ''
 
   try {
-    const folders = await listDirectoryEntries(fullPath, base, current)
+    const folders = await listDirectoryEntries(fullPath, base, current, {
+      includeFiles: options.includeFiles,
+    })
     return { base: path.resolve(base), current, folders }
   } catch (err) {
     if (err instanceof WorkspaceFolderAccessError) throw err

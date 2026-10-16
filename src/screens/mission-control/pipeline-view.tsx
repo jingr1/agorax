@@ -1,6 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import type {
@@ -25,12 +32,72 @@ import {
   taskSummaryLine,
 } from '@/lib/mission-detail-format'
 import { createRoomFromMission } from '@/lib/group-chat-api'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Cancel01Icon, Settings01Icon } from '@hugeicons/core-free-icons'
 import { toast } from '@/components/ui/toast'
 import { Button } from '@/components/ui/button'
+import {
+  DialogContent,
+  DialogDescription,
+  DialogRoot,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { SpecField } from './components/spec-field'
-
+import { MissionNavList } from './components/mission-nav-list'
+import { STATUS_COLORS, resolveStatus } from './mission-surface'
 const MISSIONS_QUERY_KEY = ['mission-control', 'missions'] as const
+
+const HEADER_CHIP =
+  'inline-flex h-6 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 text-[11px] text-fg-muted'
 const PROJECTS_QUERY_KEY = ['mission-control', 'projects'] as const
+
+function stateTone(state: string) {
+  if (state === 'done' || state === 'checkpointed') return 'success' as const
+  if (state === 'dispatched' || state === 'running') return 'warning' as const
+  if (state === 'blocked' || state === 'needs_input') return 'danger' as const
+  return 'muted' as const
+}
+
+const TONE_CLASS = {
+  success:
+    'bg-[color-mix(in_srgb,var(--theme-success)_16%,transparent)] text-[var(--theme-success)]',
+  warning:
+    'bg-[color-mix(in_srgb,var(--theme-warning)_16%,transparent)] text-[var(--theme-warning)]',
+  danger:
+    'bg-[color-mix(in_srgb,var(--theme-danger)_16%,transparent)] text-[var(--theme-danger)]',
+  muted: 'bg-[var(--theme-input)] text-fg-muted',
+} as const
+
+function DetailSection({
+  title,
+  meta,
+  action,
+  children,
+  flush,
+}: {
+  title: string
+  meta?: ReactNode
+  action?: ReactNode
+  children: ReactNode
+  flush?: boolean
+}) {
+  return (
+    <section className="overflow-hidden rounded-xl border border-border bg-card">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <h3 className="micro-label">{title}</h3>
+          {meta ? (
+            <span className="truncate text-[11px] font-normal normal-case tracking-normal text-fg-muted">
+              {meta}
+            </span>
+          ) : null}
+        </div>
+        {action}
+      </div>
+      <div className={flush ? undefined : 'p-4'}>{children}</div>
+    </section>
+  )
+}
 
 function StageBar({
   stages,
@@ -39,33 +106,27 @@ function StageBar({
   stages: Array<PipelineStage>
   currentStageId: string | null
 }) {
-  if (stages.length === 0) return null
+  if (stages.length < 2) return null
   return (
-    <div className="flex items-center gap-1 overflow-x-auto py-2">
+    <div className="flex items-center gap-1 overflow-x-auto px-4 py-3">
       {stages.map((stage, index) => {
         const isCurrent = stage.assignmentId === currentStageId
-        const isDone = stage.state === 'done' || stage.state === 'checkpointed'
-        const isBlocked =
-          stage.state === 'blocked' || stage.state === 'needs_input'
+        const tone = stateTone(stage.state)
         return (
           <div key={stage.assignmentId} className="flex items-center">
             <div
               className={cn(
-                'flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium',
+                'flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11px] font-medium',
                 isCurrent
-                  ? 'border-[var(--theme-accent)] bg-[var(--theme-accent)] text-white'
-                  : isDone
-                    ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-700'
-                    : isBlocked
-                      ? 'border-red-400/40 bg-red-500/10 text-red-700'
-                      : 'border-[var(--theme-border)] bg-[var(--theme-card)] text-[var(--theme-muted)]',
+                  ? 'bg-[var(--theme-accent)] text-white'
+                  : TONE_CLASS[tone],
               )}
             >
               {stage.stageKey ?? stage.agent}
             </div>
-            {index < stages.length - 1 && (
-              <div className="mx-1 h-px w-4 bg-[var(--theme-border)]" />
-            )}
+            {index < stages.length - 1 ? (
+              <div className="mx-1.5 h-px w-4 bg-border" />
+            ) : null}
           </div>
         )
       })}
@@ -78,22 +139,22 @@ function TasksTable({ tasks }: { tasks: Array<MissionTaskRow> }) {
 
   if (tasks.length === 0) {
     return (
-      <p className="rounded-lg border border-dashed border-[var(--theme-border)] p-4 text-xs text-[var(--theme-muted)]">
-        No tasks decomposed yet. Pipeline stages or an agent assignee will
-        create tasks automatically.
+      <p className="px-4 py-8 text-center text-[13px] text-fg-muted">
+        No tasks yet. They show up when a pipeline stage or assignee starts
+        work.
       </p>
     )
   }
   return (
-    <div className="overflow-x-auto rounded-lg border border-[var(--theme-border)]">
-      <table className="w-full min-w-[520px] text-left text-xs">
-        <thead className="border-b border-[var(--theme-border)] bg-[var(--theme-card)] text-[var(--theme-muted)]">
-          <tr>
-            <th className="px-3 py-2 font-medium">Created by</th>
-            <th className="px-3 py-2 font-medium">→ Worker</th>
-            <th className="px-3 py-2 font-medium">Stage</th>
-            <th className="px-3 py-2 font-medium">State</th>
-            <th className="px-3 py-2 font-medium">Summary</th>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[520px] text-left text-[13px]">
+        <thead className="text-[11px] text-fg-muted">
+          <tr className="border-b border-border">
+            <th className="px-4 py-2 font-medium">Created by</th>
+            <th className="px-4 py-2 font-medium">Worker</th>
+            <th className="px-4 py-2 font-medium">Stage</th>
+            <th className="px-4 py-2 font-medium">State</th>
+            <th className="px-4 py-2 font-medium">Summary</th>
           </tr>
         </thead>
         <tbody>
@@ -103,48 +164,40 @@ function TasksTable({ tasks }: { tasks: Array<MissionTaskRow> }) {
             return (
               <tr
                 key={t.id}
-                className="border-b border-[var(--theme-border)] align-top"
+                className="border-b border-border align-top last:border-b-0 hover:bg-[var(--transparency-hover)]"
               >
-                <td className="whitespace-nowrap px-3 py-2 font-mono text-[10px]">
+                <td className="whitespace-nowrap px-4 py-2.5 font-mono text-[11px] text-fg-muted">
                   {t.createdByWorkerId ?? '—'}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2 font-medium">
+                <td className="whitespace-nowrap px-4 py-2.5 font-medium text-fg">
                   {t.workerId}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2">
+                <td className="whitespace-nowrap px-4 py-2.5 text-fg-muted">
                   {t.stageKey ?? '—'}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2">
+                <td className="whitespace-nowrap px-4 py-2.5">
                   <span
                     className={cn(
-                      'rounded px-1.5 py-0.5 text-[10px] font-medium',
-                      t.state === 'done' || t.state === 'checkpointed'
-                        ? 'bg-emerald-500/15 text-emerald-700'
-                        : t.state === 'dispatched'
-                          ? 'bg-amber-500/15 text-amber-700'
-                          : t.state === 'blocked' || t.state === 'needs_input'
-                            ? 'bg-red-500/15 text-red-700'
-                            : 'bg-slate-500/10 text-slate-600',
+                      'rounded-full px-2 py-0.5 text-[10px] font-medium',
+                      TONE_CLASS[stateTone(t.state)],
                     )}
                   >
                     {t.state}
                   </span>
                 </td>
-                <td className="min-w-[12rem] px-3 py-2 text-[var(--theme-muted)]">
+                <td className="min-w-[12rem] px-4 py-2.5 text-fg-muted">
                   <button
                     type="button"
-                    className="w-full text-left hover:text-[var(--theme-text)]"
-                    onClick={() =>
-                      setExpandedId(expanded ? null : t.id)
-                    }
+                    className="w-full text-left hover:text-fg"
+                    onClick={() => setExpandedId(expanded ? null : t.id)}
                   >
                     <span className="block break-words">{summary}</span>
                     {expanded ? (
-                      <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border border-[var(--theme-border)] bg-[var(--theme-bg)] p-2 text-[10px] text-[var(--theme-text)]">
+                      <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-[var(--theme-bg)] p-2 text-[11px] leading-relaxed text-fg">
                         {t.task}
                       </pre>
                     ) : t.task.length > summary.length ? (
-                      <span className="mt-0.5 block text-[10px] text-[var(--theme-accent)]">
+                      <span className="mt-0.5 block text-[11px] text-accent">
                         Expand
                       </span>
                     ) : null}
@@ -171,61 +224,91 @@ function Timeline({
     [runs, events],
   )
 
+  if (items.length === 0) {
+    return <p className="text-[13px] text-fg-muted">No activity yet.</p>
+  }
+
   return (
-    <div className="space-y-2">
-      {items.map((item) => (
-        <div
-          key={item.id}
-          className="flex items-start gap-3 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-card)] p-3"
-        >
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
-              <span className="break-words">{item.title}</span>
-              {item.count ? (
-                <span className="rounded bg-slate-500/15 px-1.5 py-0.5 text-[10px] text-slate-600">
-                  ×{item.count}
-                </span>
-              ) : null}
-            </div>
-            {item.subtitle ? (
-              <div className="mt-0.5 break-words text-[11px] text-[var(--theme-muted)]">
-                {item.subtitle}
-              </div>
+    <ol>
+      {items.map((item, index) => (
+        <li key={item.id} className="flex gap-3">
+          <div className="flex w-3 shrink-0 flex-col items-center">
+            <span
+              className={cn(
+                'mt-1.5 size-1.5 rounded-full',
+                index === 0
+                  ? 'bg-[var(--theme-accent)]'
+                  : 'bg-[color-mix(in_srgb,var(--theme-muted)_55%,transparent)]',
+              )}
+            />
+            {index < items.length - 1 ? (
+              <span className="mt-1 w-px flex-1 bg-border" />
             ) : null}
           </div>
-          <div className="shrink-0 text-[10px] text-[var(--theme-muted)]">
-            {item.at ? new Date(item.at).toLocaleTimeString() : ''}
+          <div
+            className={cn(
+              'min-w-0 flex-1',
+              index < items.length - 1 ? 'pb-4' : undefined,
+            )}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 text-[13px] text-fg">
+                <span className="break-words">{item.title}</span>
+                {item.count ? (
+                  <span
+                    className={cn(
+                      'ml-2 rounded-full px-1.5 py-0.5 text-[10px]',
+                      TONE_CLASS.muted,
+                    )}
+                  >
+                    ×{item.count}
+                  </span>
+                ) : null}
+              </div>
+              <time className="shrink-0 pt-0.5 text-[11px] tabular-nums text-fg-muted">
+                {item.at ? new Date(item.at).toLocaleTimeString() : ''}
+              </time>
+            </div>
+            {item.subtitle ? (
+              <p className="mt-0.5 break-words text-xs text-fg-muted">
+                {item.subtitle}
+              </p>
+            ) : null}
           </div>
-        </div>
+        </li>
       ))}
-      {items.length === 0 ? (
-        <p className="text-xs text-[var(--theme-muted)]">No activity yet.</p>
-      ) : null}
-    </div>
+    </ol>
   )
 }
 
 function PropRow({
   label,
   children,
+  align = 'center',
 }: {
   label: string
   children: ReactNode
+  align?: 'center' | 'start'
 }) {
   return (
-    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-start gap-2 text-xs">
-      <dt className="pt-1.5 text-[var(--theme-muted)]">{label}</dt>
-      <dd className="min-w-0">{children}</dd>
+    <div
+      className={cn(
+        'grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3 text-[13px]',
+        align === 'start' ? 'items-start' : 'items-center',
+      )}
+    >
+      <dt className="text-[11px] text-fg-muted">{label}</dt>
+      <dd className="min-w-0 text-fg">{children}</dd>
     </div>
   )
 }
 
 function selectClassName() {
-  return 'control-surface w-full rounded-md px-2 py-1 text-xs'
+  return 'control-surface h-8 w-full rounded-md px-2 text-xs'
 }
 
 function fieldClassName() {
-  return 'field-surface w-full rounded-md px-2 py-1 text-xs'
+  return 'field-surface h-8 w-full rounded-md px-2 text-xs'
 }
 
 export function PipelineView({
@@ -244,6 +327,7 @@ export function PipelineView({
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [roomBusy, setRoomBusy] = useState(false)
+  const [propertiesOpen, setPropertiesOpen] = useState(false)
   const [labelsDraft, setLabelsDraft] = useState('')
   const [titleDraft, setTitleDraft] = useState('')
   const [specDraft, setSpecDraft] = useState('')
@@ -256,7 +340,16 @@ export function PipelineView({
   })
   const missions = missionsQuery.data?.missions ?? []
 
-  const [activeMissionKey, setActiveMissionKey] = useState<string | null>(activeId)
+  const [activeMissionKey, setActiveMissionKey] = useState<string | null>(
+    activeId,
+  )
+  const handleNavSelect = useCallback(
+    (id: string) => {
+      setActiveMissionKey(id)
+      select(id)
+    },
+    [select],
+  )
   useEffect(() => {
     if (activeId) setActiveMissionKey(activeId)
   }, [activeId])
@@ -264,14 +357,15 @@ export function PipelineView({
   const activeMission: MissionSummary | null = useMemo(() => {
     if (missions.length === 0) return null
     if (activeMissionKey) {
-      return (
-        missions.find((t) => t.missionId === activeMissionKey) ?? null
-      )
+      return missions.find((t) => t.missionId === activeMissionKey) ?? null
     }
     return missions[0] ?? null
   }, [missions, activeMissionKey])
 
   const detailKey = activeMission?.missionId ?? null
+  useEffect(() => {
+    setPropertiesOpen(false)
+  }, [detailKey])
   const detailQuery = useQuery({
     queryKey: ['mission-control', 'mission', detailKey],
     queryFn: () => fetchMissionDetail(detailKey!),
@@ -289,6 +383,10 @@ export function PipelineView({
 
   const detail: MissionDetail | undefined = detailQuery.data
   const missionView = detail?.mission ?? activeMission
+  const openAttachRef = useRef<(() => void) | null>(null)
+  const handleAttachReady = useCallback((open: (() => void) | null) => {
+    openAttachRef.current = open
+  }, [])
   const stages = detail?.pipeline?.stages ?? []
   const tasks = detail?.tasks ?? []
   const currentStage =
@@ -315,8 +413,7 @@ export function PipelineView({
     setCriteriaDraft(detailCriteria)
   }, [missionView?.missionId, detailTitle, detailSpec, detailCriteria])
 
-  const specDirty =
-    specDraft !== detailSpec || criteriaDraft !== detailCriteria
+  const specDirty = specDraft !== detailSpec || criteriaDraft !== detailCriteria
 
   const invalidateMission = () => {
     void queryClient.invalidateQueries({
@@ -369,6 +466,7 @@ export function PipelineView({
   const deleteMutation = useMutation({
     mutationFn: () => deleteMission(detailKey!),
     onSuccess: async () => {
+      setPropertiesOpen(false)
       const deletedId = detailKey
       const idx = missions.findIndex((m) => m.missionId === deletedId)
       const remaining = missions.filter(
@@ -399,8 +497,7 @@ export function PipelineView({
     },
     onError: (error: Error) => {
       const timedOut =
-        error.name === 'TimeoutError' ||
-        /aborted|timeout/i.test(error.message)
+        error.name === 'TimeoutError' || /aborted|timeout/i.test(error.message)
       toast(
         timedOut
           ? 'Delete timed out — workspace may be stuck; restart pnpm dev'
@@ -411,60 +508,73 @@ export function PipelineView({
   })
 
   const roomId = detail?.mission.roomId ?? activeMission?.roomId
-  const missionIdForRoom =
-    detail?.mission.missionId ?? activeMission?.missionId
+  const missionIdForRoom = detail?.mission.missionId ?? activeMission?.missionId
   const nowWorker =
-    missionView?.currentAssignee ??
-    (currentStage ? currentStage.agent : null)
+    missionView?.currentAssignee ?? (currentStage ? currentStage.agent : null)
   // Prefer assignment stageKey; do not fall back to agent — that produced
   // "developer · developer" for Swarm2 / pre-pipeline missions with null stageKey.
-  const nowStage =
-    currentStage?.stageKey ?? missionView?.currentStage ?? null
+  const nowStage = currentStage?.stageKey ?? missionView?.currentStage ?? null
   const agentOptions = agentsQuery.data?.agents.map((a) => a.agentId) ?? []
+
+  const roomButton = missionIdForRoom ? (
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      disabled={roomBusy}
+      onClick={async () => {
+        setRoomBusy(true)
+        try {
+          const result = await createRoomFromMission(missionIdForRoom)
+          if (result.room.id) {
+            invalidateMission()
+            navigate({
+              to: '/group-chat/$roomId',
+              params: { roomId: result.room.id },
+            })
+          }
+        } finally {
+          setRoomBusy(false)
+        }
+      }}
+      className="text-xs"
+    >
+      {roomBusy ? 'Opening…' : roomId ? 'Enter room' : 'Create room'}
+    </Button>
+  ) : null
+
+  const deleteButton = (
+    <Button
+      type="button"
+      variant="destructive"
+      size="sm"
+      disabled={deleteMutation.isPending || !detailKey}
+      onClick={() => {
+        if (
+          !window.confirm(
+            `Delete mission “${activeMission?.title ?? detailKey}”? This cannot be undone.`,
+          )
+        ) {
+          return
+        }
+        deleteMutation.mutate()
+      }}
+      className="text-xs"
+    >
+      {deleteMutation.isPending ? 'Deleting…' : 'Delete'}
+    </Button>
+  )
 
   return (
     <div className="flex h-full min-h-0">
-      <aside className="w-64 shrink-0 overflow-y-auto border-r border-[var(--theme-border)] bg-[var(--theme-card)] p-3">
-        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--theme-muted)]">
-          Missions
-        </h2>
-        {missions.map((m) => (
-          <button
-            key={m.missionId}
-            type="button"
-            onClick={() => {
-              const id = m.missionId
-              if (!id) return
-              setActiveMissionKey(id)
-              select(id)
-            }}
-            className={cn(
-              'mb-1 w-full rounded-lg px-2.5 py-2 text-left text-xs transition-colors',
-              activeMission?.missionId === m.missionId
-                ? 'bg-[var(--theme-accent)] text-white'
-                : 'hover:bg-[var(--theme-hover)]',
-            )}
-          >
-            <div className="break-words font-medium">{m.title}</div>
-            <div
-              className={cn(
-                'mt-0.5 text-[10px]',
-                activeMission?.missionId === m.missionId
-                  ? 'text-white/70'
-                  : 'text-[var(--theme-muted)]',
-              )}
-            >
-              {m.currentAssignee
-                ? `${m.currentAssignee} · `
-                : ''}
-              {m.taskCount} tasks
-            </div>
-          </button>
-        ))}
-      </aside>
+      <MissionNavList
+        missions={missions}
+        activeMissionId={activeMission?.missionId ?? null}
+        onSelect={handleNavSelect}
+      />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--theme-border)] px-4 py-3">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-6 py-4">
           <div className="min-w-0 flex-1">
             <input
               value={titleDraft}
@@ -480,33 +590,58 @@ export function PipelineView({
                 }
               }}
               disabled={!detailKey || patchMutation.isPending}
-              className="w-full break-words rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold outline-none hover:border-[var(--theme-border)] focus:border-[var(--theme-border)] focus:bg-[var(--theme-bg)]"
+              className="field-bare -ml-1.5 w-full rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-xl font-semibold tracking-tight text-fg outline-none transition-colors hover:bg-hover focus:border-accent focus:bg-input"
               aria-label="Mission title"
             />
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {activeMission ? (
+                <span className={HEADER_CHIP}>
+                  <span
+                    className="size-1.5 rounded-full"
+                    style={{
+                      background: STATUS_COLORS[resolveStatus(activeMission)],
+                    }}
+                  />
+                  <span className="capitalize text-fg">
+                    {resolveStatus(activeMission)}
+                  </span>
+                </span>
+              ) : null}
+              {nowWorker ? (
+                <span className={HEADER_CHIP}>
+                  <span className="size-1.5 rounded-full bg-warning" />
+                  <span className="text-fg">{nowWorker}</span>
+                  {nowStage && nowStage !== nowWorker ? (
+                    <span>· {nowStage}</span>
+                  ) : null}
+                </span>
+              ) : (
+                <span className={HEADER_CHIP}>No active worker</span>
+              )}
               {activeMission?.executionMode ? (
-                <span className="rounded bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium capitalize text-slate-600">
+                <span className={cn(HEADER_CHIP, 'capitalize')}>
                   {activeMission.executionMode}
                 </span>
               ) : null}
               {activeMission?.pipelineId ? (
-                <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] text-blue-700">
+                <span className={HEADER_CHIP} title="Pipeline">
                   {activeMission.pipelineId}
                 </span>
               ) : null}
-              {nowWorker ? (
-                <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
-                  {nowWorker}
-                  {nowStage && nowStage !== nowWorker ? ` · ${nowStage}` : ''}
-                </span>
-              ) : (
-                <span className="rounded bg-slate-500/10 px-1.5 py-0.5 text-[10px] text-slate-600">
-                  No active worker
-                </span>
-              )}
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!detailKey}
+              onClick={() => setPropertiesOpen(true)}
+              className="text-xs"
+            >
+              <HugeiconsIcon icon={Settings01Icon} size={14} strokeWidth={1.8} />
+              Properties
+            </Button>
             <Button
               type="button"
               size="sm"
@@ -514,276 +649,290 @@ export function PipelineView({
                 startMutation.isPending ||
                 !stages.some((s) => s.state === 'queued')
               }
+              title={
+                stages.some((s) => s.state === 'queued')
+                  ? undefined
+                  : 'No queued stages to run'
+              }
               onClick={() => startMutation.mutate()}
               className="text-xs"
             >
               {startMutation.isPending ? 'Starting…' : 'Start / Continue'}
             </Button>
-            {missionIdForRoom ? (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={roomBusy}
-                onClick={async () => {
-                  setRoomBusy(true)
-                  try {
-                    const result = await createRoomFromMission(missionIdForRoom)
-                    if (result.room.id) {
-                      invalidateMission()
-                      navigate({
-                        to: '/group-chat/$roomId',
-                        params: { roomId: result.room.id },
-                      })
-                    }
-                  } finally {
-                    setRoomBusy(false)
-                  }
-                }}
-                className="text-xs"
-              >
-                {roomBusy
-                  ? 'Opening…'
-                  : roomId
-                    ? 'Enter room'
-                    : 'Create room'}
-              </Button>
-            ) : null}
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              disabled={deleteMutation.isPending || !detailKey}
-              onClick={() => {
-                if (
-                  !window.confirm(
-                    `Delete mission “${activeMission?.title ?? detailKey}”? This cannot be undone.`,
-                  )
-                ) {
-                  return
-                }
-                deleteMutation.mutate()
-              }}
-              className="text-xs"
-            >
-              {deleteMutation.isPending ? 'Deleting…' : 'Delete'}
-            </Button>
           </div>
         </div>
 
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          <div className="min-w-0 flex-1 overflow-y-auto p-4">
-            <section className="mb-6 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-card)] p-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--theme-muted)]">
-                  Description
-                </h3>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={
-                    !detailKey || !specDirty || patchMutation.isPending
-                  }
-                  onClick={saveDescription}
-                  className="h-7 text-[10px]"
-                >
-                  {patchMutation.isPending ? 'Saving…' : 'Save'}
-                </Button>
-              </div>
-              <label className="block text-xs">
-                <span className="text-[var(--theme-muted)]">Spec</span>
+          <div className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
+            <div className="flex flex-col gap-5">
+              <DetailSection
+                title="Description"
+                action={
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={!detailKey}
+                      onClick={() => openAttachRef.current?.()}
+                      className="h-7 px-2.5 text-xs"
+                    >
+                      Attach path
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={specDirty ? 'default' : 'secondary'}
+                      size="sm"
+                      disabled={
+                        !detailKey || !specDirty || patchMutation.isPending
+                      }
+                      onClick={saveDescription}
+                      className="h-7 px-2.5 text-xs"
+                    >
+                      {patchMutation.isPending ? 'Saving…' : 'Save'}
+                    </Button>
+                  </div>
+                }
+              >
                 <SpecField
                   value={specDraft}
                   onChange={setSpecDraft}
-                  rows={5}
-                  className="mt-1"
+                  rows={4}
                   disabled={!detailKey}
+                  hideToolbar
+                  onAttachReady={handleAttachReady}
                   placeholder="Mission description. Attach workspace paths as needed."
                 />
-              </label>
-              <label className="mt-3 block text-xs">
-                <span className="text-[var(--theme-muted)]">
-                  Acceptance criteria (one per line)
-                </span>
-                <textarea
-                  value={criteriaDraft}
-                  onChange={(e) => setCriteriaDraft(e.target.value)}
-                  rows={2}
-                  disabled={!detailKey}
-                  className="mt-1 w-full rounded-md field-surface px-2 py-1.5 text-sm disabled:opacity-50"
-                />
-              </label>
-              {detail?.pipeline &&
-              detail.pipeline.specVersion > 1 &&
-              stages.some((s) => s.stale) ? (
-                <p className="mt-2 text-[10px] text-amber-700">
-                  Spec changed (v{detail.pipeline.specVersion}). Some stage
-                  briefs are stale until regenerated.
-                </p>
+                <label className="mt-4 block">
+                  <span className="text-[11px] text-fg-muted">
+                    Acceptance criteria
+                    <span className="ml-1.5 text-fg-muted/70">
+                      one per line
+                    </span>
+                  </span>
+                  <textarea
+                    value={criteriaDraft}
+                    onChange={(e) => setCriteriaDraft(e.target.value)}
+                    rows={2}
+                    disabled={!detailKey}
+                    className="mt-1.5 w-full rounded-lg field-surface px-3 py-2 text-sm leading-relaxed disabled:opacity-50"
+                  />
+                </label>
+                {detail?.pipeline &&
+                detail.pipeline.specVersion > 1 &&
+                stages.some((s) => s.stale) ? (
+                  <p className="mt-3 text-[11px] text-[var(--theme-warning)]">
+                    Spec changed (v{detail.pipeline.specVersion}). Some stage
+                    briefs are stale until regenerated.
+                  </p>
+                ) : null}
+              </DetailSection>
+              {stages.length > 1 ? (
+                <DetailSection title="Pipeline" flush>
+                  <StageBar
+                    stages={stages}
+                    currentStageId={currentStage?.assignmentId ?? null}
+                  />
+                </DetailSection>
               ) : null}
-            </section>
-            {stages.length > 0 ? (
-              <StageBar
-                stages={stages}
-                currentStageId={currentStage?.assignmentId ?? null}
-              />
-            ) : null}
-            <h3 className="mb-2 mt-2 text-xs font-semibold uppercase tracking-wide text-[var(--theme-muted)]">
-              Tasks
-            </h3>
-            <TasksTable tasks={tasks} />
-            <h3 className="mb-2 mt-6 text-xs font-semibold uppercase tracking-wide text-[var(--theme-muted)]">
-              Timeline
-            </h3>
-            <Timeline
-              runs={detail?.runs ?? []}
-              events={detail?.events ?? []}
-            />
+              <DetailSection
+                title="Tasks"
+                meta={tasks.length ? String(tasks.length) : undefined}
+                flush
+              >
+                <TasksTable tasks={tasks} />
+              </DetailSection>
+              <DetailSection title="Timeline">
+                <Timeline
+                  runs={detail?.runs ?? []}
+                  events={detail?.events ?? []}
+                />
+              </DetailSection>
+            </div>
           </div>
 
-          <aside className="hidden w-64 shrink-0 overflow-y-auto border-l border-[var(--theme-border)] p-3 lg:block">
-            <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-wide text-[var(--theme-muted)]">
-              Properties
-            </h3>
-            <dl className="space-y-3">
-              <PropRow label="Status">
-                <span className="block pt-1.5 font-medium">
-                  {missionView?.status ?? '—'}
-                </span>
-              </PropRow>
-              <PropRow label="Now">
-                <span className="block break-words pt-1.5 font-medium">
-                  {nowWorker ?? '—'}
-                  {nowStage ? ` (${nowStage})` : ''}
-                </span>
-              </PropRow>
-              <PropRow label="Assignee">
-                {missionView?.executionMode === 'assignee' ? (
+          <DialogRoot open={propertiesOpen} onOpenChange={setPropertiesOpen}>
+            <DialogContent className="w-[min(24rem,92vw)]">
+              <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
+                <div className="min-w-0">
+                  <DialogTitle className="text-sm font-semibold">
+                    Properties
+                  </DialogTitle>
+                  <DialogDescription className="mt-0.5 text-xs text-fg-muted">
+                    Status, assignee, and project for this mission.
+                  </DialogDescription>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={() => setPropertiesOpen(false)}
+                  className="rounded-md p-1 text-fg-muted hover:bg-[var(--transparency-hover)] hover:text-fg"
+                >
+                  <HugeiconsIcon icon={Cancel01Icon} size={16} />
+                </button>
+              </div>
+              <div className="max-h-[min(70vh,32rem)] overflow-y-auto px-4 py-4">
+                <dl className="space-y-3">
+                <PropRow label="Status">
+                  <span className="inline-flex items-center gap-1.5 font-medium capitalize">
+                    {activeMission ? (
+                      <span
+                        className="size-1.5 rounded-full"
+                        style={{
+                          background:
+                            STATUS_COLORS[resolveStatus(activeMission)],
+                        }}
+                      />
+                    ) : null}
+                    {missionView?.status ?? '—'}
+                  </span>
+                </PropRow>
+                <PropRow label="Now">
+                  <span className="block truncate font-medium">
+                    {nowWorker ?? '—'}
+                    {nowStage && nowStage !== nowWorker ? ` · ${nowStage}` : ''}
+                  </span>
+                </PropRow>
+                <PropRow label="Assignee">
+                  {missionView?.executionMode === 'assignee' ? (
+                    <select
+                      className={selectClassName()}
+                      disabled={patchMutation.isPending || !detailKey}
+                      value={
+                        missionView.assignee
+                          ? `${missionView.assignee.type}:${missionView.assignee.id}`
+                          : ''
+                      }
+                      onChange={(e) => {
+                        const value = e.target.value
+                        if (!value) {
+                          patchMutation.mutate({ assignee: null })
+                          return
+                        }
+                        const [type, ...rest] = value.split(':')
+                        const id = rest.join(':')
+                        if (type !== 'agent' && type !== 'chat_group') return
+                        patchMutation.mutate({
+                          assignee: { type, id },
+                        })
+                      }}
+                    >
+                      <option value="">Unassigned</option>
+                      {agentOptions.map((id) => (
+                        <option key={id} value={`agent:${id}`}>
+                          {id}
+                        </option>
+                      ))}
+                      {missionView.assignee?.type === 'chat_group' ? (
+                        <option value={`chat_group:${missionView.assignee.id}`}>
+                          group:{missionView.assignee.id}
+                        </option>
+                      ) : null}
+                    </select>
+                  ) : (
+                    <span className="block truncate font-medium">
+                      {missionView?.assignee
+                        ? missionView.assignee.type === 'agent'
+                          ? missionView.assignee.id
+                          : `${missionView.assignee.type}:${missionView.assignee.id}`
+                        : missionView?.pipelineId
+                          ? missionView.pipelineId
+                          : '—'}
+                    </span>
+                  )}
+                </PropRow>
+                <PropRow label="Pipeline">
+                  <span className="block truncate font-medium">
+                    {missionView?.pipelineId ?? '—'}
+                  </span>
+                </PropRow>
+                <PropRow label="Priority">
                   <select
                     className={selectClassName()}
                     disabled={patchMutation.isPending || !detailKey}
                     value={
-                      missionView.assignee
-                        ? `${missionView.assignee.type}:${missionView.assignee.id}`
-                        : ''
+                      missionView?.priority == null
+                        ? ''
+                        : String(missionView.priority)
                     }
                     onChange={(e) => {
-                      const value = e.target.value
-                      if (!value) {
-                        patchMutation.mutate({ assignee: null })
-                        return
-                      }
-                      const [type, ...rest] = value.split(':')
-                      const id = rest.join(':')
-                      if (type !== 'agent' && type !== 'chat_group') return
+                      const raw = e.target.value
                       patchMutation.mutate({
-                        assignee: { type, id },
+                        priority: raw === '' ? null : Number(raw),
                       })
                     }}
                   >
-                    <option value="">Unassigned</option>
-                    {agentOptions.map((id) => (
-                      <option key={id} value={`agent:${id}`}>
-                        agent:{id}
+                    <option value="">None</option>
+                    {[0, 1, 2, 3, 4].map((n) => (
+                      <option key={n} value={n}>
+                        P{n}
                       </option>
                     ))}
-                    {missionView.assignee?.type === 'chat_group' ? (
-                      <option
-                        value={`chat_group:${missionView.assignee.id}`}
-                      >
-                        chat_group:{missionView.assignee.id}
-                      </option>
-                    ) : null}
                   </select>
-                ) : (
-                  <span className="block break-words pt-1.5 font-medium">
-                    {missionView?.assignee
-                      ? `${missionView.assignee.type}:${missionView.assignee.id}`
-                      : missionView?.pipelineId
-                        ? `pipeline:${missionView.pipelineId}`
-                        : '—'}
-                  </span>
-                )}
-              </PropRow>
-              <PropRow label="Pipeline">
-                <span className="block break-words pt-1.5 font-medium">
-                  {missionView?.pipelineId ?? '—'}
-                </span>
-              </PropRow>
-              <PropRow label="Priority">
-                <select
-                  className={selectClassName()}
-                  disabled={patchMutation.isPending || !detailKey}
-                  value={
-                    missionView?.priority == null
-                      ? ''
-                      : String(missionView.priority)
-                  }
-                  onChange={(e) => {
-                    const raw = e.target.value
-                    patchMutation.mutate({
-                      priority: raw === '' ? null : Number(raw),
-                    })
-                  }}
-                >
-                  <option value="">None</option>
-                  {[0, 1, 2, 3, 4].map((n) => (
-                    <option key={n} value={n}>
-                      P{n}
-                    </option>
-                  ))}
-                </select>
-              </PropRow>
-              <PropRow label="Labels">
-                <input
-                  className={fieldClassName()}
-                  disabled={patchMutation.isPending || !detailKey}
-                  value={labelsDraft}
-                  placeholder="a, b, c"
-                  onChange={(e) => setLabelsDraft(e.target.value)}
-                  onBlur={() => {
-                    const next = labelsDraft
-                      .split(',')
-                      .map((s) => s.trim())
-                      .filter(Boolean)
-                    const prev = missionView?.labels ?? []
-                    if (next.join('\0') === prev.join('\0')) return
-                    patchMutation.mutate({ labels: next })
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      ;(e.target as HTMLInputElement).blur()
-                    }
-                  }}
-                />
-              </PropRow>
-              <PropRow label="Project">
-                <select
-                  className={selectClassName()}
-                  disabled={patchMutation.isPending || !detailKey}
-                  value={missionView?.projectId ?? ''}
-                  onChange={(e) => {
-                    const value = e.target.value
-                    patchMutation.mutate({
-                      projectId: value === '' ? null : value,
-                    })
-                  }}
-                >
-                  <option value="">None</option>
-                  {(projectsQuery.data ?? []).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.id}
-                    </option>
-                  ))}
-                </select>
-              </PropRow>
-              <PropRow label="Room">
-                <span className="block break-all pt-1.5 font-medium">
-                  {roomId ?? '—'}
-                </span>
-              </PropRow>
-            </dl>
-          </aside>
+                </PropRow>
+                <PropRow label="Labels">
+                  <input
+                    className={fieldClassName()}
+                    disabled={patchMutation.isPending || !detailKey}
+                    value={labelsDraft}
+                    placeholder="a, b, c"
+                    onChange={(e) => setLabelsDraft(e.target.value)}
+                    onBlur={() => {
+                      const next = labelsDraft
+                        .split(',')
+                        .map((s) => s.trim())
+                        .filter(Boolean)
+                      const prev = missionView?.labels ?? []
+                      if (next.join('\0') === prev.join('\0')) return
+                      patchMutation.mutate({ labels: next })
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        ;(e.target as HTMLInputElement).blur()
+                      }
+                    }}
+                  />
+                </PropRow>
+                <PropRow label="Project">
+                  <select
+                    className={selectClassName()}
+                    disabled={patchMutation.isPending || !detailKey}
+                    value={missionView?.projectId ?? ''}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      patchMutation.mutate({
+                        projectId: value === '' ? null : value,
+                      })
+                    }}
+                  >
+                    <option value="">None</option>
+                    {(projectsQuery.data ?? []).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.id}
+                      </option>
+                    ))}
+                  </select>
+                </PropRow>
+                <PropRow label="Room" align={roomId ? 'start' : 'center'}>
+                  <div className={roomId ? 'space-y-1.5' : undefined}>
+                    {roomId ? (
+                      <span
+                        className="block truncate font-mono text-[11px]"
+                        title={roomId}
+                      >
+                        {roomId}
+                      </span>
+                    ) : null}
+                    {roomButton}
+                  </div>
+                </PropRow>
+              </dl>
+              </div>
+              <div className="shrink-0 border-t border-border px-4 py-3 [&>button]:w-full">
+                {deleteButton}
+              </div>
+            </DialogContent>
+          </DialogRoot>
         </div>
       </div>
     </div>

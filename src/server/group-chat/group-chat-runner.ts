@@ -759,6 +759,21 @@ async function runMemberTurn(
       cwd,
     })
     return result
+  } catch (error) {
+    // One broken member (e.g. unconfigured profile) must not abort the drive
+    // for every other member in the room.
+    console.error(
+      `[group-chat-runner] member=${member.displayName} turn threw:`,
+      error,
+    )
+    result = {
+      kind: 'failed',
+      reason: (error instanceof Error ? error.message : String(error)).slice(
+        0,
+        500,
+      ),
+    }
+    return result
   } finally {
     clearTurnInFlight(room.id, member)
     publishChatEvent('group_chat_turn_ended', {

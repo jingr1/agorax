@@ -13,11 +13,11 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  AlarmClockIcon,
   Alert02Icon,
   CpuIcon,
-  MessageMultiple01Icon,
-  UserMultipleIcon,
+  Notification03Icon,
+  PlusSignIcon,
+  UserGroupIcon,
 } from '@hugeicons/core-free-icons'
 import { buildTmuxAttachCommand } from '@/lib/tmux-attach'
 import {
@@ -26,6 +26,7 @@ import {
   type CrewMember,
 } from '@/hooks/use-crew-status'
 import { toast } from '@/components/ui/toast'
+import { PageHeader } from '@/components/layout/page-header'
 import { OperationalWorkerCard } from './operational-worker-card'
 import { SwarmOrchestratorCard } from './swarm-orchestrator-card'
 import { SwarmWires } from './swarm-wires'
@@ -903,7 +904,7 @@ function ControlPlaneStage({
   return (
     <section
       ref={stageRef}
-      className="relative overflow-hidden rounded-3xl border border-[var(--theme-border)] bg-[var(--theme-card)] p-3 shadow-[0_24px_80px_var(--theme-shadow)]"
+      className="relative overflow-hidden rounded-2xl border border-[var(--theme-border)] bg-[var(--theme-card)] p-3 shadow-[0_24px_80px_var(--theme-shadow)]"
     >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,var(--theme-accent-soft),transparent_42%)]" />
       <SwarmWires
@@ -913,7 +914,7 @@ function ControlPlaneStage({
         workers={wireTargets}
         version={refsVersion}
       />
-      <div className="relative z-10 flex flex-col items-center gap-4">
+      <div className="relative z-10 flex w-full flex-col gap-4">
         <SwarmOrchestratorCard
           totalWorkers={members.length}
           activeRuntimeCount={activeRuntimeCount}
@@ -940,9 +941,9 @@ function ControlPlaneStage({
           }}
           onMissionStarted={onMissionStarted}
           onAnchorRef={setAnchor}
-          className="w-full max-w-5xl"
+          className="w-full"
         />
-        <div className="relative w-full pt-3">
+        <div className="relative w-full pt-1">
           <div
             className={cn(
               'relative z-10',
@@ -1820,30 +1821,17 @@ export function SwarmScreen() {
       className="min-h-full bg-surface text-primary-900"
       style={SWARM_OPERATION_THEME}
     >
-      <div
-        className={cn(
-          'mx-auto flex min-h-full max-w-[1680px] flex-col gap-3 px-3 pt-3 pb-24 sm:px-4 lg:px-5',
-        )}
-      >
-        <header className="rounded-xl border border-primary-200 bg-primary-50/80 px-5 py-3 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 flex-wrap items-center gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[var(--theme-border)] bg-[var(--theme-card)] text-[var(--theme-accent)] shadow-sm">
-                <HugeiconsIcon icon={UserMultipleIcon} size={22} />
-              </div>
-              <div className="min-w-0">
-                <h1 className="truncate text-base font-semibold text-primary-900">
-                  Swarm
-                </h1>
-                <p className="truncate text-xs text-[var(--theme-muted-2)]">
-                  {members.length > 0
-                    ? `Detected ${members.length} worker${members.length === 1 ? '' : 's'} for planning, routing, reports, and reviewer-gated execution.`
-                    : 'Detected Hermes profiles and roster workers for planning, routing, reports, and reviewer-gated execution.'}
-                </p>
-              </div>
-            </div>
-
-            <div className="relative flex shrink-0 items-center gap-2 text-sm text-[var(--theme-muted)]">
+      <div className="flex w-full flex-col gap-3 px-3 pt-3 pb-24 sm:px-4 lg:px-5">
+        <PageHeader
+          icon={UserGroupIcon}
+          title="Swarm"
+          description={
+            members.length > 0
+              ? `Detected ${members.length} worker${members.length === 1 ? '' : 's'} for planning, routing, reports, and reviewer-gated execution.`
+              : 'Detected Hermes profiles and roster workers for planning, routing, reports, and reviewer-gated execution.'
+          }
+          actions={
+            <div className="relative flex shrink-0 items-center gap-2">
               {humanGate ? (
                 <button
                   type="button"
@@ -1862,7 +1850,6 @@ export function SwarmScreen() {
               ) : null}
               <WorkflowHelpModal
                 compact
-                eyebrow="Swarm"
                 title="How Swarm works"
                 sections={[
                   {
@@ -1896,7 +1883,7 @@ export function SwarmScreen() {
                 title="Swarm notifications"
               >
                 <HugeiconsIcon
-                  icon={AlarmClockIcon}
+                  icon={Notification03Icon}
                   size={17}
                   strokeWidth={1.8}
                 />
@@ -1968,12 +1955,12 @@ export function SwarmScreen() {
                 onClick={openAddSwarm}
                 className="inline-flex items-center gap-2 rounded-lg bg-[var(--theme-accent)] px-4 py-2 text-sm font-medium text-primary-950 shadow-sm hover:bg-[var(--theme-accent-strong)]"
               >
-                <HugeiconsIcon icon={MessageMultiple01Icon} size={13} />
+                <HugeiconsIcon icon={PlusSignIcon} size={14} strokeWidth={1.8} />
                 Add Swarm
               </button>
             </div>
-          </div>
-        </header>
+          }
+        />
 
         {humanGate ? (
           <HumanGatePanel
@@ -1992,7 +1979,7 @@ export function SwarmScreen() {
           />
         ) : null}
 
-        <div className="grid min-h-0 grid-cols-1 gap-3">
+        <div className="w-full">
           <ControlPlaneStage
             members={members}
             selectedId={selectedId}
