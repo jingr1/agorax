@@ -6,8 +6,8 @@
  * Does NOT write model.provider/model.default — the profile config owns the
  * default model; an explicit runtime override may still be injected at dispatch.
  *
- * learning profile: preserves agents/learning/SOUL.md base persona and appends
- * swarm role extension; toolsets are merged (union), not replaced.
+ * learning profile: copies agents/learning/SOUL.md as-is (tutor + retrospective
+ * live in that file); toolsets are merged (union), not replaced.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -17,9 +17,29 @@ import yaml from 'yaml'
 const WS = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const PROFILES = path.join(os.homedir(), '.hermes', 'profiles')
 const LOCAL_BIN = path.join(os.homedir(), '.local', 'bin')
+/** Legacy markers; stripped once when migrating old merged SOUL files. */
 const SWARM_SOUL_BEGIN = '<!-- SWARM_ROLE_EXTENSION -->'
 const SWARM_SOUL_END = '<!-- /SWARM_ROLE_EXTENSION -->'
-const swarm = yaml.parse(fs.readFileSync(path.join(WS, 'agents.yaml'), 'utf8'))
+
+function loadAgentsDoc() {
+  const agentsPath = path.join(WS, 'agents.yaml')
+  const examplePath = path.join(WS, 'agents.yaml.example')
+  if (!fs.existsSync(agentsPath) && fs.existsSync(examplePath)) {
+    fs.copyFileSync(examplePath, agentsPath)
+  }
+  if (!fs.existsSync(agentsPath)) {
+    return { version: 1, agents: [] }
+  }
+  return yaml.parse(fs.readFileSync(agentsPath, 'utf8')) ?? {
+    version: 1,
+    agents: [],
+  }
+}
+
+const swarm = loadAgentsDoc()
+if (!Array.isArray(swarm.agents) && Array.isArray(swarm.workers)) {
+  swarm.agents = swarm.workers
+}
 
 function isHermesRuntime(worker) {
   const runtime = String(worker?.runtime ?? 'hermes').trim().toLowerCase()
@@ -122,10 +142,10 @@ function renderIdentity(w) {
 
   if (w.id === 'learning') {
     lines.push(
-      '## Additional profile modes',
+      '## Modes (see SOUL.md)',
       '',
-      '- **Learning tutor**: deep-learning mentor persona in `SOUL.md` (Feynman-first, Socratic, knowledge capture).',
-      '- **Swarm retrospective**: when dispatched by LangGraph orchestrator, follow the swarm extension in `SOUL.md`.',
+      '- **Tutor** (default 1:1): Feynman / Socratic teaching.',
+      '- **Retrospective**: when pipeline/mission includes `learning`, auto wiki ingest; otherwise manual `learning-wiki-ingest`.',
       '',
     )
   }
@@ -135,44 +155,6 @@ function renderIdentity(w) {
     '',
   )
   return lines.join('\n')
-}
-
-function renderSwarmSoulExtension(w) {
-  const name = w.name?.trim() || w.id
-  const modes = w.modes?.length ? w.modes.join(', ') : 'none'
-  const greenlight = w.greenlightRequiredFor?.length
-    ? w.greenlightRequiredFor
-        .map((g) => `- ${g}: Requires human approval`)
-        .join('\n')
-    : '- none declared'
-
-  return [
-    `## Swarm 角色扩展 · ${name}`,
-    '',
-    '当由 Swarm / LangGraph 编排派发时，在保留上方 Learning Profile 教学能力的前提下，额外承担以下职责。',
-    '',
-    '### Role',
-    w.role?.trim() || 'Worker',
-    '',
-    '### Mission',
-    w.mission?.trim() || '',
-    '',
-    '### Specialty',
-    w.specialty?.trim() || '',
-    '',
-    '### Modes',
-    modes,
-    '',
-    '### Greenlight Rules',
-    greenlight,
-    '',
-    '### Swarm checkpoint 格式',
-    '- STATE, FILES_CHANGED, COMMANDS_RUN, RESULT, BLOCKER, NEXT_ACTION',
-    '- 将可复用结论写入 `~/wiki`（`llm-wiki`）；mission 产物在 `memory/swarm/missions/<missionId>/`',
-    '- Wiki 摄入：调用 `learning-wiki-ingest` skill（`hermes -p learning chat -q \"learning-wiki-ingest missionId=<id>\"`）',
-    '- `publish` 需人工 greenlight',
-    '',
-  ].join('\n')
 }
 
 function renderSoul(w) {
@@ -244,17 +226,17 @@ function stripSwarmSoulExtension(content) {
   return content.replace(re, '').trimEnd()
 }
 
-function mergeLearningSoul(w, profileDir) {
+/** Copy agents/learning/SOUL.md verbatim (tutor + retrospective already in-file). */
+function readLearningSoul(profileDir) {
   const basePath = path.join(WS, 'agents', 'learning', 'SOUL.md')
-  const soulPath = path.join(profileDir, 'SOUL.md')
-  let base = ''
   if (fs.existsSync(basePath)) {
-    base = fs.readFileSync(basePath, 'utf8').trimEnd()
-  } else if (fs.existsSync(soulPath)) {
-    base = stripSwarmSoulExtension(fs.readFileSync(soulPath, 'utf8'))
+    return `${fs.readFileSync(basePath, 'utf8').trimEnd()}\n`
   }
-  const extension = renderSwarmSoulExtension(w)
-  return `${base}\n\n${SWARM_SOUL_BEGIN}\n\n${extension}\n\n${SWARM_SOUL_END}\n`
+  const soulPath = path.join(profileDir, 'SOUL.md')
+  if (fs.existsSync(soulPath)) {
+    return `${stripSwarmSoulExtension(fs.readFileSync(soulPath, 'utf8'))}\n`
+  }
+  return ''
 }
 
 function syncSwarmSkills(w, profileDir) {
@@ -265,7 +247,19 @@ function syncSwarmSkills(w, profileDir) {
   for (const skill of w.skills ?? []) {
     const localCore = path.join(wsSkills, skill)
     const dest = path.join(profileSkills, skill)
-    if (!fs.existsSync(localCore)) continue
+    // Hub / bundled skills are not under skills/swarm/ — skip quietly.
+    let st
+    try {
+      st = fs.statSync(localCore)
+    } catch {
+      continue
+    }
+    if (!st.isDirectory()) continue
+    try {
+      if (fs.realpathSync(localCore) === fs.realpathSync(dest)) continue
+    } catch {
+      /* dest missing */
+    }
     fs.rmSync(dest, { recursive: true, force: true })
     fs.cpSync(localCore, dest, { recursive: true })
   }
@@ -276,6 +270,15 @@ function syncGlobalSwarmSkills(swarmWorkers) {
   const wsSkills = path.join(WS, 'skills', 'swarm')
   const globalSwarm = path.join(os.homedir(), '.hermes', 'skills', 'swarm')
   const globalRoot = path.join(os.homedir(), '.hermes', 'skills')
+  // Dev setups often symlink ~/.hermes/skills/swarm → <repo>/skills/swarm.
+  // Never rm/cp into that tree or we delete the git-tracked sources.
+  try {
+    if (fs.realpathSync(globalSwarm) === fs.realpathSync(wsSkills)) {
+      return 0
+    }
+  } catch {
+    /* global path missing — create a real directory below */
+  }
   const names = new Set()
   for (const w of swarmWorkers) {
     for (const skill of w.skills ?? []) names.add(skill)
@@ -284,15 +287,40 @@ function syncGlobalSwarmSkills(swarmWorkers) {
   let synced = 0
   for (const skill of names) {
     const src = path.join(wsSkills, skill)
-    if (!fs.existsSync(src)) continue
+    let st
+    try {
+      st = fs.statSync(src)
+    } catch {
+      continue
+    }
+    if (!st.isDirectory()) continue
     const dest = path.join(globalSwarm, skill)
+    try {
+      if (fs.realpathSync(src) === fs.realpathSync(dest)) continue
+    } catch {
+      /* dest missing */
+    }
     fs.rmSync(dest, { recursive: true, force: true })
-    fs.cpSync(src, dest, { recursive: true })
+    try {
+      fs.cpSync(src, dest, { recursive: true })
+    } catch (error) {
+      console.warn(
+        `global skill sync skip ${skill}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      continue
+    }
     synced++
     // Duplicate top-level copy breaks /slash load (skill name collision).
+    // Only remove real directories — never unlink a symlink that points at the repo.
     const dup = path.join(globalRoot, skill)
-    if (fs.existsSync(dup) && fs.statSync(dup).isDirectory()) {
-      fs.rmSync(dup, { recursive: true, force: true })
+    try {
+      const dupStat = fs.lstatSync(dup)
+      if (dupStat.isSymbolicLink()) continue
+      if (dupStat.isDirectory()) {
+        fs.rmSync(dup, { recursive: true, force: true })
+      }
+    } catch {
+      /* no dup */
     }
   }
   return synced
@@ -326,7 +354,7 @@ for (const w of swarm.agents) {
 
   const soulPath = path.join(profileDir, 'SOUL.md')
   const soulContent =
-    w.id === 'learning' ? mergeLearningSoul(w, profileDir) : renderSoul(w)
+    w.id === 'learning' ? readLearningSoul(profileDir) : renderSoul(w)
   fs.writeFileSync(soulPath, soulContent)
 
   const memDir = path.join(profileDir, 'memory')
@@ -351,7 +379,7 @@ for (const w of swarm.agents) {
   }
   results.push(
     w.id === 'learning'
-      ? `${w.id}: SOUL.md merged (base + swarm extension), IDENTITY.md, swarm skills synced`
+      ? `${w.id}: SOUL.md copied from agents/learning/, IDENTITY.md, swarm skills synced`
       : `${w.id}: SOUL.md, IDENTITY.md, swarm skills synced`,
   )
 }

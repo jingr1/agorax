@@ -1,13 +1,13 @@
 version: 1
 # Project declarations for the multi-agent workspace.
 # Each project is a target repo that agents may modify. The control-plane repo
-# (hermes-workspace itself) is intentionally NOT listed here; self-hosted work
+# (agorax itself) is intentionally NOT listed here; self-hosted work
 # requires an explicit `selfHosted: true` flag.
 projects:
-  - id: hermes-workspace
-    repo: /home/ramon.jing/hermes-workspace
+  - id: agorax
+    repo: /home/ramon.jing/agorax
     defaultBranch: main
-    worktreeRoot: /home/ramon.jing/worktrees/hermes-workspace
+    worktreeRoot: /home/ramon.jing/worktrees/agorax
     setup: ['pnpm install --frozen-lockfile']
     maxConcurrentWorktrees: 2
     gitRemote: ''

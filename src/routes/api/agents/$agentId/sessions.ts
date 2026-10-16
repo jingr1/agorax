@@ -50,8 +50,15 @@ export const Route = createFileRoute('/api/agents/$agentId/sessions')({
           typeof body.title === 'string' ? body.title.trim() : undefined
         const model =
           typeof body.model === 'string' ? body.model.trim() : undefined
-        const created = createSessionForAgent(agentId, { title, model })
-        return json({ sessionId: created.sessionId, agentId, title, model })
+        try {
+          const created = await createSessionForAgent(agentId, { title, model })
+          return json({ sessionId: created.sessionId, agentId, title, model })
+        } catch (error) {
+          return json(
+            { error: error instanceof Error ? error.message : String(error) },
+            { status: 502 },
+          )
+        }
       },
     },
   },

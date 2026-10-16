@@ -10,6 +10,7 @@ import {
   patchSwarmRosterWorker,
   type SwarmRosterUpsert,
   isSwarmWorkerId,
+  isBuiltinAgentId,
 } from './swarm-roster'
 import { listSwarmWorkerIds } from './swarm-foundation'
 import { resetAgentRuntimeRouter } from './agent-runtime/router'
@@ -111,6 +112,11 @@ export function createAgentDeclaration(input: Record<string, unknown>) {
   if (next.id === 'default') {
     throw new Error('The default Hermes Agent is managed by the runtime')
   }
+  if (isBuiltinAgentId(next.id)) {
+    throw new Error(
+      `Agent "${next.id}" is defined in agents.yaml.example — pick another id, or edit the template in git`,
+    )
+  }
   if (next.runtime === 'hermes') {
     const profile = next.profile ?? next.id
     if (!isLiveNamedProfile(profile)) {
@@ -147,6 +153,8 @@ export function updateAgentDeclaration(
   if (current.runtime === 'hermes' && currentProfile !== next.profile) {
     throw new Error('Changing a Hermes profile requires creating a new agent')
   }
+  // Builtin template agents: identity fields may be patched in local
+  // agents.yaml; runtime/profile binds stay locked (checks above).
   const roster = patchSwarmRosterWorker(agentId, next, rosterIds())
   resetAgentRuntimeRouter()
   return roster
@@ -157,6 +165,11 @@ export function deleteAgentDeclaration(agentId: string) {
   if (!current) throw new Error(`Agent ${agentId} not found`)
   if (agentId === 'default') {
     throw new Error('The default Hermes Agent cannot be deleted')
+  }
+  if (isBuiltinAgentId(agentId)) {
+    throw new Error(
+      `Builtin agent "${agentId}" is defined in agents.yaml.example and cannot be deleted`,
+    )
   }
   const roster = deleteSwarmRosterWorker(agentId, rosterIds())
   if (current.runtime === 'hermes') {

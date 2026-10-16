@@ -8,6 +8,7 @@
  */
 import { listSessionsForProfile } from './profiles-browser'
 import { getAgentRuntimeRouter } from './agent-runtime/router'
+import { ensureAgentProfile } from './ensure-swarm-profile'
 import {
   createSessionForManagedAgent,
   deleteManagedChatSession,
@@ -99,6 +100,16 @@ async function listManagedDaemonSessions(
     )
 }
 
+async function ensureHermesProfileForChat(agentId: string): Promise<void> {
+  const result = await ensureAgentProfile(agentId)
+  if (result.status === 'no_default') {
+    throw new Error(
+      result.detail ||
+        'Hermes default profile is missing; cannot ensure swarm profile',
+    )
+  }
+}
+
 export async function listSessionsForAgent(
   agentId: string,
 ): Promise<Array<AgentSession>> {
@@ -106,26 +117,31 @@ export async function listSessionsForAgent(
   const decl = router.registry.byId.get(agentId)
   if (!decl) {
     if (router.registry.orphanProfiles.includes(agentId)) {
+      await ensureHermesProfileForChat(agentId)
       return listHermesSessions(agentId)
     }
     return listManagedChatSessions(agentId)
   }
   if (decl.runtime === 'hermes') {
-    return listHermesSessions(decl.profile ?? decl.id)
+    const profile = decl.profile ?? decl.id
+    await ensureHermesProfileForChat(profile)
+    return listHermesSessions(profile)
   }
   return listManagedDaemonSessions(decl.id, decl.runtime)
 }
 
-export function createSessionForAgent(
+export async function createSessionForAgent(
   agentId: string,
   payload: { title?: string; model?: string },
-): { sessionId: string } {
+): Promise<{ sessionId: string }> {
   const router = getAgentRuntimeRouter()
   const decl = router.registry.byId.get(agentId)
   const isHermes =
     decl?.runtime === 'hermes' ||
     (!decl && router.registry.orphanProfiles.includes(agentId))
   if (isHermes) {
+    const profile = decl?.profile ?? agentId
+    await ensureHermesProfileForChat(profile)
     // Hermes new-session creation is handled by the existing /api/sessions flow.
     return { sessionId: `new-${Date.now()}` }
   }

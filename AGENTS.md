@@ -2,9 +2,19 @@
 
 > 产品名：**Agorax**（AI Agent 的公共广场）。运行时由 **Hermes Agent** 提供（gateway / profiles / `~/.hermes`），运行时术语保持 Hermes 命名不变，见 [`docs/agorax-naming-contract.md`](docs/agorax-naming-contract.md)。
 
-本仓库使用语义化 Hermes agent/worker（不是纯编号 lane）。统一配置真相源是 [`agents.yaml`](agents.yaml)；每个 Hermes agent 在对应 profile 下有配置（**`default` → `~/.hermes`**，其余 → `~/.hermes/profiles/<agent-id>/`），角色 skill 见配置，wrapper 在 `~/.local/bin/`。
+本仓库使用语义化 Hermes agent/worker（不是纯编号 lane）。Agent 声明：
 
-**统一 agent 声明**见 [`agents.yaml`](agents.yaml)：同时描述角色、skills、能力和 agent **如何启动**（runtime / command / execution）。一个 agent 条目既是可调度 worker，也是 runtime registry entry。
+| 层 | 文件 | Git | 说明 |
+| --- | --- | --- | --- |
+| 产品模板 | [`agents.yaml.example`](agents.yaml.example) + [`agents/<id>/`](agents/) | 是 | 安装/首次加载复制为本地 registry |
+| 本机 registry | `agents.yaml` | 否 | 运行时真源；New Agent / registry **直接读写** |
+| Hermes profile | `~/.hermes` / `profiles/<id>/` | 否 | **`default` → `~/.hermes`**；其余 named profile |
+
+`install.sh`（或首次 `readSwarmRoster` / `loadAgentsRegistry`）在缺少 `agents.yaml` 时从 example 复制。产品模板变更请改 `agents.yaml.example` 并提交；本机自定义只动 `agents.yaml`。Builtin（example 里的 id）禁止从 UI 删除。角色 skill / SOUL 源在 `agents/` 与 `skills/swarm/`；wrapper 在 `~/.local/bin/`。
+
+**Profile 物化：** 本地 `agents.yaml` 里 `ensureProfile: true` 的 Hermes agent（当前 Swarm 6）由 `install.sh` → `scripts/ensure-swarm-profiles.mjs` 批量补齐（缺则 `hermes profile create --clone-from default`，再 `sync-swarm-profiles.mjs`）。打开某 agent chat（`GET/POST /api/agents/:id/sessions`）时按 id **兜底** ensure。不在 `pnpm dev` 启动或 Swarm dispatch 批量建。`update-system` 仍可 sync 已有 profile，不 create。
+
+**统一 agent 声明**见本地 `agents.yaml`：同时描述角色、skills、能力和 agent **如何启动**（runtime / command / execution）。一个 agent 条目既是可调度 worker，也是 runtime registry entry。
 
 ### Runtime 双轨合同（默认要求）
 
@@ -69,21 +79,21 @@ orchestrator → researcher → architect → (developer | writer) → architect
 
 ---
 
-## 二、运行时声明（`agents.yaml`）
+## 二、运行时声明（`agents.yaml` / `agents.yaml.example`）
 
-[`agents.yaml`](agents.yaml) 是统一 agent registry，同时声明启动方式与 Swarm 编排元数据。
+本地 [`agents.yaml`](agents.yaml)（gitignore）是统一 agent registry；产品模板为 [`agents.yaml.example`](agents.yaml.example)。二者同时声明启动方式与 Swarm 编排元数据。
 
-| id                          | runtime            | 说明                                                                              |
-| --------------------------- | ------------------ | --------------------------------------------------------------------------------- |
-| `default`                   | `hermes`           | 隐式根 profile：`~/.hermes`（不是 `profiles/default`）；`dispatchable: false`     |
-| `orchestrator` … `learning` | `hermes`           | 与 swarm roster 一一对应；`profile` 同 id                                         |
-| `gpuserver`                 | `hermes`           | `execution: ssh`；capabilities：gpu / cuda / benchmark / training；mention：`gpu` |
-| `cc-impl`                   | `claude-code`      | 展示名 Claude Code；`command: claude`，`args: ['-p']`；mention：`claude`          |
-| `codex-impl`                | `codex`            | `command: codex`；mention：`codex`（adapter 可能尚未完整落地）                    |
-| `cursor-impl`               | `cursor`           | 展示名 Cursor；`command: cursor-agent`；mention：`cursor`                         |
-| `opencode-impl`             | `opencode`         | 展示名 OpenCode；`command: opencode`；mention：`opencode`                         |
-| `kimi-impl`                 | `kimi`             | 展示名 kimi；`command: kimi`                                                      |
-| `ds-harness`                | `deepseek-harness` | `command: deepseek-harness`；mention：`deepseek`（adapter 可能尚未完整落地）      |
+| id                          | runtime       | 说明                                                                                          |
+| --------------------------- | ------------- | --------------------------------------------------------------------------------------------- |
+| `default`                   | `hermes`      | 隐式根 profile：`~/.hermes`（不是 `profiles/default`）；`dispatchable: false`                 |
+| `orchestrator` … `learning` | `hermes`      | Swarm roster；`ensureProfile: true`；`profile` 同 id                                          |
+| `cc-impl`                   | `claude-code` | 展示名 Claude Code；`command: claude`，`args: ['-p']`；mention：`claude`                      |
+| `codex-impl`                | `codex`       | `command: codex`；mention：`codex`                                                            |
+| `cursor-impl`               | `cursor`      | 展示名 Cursor；`command: cursor-agent`；mention：`cursor`                                     |
+| `opencode-impl`             | `opencode`    | 展示名 OpenCode；`command: opencode`；mention：`opencode`                                     |
+| `kimi-impl`                 | `kimi`        | 展示名 kimi；`command: kimi`                                                                  |
+
+> 默认模板不含 `gpuserver` / `aider` / `ds-harness` 等可选条目；需要时用 New Agent 写入本地 `agents.yaml`。
 
 加载规则（见 `src/server/agent-runtime/agents-config.ts`）：
 
@@ -205,8 +215,8 @@ set -g exit-unattached off
 | 区域                         | 路径                                                                         |
 | ---------------------------- | ---------------------------------------------------------------------------- |
 | Chat 分层合同（运行时分叉·事件同源） | `docs/hermes-native-bridge.md`、`src/lib/hermes-activity-adapter.ts` |
-| Agent / Swarm 合同与 roster  | `agents.yaml`、`AGENTS.md`、`docs/swarm/`                                    |
-| 运行时声明                   | `agents.yaml`、`src/server/agent-runtime/`                                   |
+| Agent / Swarm 合同与 roster  | `agents.yaml.example`、本地 `agents.yaml`、`AGENTS.md`、`docs/swarm/`       |
+| 运行时声明                   | `agents.yaml.example` → `agents.yaml`、`src/server/agent-runtime/`           |
 | LangGraph                    | `hermes_langgraph_orchestrator/`                                             |
 | 群聊                         | `src/server/group-chat/`、`src/screens/group-chat/`、`src/routes/api/rooms*` |
 | 1:1 Chat / managed companion | `src/screens/chat/`、`src/routes/api/agents/`                                |
@@ -215,4 +225,4 @@ set -g exit-unattached off
 | Profile 同步                 | `scripts/sync-swarm-profiles.mjs`                                            |
 | 项目 / worktree              | `projects.yaml`、`docs/mission-project-domain.md`、`src/server/git-ops.ts`、`src/server/task-pipeline/` |
 
-改 agent roster / skills / 门控时：先改 `agents.yaml`（及必要时 workflow yaml），再 sync profiles，并同步更新本文，避免合同漂移。
+改产品 agent roster / skills / 门控时：先改 `agents.yaml.example`（及必要时 workflow yaml），再让本机 `agents.yaml` 对齐（重装复制或手工合并），跑 ensure/sync profiles，并同步更新本文，避免合同漂移。

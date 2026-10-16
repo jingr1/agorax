@@ -3,6 +3,7 @@ import { json } from '@tanstack/react-start'
 import { isAuthenticated } from '../../server/auth-middleware'
 import {
   SWARM_ROSTER_PATH,
+  SWARM_ROSTER_EXAMPLE_PATH,
   readSwarmRoster,
   upsertSwarmRosterWorker,
   patchSwarmRosterWorker,
@@ -20,6 +21,7 @@ export const Route = createFileRoute('/api/swarm-roster')({
         return json({
           ok: true,
           path: SWARM_ROSTER_PATH,
+          examplePath: SWARM_ROSTER_EXAMPLE_PATH,
           roster: readSwarmRoster(ids),
           fetchedAt: Date.now(),
         })
@@ -53,7 +55,7 @@ export const Route = createFileRoute('/api/swarm-roster')({
               error:
                 error instanceof Error
                   ? error.message
-                  : 'Failed to save swarm roster entry',
+                  : 'Failed to upsert swarm roster entry',
             },
             { status: 400 },
           )
@@ -63,7 +65,10 @@ export const Route = createFileRoute('/api/swarm-roster')({
         if (!isAuthenticated(request)) {
           return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
         }
-        let body: { workerId?: string; patch?: Record<string, unknown> }
+        let body: {
+          workerId?: string
+          patch?: Record<string, unknown>
+        }
         try {
           body = (await request.json()) as {
             workerId?: string
@@ -97,7 +102,7 @@ export const Route = createFileRoute('/api/swarm-roster')({
         }
         try {
           const ids = listSwarmWorkerIds()
-          const roster = patchSwarmRosterWorker(workerId, patch, ids)
+          const roster = patchSwarmRosterWorker(workerId, patch as never, ids)
           return json({
             ok: true,
             path: SWARM_ROSTER_PATH,

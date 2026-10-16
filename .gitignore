@@ -67,6 +67,8 @@ count.txt
 todos.json
 releases/
 .agorax/
+# Local agent registry (seeded from agents.yaml.example; New Agent writes here)
+agents.yaml
 agorax-agent.db
 agorax-agent.db-shm
 agorax-agent.db-wal

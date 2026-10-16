@@ -103,4 +103,5 @@ See `.env.example` for all options. Key ones:
 - **Describe what you changed** — clear PR title + description
 - **No secrets** — never commit API keys, tokens, or passwords
 - **Follow existing patterns** — match the code style you see
-- **Keep docs in sync** — if you change `agents.yaml`, skills, tools, or workflow behavior, update `AGENTS.md` and relevant docs under `docs/`
+- **Keep docs in sync** — if you change the agent template, skills, tools, or workflow behavior, update `AGENTS.md` and relevant docs under `docs/`
+- **Commit `agents.yaml.example`, not `agents.yaml`** — local registry is gitignored (seeded from the example on install); product roster edits go in `agents.yaml.example`

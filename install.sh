@@ -8,7 +8,8 @@
 #   1. Verifies Node 22+, git, pnpm
 #   2. Installs hermes-agent via Nous's official upstream installer
 #   3. Clones Agorax
-#   4. Sets up .env, enables the Hermes API server, installs deps,
+#   4. Sets up .env, enables the Hermes API server, generates matching
+#      API_SERVER_KEY / HERMES_API_TOKEN if missing, installs deps,
 #      and links bundled skills
 #
 # Re-runnable. Will skip anything already installed.
@@ -94,6 +95,32 @@ ensure_env_key() {
   fi
 
   mv "$tmp" "$file"
+}
+
+# Read KEY=value from a dotenv file (first match). Empty if missing.
+read_env_key() {
+  local file="$1"
+  local key="$2"
+  [[ -f "$file" ]] || return 0
+  # strip optional surrounding quotes; do not print elsewhere
+  awk -F= -v key="$key" '
+    index($0, key "=") == 1 {
+      v = substr($0, length(key) + 2)
+      gsub(/\r$/, "", v)
+      if (v ~ /^".*"$/) { v = substr(v, 2, length(v) - 2) }
+      else if (v ~ /^'\''.*'\''$/) { v = substr(v, 2, length(v) - 2) }
+      print v
+      exit
+    }
+  ' "$file"
+}
+
+gen_api_key() {
+  if command -v openssl &>/dev/null; then
+    openssl rand -hex 24
+    return
+  fi
+  head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'
 }
 
 # ─── preflight ────────────────────────────────────────────────────────────
@@ -199,12 +226,38 @@ fi
 ensure_env_key "$INSTALL_DIR/.env" "HERMES_API_URL" "http://127.0.0.1:${GATEWAY_PORT}"
 green "  .env ready ✓"
 
+cyan "→ Seeding agents.yaml from template…"
+if [[ ! -f "$INSTALL_DIR/agents.yaml" ]]; then
+  if [[ -f "$INSTALL_DIR/agents.yaml.example" ]]; then
+    cp "$INSTALL_DIR/agents.yaml.example" "$INSTALL_DIR/agents.yaml"
+    green "  agents.yaml created from agents.yaml.example ✓"
+  else
+    yellow "  agents.yaml.example missing — skip"
+  fi
+else
+  green "  agents.yaml already present ✓"
+fi
+
 cyan "→ Enabling Hermes API server…"
 HERMES_ENV_PATH="$(hermes config env-path 2>/dev/null || true)"
 if [[ -z "$HERMES_ENV_PATH" ]]; then
   HERMES_ENV_PATH="$HOME/.hermes/.env"
 fi
 ensure_env_key "$HERMES_ENV_PATH" "API_SERVER_ENABLED" "true"
+
+# Gateway HTTP API + Agorax must share the same secret. Without
+# API_SERVER_KEY the pool/UI refuse to treat :8642 as connected
+# ("No compatible backend detected").
+API_KEY="$(read_env_key "$HERMES_ENV_PATH" "API_SERVER_KEY")"
+if [[ -z "$API_KEY" ]]; then
+  API_KEY="$(gen_api_key)"
+  ensure_env_key "$HERMES_ENV_PATH" "API_SERVER_KEY" "$API_KEY"
+  green "  generated API_SERVER_KEY ✓"
+else
+  green "  API_SERVER_KEY already set ✓"
+fi
+ensure_env_key "$INSTALL_DIR/.env" "HERMES_API_TOKEN" "$API_KEY"
+green "  HERMES_API_TOKEN synced to workspace .env ✓"
 green "  Hermes env updated: $HERMES_ENV_PATH ✓"
 
 # Guard against a common foot-gun: users editing ~/.hermes/.env by hand and
@@ -247,6 +300,35 @@ if [[ -d "$INSTALL_DIR/skills" ]]; then
   done
 fi
 
+# ─── Local agents.yaml from template ────────────────────────────────────
+
+cyan "→ Seeding agents.yaml from agents.yaml.example…"
+if [[ ! -f "$INSTALL_DIR/agents.yaml" ]]; then
+  if [[ -f "$INSTALL_DIR/agents.yaml.example" ]]; then
+    cp "$INSTALL_DIR/agents.yaml.example" "$INSTALL_DIR/agents.yaml"
+    green "  agents.yaml created ✓"
+  else
+    yellow "  agents.yaml.example missing — skip"
+  fi
+else
+  green "  agents.yaml already present ✓"
+fi
+
+# ─── Swarm seed Hermes profiles (ensureProfile: true) ───────────────────
+# Clone-from default when missing, then sync SOUL/skills/wrappers.
+# Agent chat also ensures per-id as a fallback if install was skipped.
+
+cyan "→ Ensuring Swarm seed Hermes profiles…"
+if [[ -f "$HOME/.hermes/config.yaml" ]]; then
+  if node "$INSTALL_DIR/scripts/ensure-swarm-profiles.mjs"; then
+    green "  Swarm seed profiles ready ✓"
+  else
+    yellow "  ensure-swarm-profiles failed — open an agent chat later to retry per profile"
+  fi
+else
+  yellow "  ~/.hermes/config.yaml missing — skip profile ensure (configure Hermes default first)"
+fi
+
 # ─── macOS LaunchAgent (plist) ───────────────────────────────────────────
 # Best-effort convenience for local macOS installs. This keeps the source of
 # truth in-repo and makes sure launchd runs server-entry.js (the thin HTTP
@@ -264,11 +346,12 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   HERMES_API_GATEWAY="http://127.0.0.1:${GATEWAY_PORT}"
   TOKEN=""
 
-  if [[ -f "$HOME/.hermes/.env" ]]; then
-    TOKEN="$(grep -E '^(HERMES_API_TOKEN|CLAUDE_API_TOKEN)=' "$HOME/.hermes/.env" | head -1 | cut -d= -f2- | tr -d '"' || true)"
+  TOKEN="$(read_env_key "$HERMES_ENV_PATH" "API_SERVER_KEY")"
+  if [[ -z "$TOKEN" ]]; then
+    TOKEN="$(read_env_key "$INSTALL_DIR/.env" "HERMES_API_TOKEN")"
   fi
-  if [[ -z "$TOKEN" && -f "$INSTALL_DIR/.env" ]]; then
-    TOKEN="$(grep -E '^(HERMES_API_TOKEN|CLAUDE_API_TOKEN)=' "$INSTALL_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' || true)"
+  if [[ -z "$TOKEN" ]]; then
+    TOKEN="$(read_env_key "$INSTALL_DIR/.env" "CLAUDE_API_TOKEN")"
   fi
 
   sed \
@@ -308,7 +391,8 @@ Next steps:
   Open http://localhost:6734
 
 If the gateway was already running before this install,
-restart it so API_SERVER_ENABLED=true takes effect.
+restart it so API_SERVER_ENABLED / API_SERVER_KEY take effect:
+       hermes gateway run --replace
 
 EOF
 

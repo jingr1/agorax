@@ -121,7 +121,7 @@ bash scripts/sync-autoresearch-skills.sh
 | --------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------- |
 | `config.yaml` → `toolsets`                    | `tools`                                      | **learning** 为合并（union），保留原有 `hermes-cli` 等                    |
 | `config.yaml` → `kanban.orchestrator_profile` | orchestrator 固定为 `orchestrator`           |                                                                           |
-| `SOUL.md`                                     | `name`, `role`, `mission`, …                 | **learning** 保留 `agents/learning/SOUL.md` 教学人格，仅追加 swarm 扩展段 |
+| `SOUL.md`                                     | `name`, `role`, `mission`, …                 | **learning** 原样复制 `agents/learning/SOUL.md`（教学 + 复盘写在同一文件） |
 | `memory/IDENTITY.md`                          | 同上 + `skills`, `capabilities`              | learning 额外标注 tutor + retrospective 双模式                            |
 | `skills/<skill>/`                             | `skills` 列表中存在于 `skills/swarm/` 的条目 |                                                                           |
 
@@ -136,7 +136,7 @@ Hub / bundled 技能（`gstack-for-hermes`、`llm-wiki`、`obsidian` 等）不�
 | `architect`    | `architect:design`    | design, autoresearch                             |
 | `developer`    | `developer:implement` | implement, autoresearch                          |
 | `writer`       | `writer:author`       | author, autoresearch                             |
-| `learning`     | `learning`            | tutor + swarm retrospective（SOUL 合并，不覆盖） |
+| `learning`     | `learning`            | tutor + retrospective（见 `agents/learning/SOUL.md`） |
 
 **Model：** 以对应 profile 的 `config.yaml` 为准。修改默认模型后重启对应 worker；角色/技能合同见 [`AGENTS.md`](../AGENTS.md)。
 

@@ -1,13 +1,8 @@
 /**
- * agents.yaml loader — runtime declarations for managed agents.
+ * agents.yaml loader — runtime declarations for Hermes + managed agents.
  *
- * agents.yaml is the unified source of truth for agent identity, runtime
- * launch, and Swarm orchestration metadata.
- *
- * Load-time validation (plan «ssh locality 仅限 runtime: hermes»):
- *   runtime !== 'hermes' && execution === 'ssh'  → hard error.
- *   Same when execution is omitted but the profile's terminal.backend
- *   auto-detection yields ssh and runtime is not hermes.
+ * Local agents.yaml (gitignored) is the runtime source of truth, seeded from
+ * agents.yaml.example on install / first load. UI writes agents.yaml directly.
  */
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -15,6 +10,7 @@ import { homedir } from 'node:os'
 import * as YAML from 'yaml'
 import type { AgentRuntimeKind } from './types'
 import { AGORAX_MANAGED_AGENT_BACKENDS } from '@/lib/managed-agent-runtime/agent-targets'
+import { ensureAgentsYamlFromExample } from '../swarm-roster'
 
 export type AgentExecution = 'local' | 'ssh'
 
@@ -27,6 +23,8 @@ export type AgentDeclaration = {
   runtime: AgentRuntimeKind
   /** Hermes profile name (runtime: hermes). */
   profile?: string
+  /** Install/chat ensure materializes ~/.hermes/profiles/<id> when true. */
+  ensureProfile?: boolean
   /** CLI command (non-hermes runtimes). */
   command?: string
   args?: Array<string>
@@ -68,6 +66,10 @@ const RUNTIMES: ReadonlyArray<AgentRuntimeKind> = [
 
 export function getAgentsYamlPath(repoRoot?: string): string {
   return path.join(repoRoot ?? process.cwd(), 'agents.yaml')
+}
+
+export function getAgentsYamlExamplePath(repoRoot?: string): string {
+  return path.join(repoRoot ?? process.cwd(), 'agents.yaml.example')
 }
 
 /** Read a hermes profile's terminal.ssh_host (P2b ssh locality). */
@@ -147,27 +149,38 @@ export function loadAgentsRegistry(input?: {
   repoRoot?: string
   /** Legacy capability inheritance hook; unified entries should declare these directly. */
   swarmCapabilities?: Map<string, Array<string>>
-  /** Existing file content override (tests). */
+  /** Existing file content override (tests). When set, skips disk seed copy. */
   rawYaml?: string
 }): AgentsRegistry {
-  const filePath = getAgentsYamlPath(input?.repoRoot)
-  const raw =
-    input?.rawYaml ??
-    (fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null)
-  if (raw === null) {
-    // No agents.yaml: empty registry, every hermes profile is an orphan.
-    return {
-      version: 1,
-      agents: [],
-      byId: new Map(),
-      orphanProfiles: listHermesProfiles(),
-    }
-  }
+  const repoRoot = input?.repoRoot ?? process.cwd()
+  const filePath = getAgentsYamlPath(repoRoot)
 
-  const doc = YAML.parse(raw) as {
+  let doc: {
     version?: number
     agents?: Array<Record<string, unknown>>
   } | null
+
+  if (input?.rawYaml != null) {
+    doc = YAML.parse(input.rawYaml) as {
+      version?: number
+      agents?: Array<Record<string, unknown>>
+    } | null
+  } else {
+    ensureAgentsYamlFromExample(repoRoot)
+    if (!fs.existsSync(filePath)) {
+      return {
+        version: 1,
+        agents: [],
+        byId: new Map(),
+        orphanProfiles: listHermesProfiles(),
+      }
+    }
+    doc = YAML.parse(fs.readFileSync(filePath, 'utf-8')) as {
+      version?: number
+      agents?: Array<Record<string, unknown>>
+    } | null
+  }
+
   const errors: Array<string> = []
   const agents: Array<AgentDeclaration> = []
 
@@ -183,7 +196,6 @@ export function loadAgentsRegistry(input?: {
       continue
     }
 
-    // execution: explicit, else auto-detect from the hermes profile.
     let execution: AgentExecution
     if (entry.execution === 'ssh' || entry.execution === 'local') {
       execution = entry.execution
@@ -194,7 +206,6 @@ export function loadAgentsRegistry(input?: {
           : null) ?? 'local'
     }
 
-    // ssh locality is hermes-only (plan 行 583).
     if (runtime !== 'hermes' && execution === 'ssh') {
       errors.push(
         `agent ${id}: execution=ssh is only supported for runtime=hermes ` +
@@ -204,9 +215,6 @@ export function loadAgentsRegistry(input?: {
     }
 
     if (runtime === 'hermes' && !entry.profile) {
-      // Same default as the registry writer (agent-registry normalizeInput):
-      // a hermes agent without an explicit profile uses its own id, so one
-      // hand-edited entry cannot take down the whole registry load.
       entry.profile = id
     }
     if (runtime !== 'hermes' && !entry.command) {
@@ -227,6 +235,7 @@ export function loadAgentsRegistry(input?: {
       mission: entry.mission ? String(entry.mission) : undefined,
       runtime,
       profile: entry.profile ? String(entry.profile) : undefined,
+      ensureProfile: entry.ensureProfile === true,
       command: entry.command ? String(entry.command) : undefined,
       args: Array.isArray(entry.args) ? entry.args.map(String) : undefined,
       modes: Array.isArray(entry.modes) ? entry.modes.map(String) : [],
@@ -267,16 +276,11 @@ export function loadAgentsRegistry(input?: {
     )
   }
 
-  // Orphan reconciliation (plan 行 130/1249): hermes profiles on disk that
-  // no declared agent references. Reported, not silently ignored.
   const declaredProfiles = new Set(agents.map((a) => a.profile).filter(Boolean))
   const orphanProfiles = listHermesProfiles().filter(
     (p) => !declaredProfiles.has(p),
   )
 
-  // Always surface the implicit default profile rooted at ~/.hermes, mirroring
-  // the behavior of /api/profiles/list. The default profile may not have its
-  // own directory under ~/.hermes/profiles/default.
   if (!declaredProfiles.has('default')) {
     orphanProfiles.unshift('default')
   }
