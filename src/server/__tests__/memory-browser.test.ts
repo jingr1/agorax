@@ -195,4 +195,56 @@ describe('memory-browser', () => {
     expect(claude?.root).toBe(path.resolve('/home/testuser/.claude'))
     expect(claude?.rootHint).toContain('.claude')
   })
+
+  it('lists and resolves profile-root SOUL.md for Hermes agents', async () => {
+    process.env.HERMES_HOME = '/custom/hermes'
+    const soulPath = path.resolve(
+      '/custom/hermes/profiles/architect/SOUL.md',
+    )
+    const memoriesDir = path.resolve(
+      '/custom/hermes/profiles/architect/memories',
+    )
+    existsSync.mockImplementation((p: string) => String(p).includes('architect'))
+    readdirSync.mockImplementation((dirPath: string) => {
+      if (path.resolve(String(dirPath)) === memoriesDir) return []
+      return []
+    })
+    statSync.mockImplementation((p: string) => {
+      const value = path.resolve(String(p))
+      if (value === soulPath) {
+        return {
+          isFile: () => true,
+          isDirectory: () => false,
+          mtime: new Date('2026-01-02T00:00:00Z'),
+          size: 40,
+        }
+      }
+      if (value === memoriesDir) {
+        return {
+          isFile: () => false,
+          isDirectory: () => true,
+          mtime: new Date(0),
+          mtimeMs: 0,
+        }
+      }
+      return {
+        isFile: () => false,
+        isDirectory: () => false,
+        mtime: new Date(0),
+        mtimeMs: 0,
+      }
+    })
+    readFileSync.mockImplementation((p: string) => {
+      if (path.resolve(String(p)) === soulPath) return '# Architect\n'
+      return ''
+    })
+
+    const mod = await loadMod()
+    const files = mod.listMemoryFiles('architect')
+    expect(files.map((f) => f.path)).toContain('SOUL.md')
+    expect(files[0]?.path).toBe('SOUL.md')
+    const resolved = mod.resolveMemoryFilePath('SOUL.md', 'architect')
+    expect(resolved.fullPath).toBe(soulPath)
+    expect(mod.readMemoryFile('SOUL.md', 'architect')).toBe('# Architect\n')
+  })
 })

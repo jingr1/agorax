@@ -65,7 +65,6 @@ Each worker profile can include:
   MEMORY.md
   SOUL.md
   USER.md
-  memory/IDENTITY.md
   runtime.json
   skills/
 ```

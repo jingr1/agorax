@@ -70,6 +70,20 @@
 **做什么：** 按文件大小、任务类型、上下文选不同工具。大重构 → Codex；小手术 → Claude ACP session；调研 → 带 web search 的 Claude。  
 **模式来源：** Anthropic Skills — "Context-aware tool selection"
 
+### 9. Managed agent platform skills 原生落盘（替代 prompt 注入）
+
+**做什么：** Claude / Codex（及其他 managed runtime）绑定的平台 skills，改为物化到**原生会自动发现的 skills 目录**（优先项目/会话级，例如仓库 `.claude/skills`、Codex 对应 project skills；避免污染全局 `~/.claude/skills` / `~/.codex/skills`），让 runtime 自己加载；收紧或退役 `buildManagedSkillPromptPrefix` / `buildTurnSkillInjection` 的全文注入路径。  
+**为什么：** 当前为换「DB 绑定 + 不写用户家目录 + 控制历史体积」，对 managed 只做 catalog/本轮 prompt 注入；但 Claude/Codex 本就会扫自己的 skills，注入等于绕开原生发现，能力与 Hermes「物化到 profile skills」不对等。  
+**约束：**
+
+- 仍以 `collab.db` catalog + `agent_skills` 为真相；bind/toggle 驱动物化与清理（可复用 `.agorax-platform-skill` 标记，勿覆盖用户自有 skill）
+- 按 agent / workspace 隔离，禁止默认写入全局 home skills
+- Composer `/skill` 本轮选用：优先映射为原生 skill 触发；仅在无法落盘的 runtime 上回退注入
+- 同步更新 `docs/platform-skills.md`、`docs/managed-agent-daemon-mapping.md`
+
+**落点：** `src/server/platform-skills/materialize.ts`（扩展 managed）、`prompt-inject.ts`（降级/删除）、`managed-skill-roots.ts`、activate/input 注入调用点  
+**现状锚点：** `docs/platform-skills.md` — Managed「Does not write `~/.codex/skills` or `~/.claude/skills`」
+
 ---
 
 
@@ -78,18 +92,19 @@
 
 
 
-### 9. 把会话持久化暴露给 Agent
+### 10. 把会话持久化暴露给 Agent
 
 **做什么：** 每个任务开始时把上一轮上下文（什么成了、什么挂了、git 历史）塞进 agent。现在即使重跑也经常从盲状态起步。  
 **落点：** 更新 adapter `buildPrompt()`，从 SQLite 带入 run history
 
-### 10. Agent Prompt 的渐进式 Skill 加载
+### 11. Agent Prompt 的渐进式 Skill 加载
 
 **做什么：** 系统提示用 Anthropic 三级渐进披露——最小 header 常驻，完整说明仅在触发时加载，参考文档按需。  
 **为什么：** 多 agent 并行时保持上下文精简。  
-**模式来源：** Anthropic Skills Guide — 核心架构
+**模式来源：** Anthropic Skills Guide — 核心架构  
+**注：** 与 §9（managed 原生落盘）互补——落盘解决发现机制；本项解决 prompt 体积。Hermes / 仍需注入的 runtime 可继续用渐进披露。
 
-### 11. Skills 市场 / Agent Skill 定义
+### 12. Skills 市场 / Agent Skill 定义
 
 **做什么：** 把 agent「技能」做成可移植的 SKILL.md 风格文件，可共享、可版本、可替换。例如「React Builder」vs「Python API Builder」。  
 **模式来源：** Anthropic agentskills.io 开放标准
@@ -111,8 +126,9 @@
 | 并行护栏                          | 中    | 中   | 角色之后                 |
 | 拒绝时回滚                         | 中    | 低   | 角色之后                 |
 | 上下文感知工具选择                     | 中    | 高   | 更晚                   |
+| Managed skills 原生落盘           | 中    | 中   | platform-skills 下一迭代 |
 | 会话持久化暴露                       | 低    | 低   | 更晚                   |
-| 渐进式 Skill 加载                  | 低    | 中   | 更晚                   |
+| 渐进式 Skill 加载                  | 低    | 中   | 更晚（配合 §9）            |
 | Skills 市场                     | 低    | 高   | 很晚                   |
 
 

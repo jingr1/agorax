@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
  * Sync ~/.hermes/profiles/<workerId>/ from agents.yaml roster fields.
- * Updates config.yaml (toolsets only), SOUL.md, and memory/IDENTITY.md.
+ * Updates config.yaml (toolsets only) and SOUL.md (Hermes persona; no IDENTITY.md).
+ * Prefer agents/<id>/SOUL.md over yaml-rendered stub when the file exists.
  *
  * Does NOT write model.provider/model.default — the profile config owns the
  * default model; an explicit runtime override may still be injected at dispatch.
  *
- * learning profile: copies agents/learning/SOUL.md as-is (tutor + retrospective
- * live in that file); toolsets are merged (union), not replaced.
+ * Agent SOUL: if `agents/<id>/SOUL.md` exists, copy it as-is; otherwise
+ * synthesize from agents.yaml via renderSoul(). learning toolsets are merged
+ * (union), not replaced.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -17,9 +19,6 @@ import yaml from 'yaml'
 const WS = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const PROFILES = path.join(os.homedir(), '.hermes', 'profiles')
 const LOCAL_BIN = path.join(os.homedir(), '.local', 'bin')
-/** Legacy markers; stripped once when migrating old merged SOUL files. */
-const SWARM_SOUL_BEGIN = '<!-- SWARM_ROLE_EXTENSION -->'
-const SWARM_SOUL_END = '<!-- /SWARM_ROLE_EXTENSION -->'
 
 function loadAgentsDoc() {
   const agentsPath = path.join(WS, 'agents.yaml')
@@ -112,51 +111,6 @@ function mergeToolsets(existing, swarmTools) {
   return [...new Set([...(existing ?? []), ...(swarmTools ?? [])])]
 }
 
-function renderIdentity(w) {
-  const name = w.name?.trim() || w.id
-  const role = w.role?.trim() || 'Worker'
-  const specialty = w.specialty?.trim() || 'General execution'
-  const model = w.model?.trim() || 'Unspecified'
-  const mission =
-    w.mission?.trim() || 'Execute assigned swarm work and checkpoint progress.'
-  const skills = w.skills?.length ? w.skills.join(', ') : 'swarm-worker-core'
-  const capabilities = w.capabilities?.length
-    ? w.capabilities.join(', ')
-    : 'not declared'
-  const lines = [
-    `# IDENTITY.md — ${name}`,
-    '',
-    `- Name: ${name}`,
-    `- Worker ID: ${w.id}`,
-    `- Role: ${role}`,
-    `- Specialty: ${specialty}`,
-    `- Mission: ${mission}`,
-    `- Skills: ${skills}`,
-    `- Capabilities: ${capabilities}`,
-    `- Model: ${model}`,
-    '',
-    '## Job description',
-    `${name} is the ${role} lane. ${mission}`,
-    '',
-  ]
-
-  if (w.id === 'learning') {
-    lines.push(
-      '## Modes (see SOUL.md)',
-      '',
-      '- **Tutor** (default 1:1): Feynman / Socratic teaching.',
-      '- **Retrospective**: when pipeline/mission includes `learning`, auto wiki ingest; otherwise manual `learning-wiki-ingest`.',
-      '',
-    )
-  }
-
-  lines.push(
-    'The worker ID is a stable machine identifier only; user-facing surfaces should prefer Name — Role.',
-    '',
-  )
-  return lines.join('\n')
-}
-
 function renderSoul(w) {
   const name = w.name?.trim() || w.id
   const modes = w.modes?.length ? w.modes.join(', ') : 'none'
@@ -165,6 +119,11 @@ function renderSoul(w) {
         .map((g) => `- ${g}: Requires human approval`)
         .join('\n')
     : '- none declared'
+  const skills = w.skills?.length ? w.skills.join(', ') : 'swarm-worker-core'
+  const capabilities = w.capabilities?.length
+    ? w.capabilities.join(', ')
+    : 'not declared'
+  const model = w.model?.trim() || 'Unspecified'
 
   const prohibitedById = {
     orchestrator: [
@@ -196,6 +155,13 @@ function renderSoul(w) {
   return [
     `# ${name}`,
     '',
+    `- Worker ID: ${w.id}`,
+    `- Model: ${model}`,
+    `- Skills: ${skills}`,
+    `- Capabilities: ${capabilities}`,
+    '',
+    'The worker ID is a stable machine identifier only; user-facing surfaces should prefer Name — Role.',
+    '',
     '## Role',
     w.role?.trim() || 'Worker',
     '',
@@ -218,25 +184,11 @@ function renderSoul(w) {
   ].join('\n')
 }
 
-function stripSwarmSoulExtension(content) {
-  const re = new RegExp(
-    `\\n*${SWARM_SOUL_BEGIN}[\\s\\S]*?${SWARM_SOUL_END}\\n*`,
-    'g',
-  )
-  return content.replace(re, '').trimEnd()
-}
-
-/** Copy agents/learning/SOUL.md verbatim (tutor + retrospective already in-file). */
-function readLearningSoul(profileDir) {
-  const basePath = path.join(WS, 'agents', 'learning', 'SOUL.md')
-  if (fs.existsSync(basePath)) {
-    return `${fs.readFileSync(basePath, 'utf8').trimEnd()}\n`
-  }
-  const soulPath = path.join(profileDir, 'SOUL.md')
-  if (fs.existsSync(soulPath)) {
-    return `${stripSwarmSoulExtension(fs.readFileSync(soulPath, 'utf8'))}\n`
-  }
-  return ''
+/** Return agents/<id>/SOUL.md contents, or '' when missing. */
+function readAgentSoulFile(agentId) {
+  const basePath = path.join(WS, 'agents', agentId, 'SOUL.md')
+  if (!fs.existsSync(basePath)) return ''
+  return `${fs.readFileSync(basePath, 'utf8').trimEnd()}\n`
 }
 
 function syncSwarmSkills(w, profileDir) {
@@ -353,13 +305,24 @@ for (const w of swarm.agents) {
   }
 
   const soulPath = path.join(profileDir, 'SOUL.md')
-  const soulContent =
-    w.id === 'learning' ? readLearningSoul(profileDir) : renderSoul(w)
-  fs.writeFileSync(soulPath, soulContent)
+  const fileSoul = readAgentSoulFile(w.id)
+  fs.writeFileSync(soulPath, fileSoul || renderSoul(w))
 
-  const memDir = path.join(profileDir, 'memory')
-  fs.mkdirSync(memDir, { recursive: true })
-  fs.writeFileSync(path.join(memDir, 'IDENTITY.md'), renderIdentity(w))
+  // Hermes owns memories/; drop obsolete Agorax memory/ overlay when empty.
+  const legacyMem = path.join(profileDir, 'memory')
+  if (fs.existsSync(legacyMem)) {
+    for (const name of ['IDENTITY.md', 'MEMORY.md', 'SOUL.md', 'USER.md']) {
+      const p = path.join(legacyMem, name)
+      if (fs.existsSync(p)) fs.unlinkSync(p)
+    }
+    try {
+      if (fs.readdirSync(legacyMem).length === 0) {
+        fs.rmSync(legacyMem, { recursive: true, force: true })
+      }
+    } catch {
+      /* ignore */
+    }
+  }
   syncSwarmSkills(w, profileDir)
   const staleSwarmNest = path.join(profileDir, 'skills', 'swarm')
   if (fs.existsSync(staleSwarmNest)) {
@@ -378,9 +341,9 @@ for (const w of swarm.agents) {
     }
   }
   results.push(
-    w.id === 'learning'
-      ? `${w.id}: SOUL.md copied from agents/learning/, IDENTITY.md, swarm skills synced`
-      : `${w.id}: SOUL.md, IDENTITY.md, swarm skills synced`,
+    fileSoul
+      ? `${w.id}: SOUL.md copied from agents/${w.id}/, swarm skills synced`
+      : `${w.id}: SOUL.md rendered from agents.yaml, swarm skills synced`,
   )
 }
 

@@ -32,17 +32,6 @@ export type ProfileBootstrapResult = {
   error?: string
 }
 
-export type SwarmWorkerIdentity = {
-  id: string
-  name?: string
-  role?: string
-  specialty?: string
-  model?: string
-  mission?: string
-  skills?: Array<string>
-  capabilities?: Array<string>
-}
-
 function linkSharedFile(source: string, target: string): boolean {
   if (!existsSync(source)) return false
   if (existsSync(target)) {
@@ -200,71 +189,6 @@ export function ensureSwarmProfileConfig(
   } catch (err) {
     return {
       ...result,
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    }
-  }
-}
-
-export function renderSwarmWorkerIdentity(worker: SwarmWorkerIdentity): string {
-  const name = worker.name?.trim() || worker.id
-  const role = worker.role?.trim() || 'Worker'
-  const specialty = worker.specialty?.trim() || 'General execution'
-  const model = worker.model?.trim() || 'Unspecified'
-  const mission =
-    worker.mission?.trim() ||
-    'Execute assigned swarm work and checkpoint progress.'
-  const skills =
-    worker.skills && worker.skills.length > 0
-      ? worker.skills.join(', ')
-      : 'swarm-worker-core'
-  const capabilities =
-    worker.capabilities && worker.capabilities.length > 0
-      ? worker.capabilities.join(', ')
-      : 'not declared'
-
-  return [
-    `# IDENTITY.md — ${name}`,
-    '',
-    `- Name: ${name}`,
-    `- Worker ID: ${worker.id}`,
-    `- Role: ${role}`,
-    `- Specialty: ${specialty}`,
-    `- Mission: ${mission}`,
-    `- Skills: ${skills}`,
-    `- Capabilities: ${capabilities}`,
-    `- Model: ${model}`,
-    '',
-    '## Job description',
-    `${name} is the ${role} lane. ${mission}`,
-    '',
-    'The worker ID is a stable machine identifier only; user-facing surfaces should prefer `Name — Role`.',
-    '',
-  ].join('\n')
-}
-
-export function syncSwarmProfileIdentity(
-  profilePath: string,
-  worker: SwarmWorkerIdentity,
-): ConfigSyncResult {
-  if (!existsSync(profilePath)) {
-    return { ok: false, error: `profile path missing: ${profilePath}` }
-  }
-  const identityDir = join(profilePath, 'memory')
-  const identityPath = join(identityDir, 'IDENTITY.md')
-  const next = renderSwarmWorkerIdentity(worker)
-  try {
-    mkdirSync(identityDir, { recursive: true })
-    const current = existsSync(identityPath)
-      ? readFileSync(identityPath, 'utf8')
-      : ''
-    if (current === next) return { ok: true, changed: false }
-    const tmpPath = `${identityPath}.tmp-${process.pid}-${Date.now()}`
-    writeFileSync(tmpPath, next, 'utf8')
-    renameSync(tmpPath, identityPath)
-    return { ok: true, changed: true }
-  } catch (err) {
-    return {
       ok: false,
       error: err instanceof Error ? err.message : String(err),
     }

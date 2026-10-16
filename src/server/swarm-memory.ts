@@ -6,6 +6,8 @@ import {
   readdirSync,
   renameSync,
   statSync,
+  unlinkSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
@@ -88,8 +90,27 @@ function profileFile(workerId: string, name: string): string {
   return join(profileRoot(workerId), name)
 }
 
+/** Hermes native durable memory dir (`MEMORY.md`, `USER.md`). */
 export function swarmWorkerMemoryRoot(workerId: string): string {
+  return join(profileRoot(workerId), 'memories')
+}
+
+/** Pre-Hermes Agorax overlay path; read/migrate only. */
+export function swarmWorkerLegacyMemoryRoot(workerId: string): string {
   return join(profileRoot(workerId), 'memory')
+}
+
+function hermesDurableFile(
+  workerId: string,
+  name: 'MEMORY.md' | 'USER.md',
+): string {
+  const preferred = join(swarmWorkerMemoryRoot(workerId), name)
+  if (existsSync(preferred)) return preferred
+  const legacyRoot = join(swarmWorkerLegacyMemoryRoot(workerId), name)
+  if (existsSync(legacyRoot)) return legacyRoot
+  const profileRootFile = profileFile(workerId, name)
+  if (existsSync(profileRootFile)) return profileRootFile
+  return preferred
 }
 
 export function swarmWorkerMissionMemoryRoot(
@@ -126,8 +147,20 @@ export function resolveSessionSnapshotPath(
 ): string {
   const preferred = join(swarmWorkerSessionSnapshotsRoot(workerId), fileName)
   if (existsSync(preferred)) return preferred
-  const legacy = join(swarmWorkerLegacyHandoffsRoot(workerId), fileName)
-  if (existsSync(legacy)) return legacy
+  const legacyHandoff = join(swarmWorkerLegacyHandoffsRoot(workerId), fileName)
+  if (existsSync(legacyHandoff)) return legacyHandoff
+  const legacyOverlay = join(
+    swarmWorkerLegacyMemoryRoot(workerId),
+    SESSION_SNAPSHOTS_DIR,
+    fileName,
+  )
+  if (existsSync(legacyOverlay)) return legacyOverlay
+  const legacyOverlayHandoff = join(
+    swarmWorkerLegacyMemoryRoot(workerId),
+    LEGACY_HANDOFFS_DIR,
+    fileName,
+  )
+  if (existsSync(legacyOverlayHandoff)) return legacyOverlayHandoff
   return preferred
 }
 
@@ -182,6 +215,40 @@ function markdownHeader(title: string): string {
   return `# ${title}\n\n`
 }
 
+
+function migrateLegacySwarmMemoryOverlay(workerId: string): void {
+  const legacy = swarmWorkerLegacyMemoryRoot(workerId)
+  const next = swarmWorkerMemoryRoot(workerId)
+  if (!existsSync(legacy) || resolve(legacy) === resolve(next)) return
+  ensureDir(next)
+  for (const name of ['missions', 'episodes', SESSION_SNAPSHOTS_DIR, LEGACY_HANDOFFS_DIR]) {
+    const from = join(legacy, name)
+    const to = join(next, name)
+    if (!existsSync(from)) continue
+    if (!existsSync(to)) {
+      try {
+        renameSync(from, to)
+        continue
+      } catch {
+        // fall through to copy-ish leave-in-place
+      }
+    }
+  }
+  // Drop empty legacy tree (and Agorax pointer leftovers).
+  try {
+    for (const name of ['IDENTITY.md', 'MEMORY.md', 'SOUL.md', 'USER.md']) {
+      const p = join(legacy, name)
+      if (existsSync(p)) unlinkSync(p)
+    }
+    // Remove legacy dir when empty.
+    if (existsSync(legacy) && readdirSync(legacy).length === 0) {
+      rmSync(legacy, { recursive: true, force: true })
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export function ensureWorkerMemoryScaffold(input: {
   workerId: string
   name?: string | null
@@ -202,61 +269,30 @@ export function ensureWorkerMemoryScaffold(input: {
   }
   const root = swarmWorkerMemoryRoot(workerId)
   ensureDir(root)
+  migrateLegacySwarmMemoryOverlay(workerId)
   ensureDir(join(root, 'missions'))
   ensureDir(join(root, 'episodes'))
   ensureDir(join(root, SESSION_SNAPSHOTS_DIR))
 
-  // The PROFILE-ROOT MEMORY.md / SOUL.md / USER.md are cloned from the main
-  // user profile and contain durable project + persona + user context. We do
-  // NOT replicate them here. Instead, this swarm `memory/` subdirectory holds
-  // *swarm-specific* layered memory: per-worker IDENTITY.md, plus mission /
-  // episodic / handoff files. We add tiny pointer files so that any worker
-  // exploring `memory/` learns where the real durable memory lives.
-
-  const memoryPath = join(root, 'MEMORY.md')
-  if (!existsSync(memoryPath)) {
-    atomicWrite(
-      memoryPath,
-      [
-        markdownHeader(`Memory pointer — ${workerId}`),
-        'This file is a pointer, not a memory store.\n\n',
-        `Durable long-term memory for ${workerId} lives at:\n`,
-        `~/.\u0068\u0065\u0072\u006d\u0065\u0073/profiles/${workerId}/MEMORY.md\n\n`,
-        'Swarm-specific memory under this directory:\n',
-        '- IDENTITY.md — worker role/specialty\n',
-        '- missions/<missionId>/SUMMARY.md + events.jsonl — per-mission memory\n',
-        '- episodes/YYYY-MM-DD.md — daily episodic log\n',
-        '- session-snapshots/<missionId>.md or latest.md — session compaction/restart snapshots\n',
-      ].join(''),
-    )
+  // Do not write MEMORY.md / USER.md / SOUL.md here — Hermes owns
+  // memories/MEMORY.md + USER.md and profile-root SOUL.md.
+  const staleIdentity = join(root, 'IDENTITY.md')
+  if (existsSync(staleIdentity)) {
+    try {
+      unlinkSync(staleIdentity)
+    } catch {
+      /* ignore */
+    }
   }
-
-  const identityPath = join(root, 'IDENTITY.md')
-  if (!existsSync(identityPath)) {
-    atomicWrite(
-      identityPath,
-      [
-        markdownHeader(`IDENTITY.md — ${workerId}`),
-        `- Name: ${input.name ?? workerId}\n`,
-        `- Worker ID: ${workerId}\n`,
-        `- Role: ${input.role ?? 'Unassigned'}\n`,
-        `- Specialty: ${input.specialty ?? 'Unassigned'}\n`,
-        `- Model: ${input.model ?? 'Unspecified'}\n`,
-      ].join(''),
-    )
-  }
-
-  const soulPath = join(root, 'SOUL.md')
-  if (!existsSync(soulPath)) {
-    atomicWrite(
-      soulPath,
-      [
-        markdownHeader(`SOUL pointer — ${workerId}`),
-        'This file is a pointer, not a persona store.\n\n',
-        `Persona/SOUL for ${workerId} lives at:\n`,
-        `~/.\u0068\u0065\u0072\u006d\u0065\u0073/profiles/${workerId}/SOUL.md\n`,
-      ].join(''),
-    )
+  // Pointer SOUL.md under memories/ was an Agorax leftover; remove if present.
+  const staleSoulPointer = join(root, 'SOUL.md')
+  if (existsSync(staleSoulPointer)) {
+    try {
+      const body = readFileSync(staleSoulPointer, 'utf8')
+      if (body.includes('This file is a pointer')) unlinkSync(staleSoulPointer)
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -463,12 +499,23 @@ export function readSwarmMemory(input: {
   ensureDir(root)
   const files = listFiles(root, input.kind === 'profile' ? 1 : 2)
     .filter((path) => !input.date || basename(path).startsWith(input.date))
+    .filter((path) => basename(path) !== 'IDENTITY.md')
     .slice(0, 50)
     .map((path) => ({
       name: basename(path),
       path,
       content: readFileSync(assertInside(root, path), 'utf8'),
     }))
+  if (input.kind === 'profile' && input.workerId) {
+    const soulPath = profileFile(input.workerId, 'SOUL.md')
+    if (existsSync(soulPath) && !files.some((f) => f.name === 'SOUL.md')) {
+      files.unshift({
+        name: 'SOUL.md',
+        path: soulPath,
+        content: readFileSync(soulPath, 'utf8'),
+      })
+    }
+  }
   return {
     ok: true,
     workerId: input.workerId ?? null,
@@ -650,12 +697,11 @@ export function buildSwarmStartupSnapshot(
   const { workerId } = input
   if (!validateSwarmId(workerId))
     throw new Error(`Invalid workerId: ${workerId}`)
-  const identity = readTextIfExists(
-    join(swarmWorkerMemoryRoot(workerId), 'IDENTITY.md'),
-  )
-  const durableMemory = readTextIfExists(profileFile(workerId, 'MEMORY.md'))
+  const durableMemory = readTextIfExists(hermesDurableFile(workerId, 'MEMORY.md'))
   const persona = readTextIfExists(profileFile(workerId, 'SOUL.md'))
-  const user = readTextIfExists(profileFile(workerId, 'USER.md'))
+  // Legacy field: identity metadata now lives in profile SOUL.md.
+  const identity = persona
+  const user = readTextIfExists(hermesDurableFile(workerId, 'USER.md'))
   const project = readShared(SWARM_PROJECT_CONTEXT_PATH)
   const enabledToolsets = readEnabledToolsets(workerId)
 
@@ -722,12 +768,12 @@ export function buildSwarmStartupSnapshot(
     renderedSections.push(tail(project, maxProject))
   }
   if (durableMemory) {
-    renderedSections.push('### Durable memory (profile MEMORY.md tail)')
+    renderedSections.push('### Durable memory (memories/MEMORY.md tail)')
     renderedSections.push(tail(durableMemory, maxMemory))
   }
-  if (identity) {
-    renderedSections.push('### Worker identity')
-    renderedSections.push(tail(identity, maxIdentity))
+  if (persona) {
+    renderedSections.push('### Worker persona (SOUL.md)')
+    renderedSections.push(tail(persona, maxIdentity))
   }
   if (latestHandoff) {
     renderedSections.push(`### Latest handoff (${latestHandoff.path})`)
@@ -750,8 +796,8 @@ export function buildSwarmStartupSnapshot(
   renderedSections.push('### Memory locations')
   renderedSections.push(
     [
-      `Profile root: ~/.hermes/profiles/${workerId}/  (SOUL.md plus optional MEMORY.md / USER.md when cloned from main)`,
-      `Swarm memory: ~/.hermes/profiles/${workerId}/memory/  (IDENTITY.md, missions/, episodes/, session-snapshots/)`,
+      `Profile root: ~/.hermes/profiles/${workerId}/  (SOUL.md)`,
+      `Hermes memories: ~/.hermes/profiles/${workerId}/memories/  (MEMORY.md, USER.md; Agorax missions/, episodes/, session-snapshots/)`,
       `Shared handoff: ${sharedHandoffPath}`,
       `Shared swarm memory: ${SWARM_SHARED_MEMORY_ROOT}`,
       `Project context: ${SWARM_PROJECT_CONTEXT_PATH}`,

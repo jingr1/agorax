@@ -27,15 +27,15 @@ These paths are locked. Do not substitute Claude/OpenClaw profile paths for work
 | Worker profile root          | `~/.hermes/profiles/<workerId>/`                                         |
 | Worker chat DB               | `~/.hermes/profiles/<workerId>/state.db`                                 |
 | Worker runtime state         | `~/.hermes/profiles/<workerId>/runtime.json`                             |
-| Worker memory root           | `~/.hermes/profiles/<workerId>/memory/`                                  |
-| Worker curated memory        | `~/.hermes/profiles/<workerId>/memory/MEMORY.md`                         |
-| Worker identity file         | `~/.hermes/profiles/<workerId>/memory/IDENTITY.md`                       |
-| Worker role/persona file     | `~/.hermes/profiles/<workerId>/memory/SOUL.md`                           |
-| Worker mission memory        | `~/.hermes/profiles/<workerId>/memory/missions/<missionId>/`             |
-| Worker mission summary       | `~/.hermes/profiles/<workerId>/memory/missions/<missionId>/SUMMARY.md`   |
-| Worker mission event log     | `~/.hermes/profiles/<workerId>/memory/missions/<missionId>/events.jsonl` |
-| Worker episodic logs         | `~/.hermes/profiles/<workerId>/memory/episodes/YYYY-MM-DD.md`            |
-| Worker session snapshots     | `~/.hermes/profiles/<workerId>/memory/session-snapshots/<missionId>.md`  |
+| Worker memories root (Hermes)| `~/.hermes/profiles/<workerId>/memories/`                                |
+| Worker curated memory        | `~/.hermes/profiles/<workerId>/memories/MEMORY.md`                       |
+| Worker user profile memory   | `~/.hermes/profiles/<workerId>/memories/USER.md`                         |
+| Worker persona (Hermes)      | `~/.hermes/profiles/<workerId>/SOUL.md`                                  |
+| Worker mission memory        | `~/.hermes/profiles/<workerId>/memories/missions/<missionId>/`           |
+| Worker mission summary       | `~/.hermes/profiles/<workerId>/memories/missions/<missionId>/SUMMARY.md` |
+| Worker mission event log     | `~/.hermes/profiles/<workerId>/memories/missions/<missionId>/events.jsonl` |
+| Worker episodic logs         | `~/.hermes/profiles/<workerId>/memories/episodes/YYYY-MM-DD.md`          |
+| Worker session snapshots     | `~/.hermes/profiles/<workerId>/memories/session-snapshots/<missionId>.md` |
 | Swarm control-plane runtime  | `/Users/aurora/hermes-workspace/.runtime/`                               |
 | Swarm mission ledger         | `/Users/aurora/hermes-workspace/.runtime/swarm-missions.json`            |
 | Swarm roster/source of truth | `/Users/aurora/hermes-workspace/swarm.yaml`                              |
@@ -54,7 +54,7 @@ Explicitly wrong paths:
 
 ### Worker-local memory
 
-Stored under `~/.hermes/profiles/<workerId>/memory/`.
+Stored under `~/.hermes/profiles/<workerId>/memories/`.
 
 Owned by the worker. Used for:
 
@@ -127,36 +127,17 @@ Initial template:
 - ...
 ```
 
-### `IDENTITY.md`
+### `SOUL.md` (profile root)
 
-Stable identity metadata.
-
-```markdown
-# IDENTITY.md — <workerId>
-
-- Name: <display name>
-- Worker ID: <workerId>
-- Role: <role>
-- Specialty: <specialty>
-- Model: <model>
-```
-
-### `SOUL.md`
-
-Role/persona instructions for the worker.
-
-Purpose:
-
-- role-specific behavior,
-- tone and decision style,
-- escalation rules,
-- quality bar.
+Hermes persona + worker identity (role, specialty, skills, capabilities).
+Synced from `agents.yaml` by `scripts/sync-swarm-profiles.mjs`.
+Durable `MEMORY.md` / `USER.md` live under `memories/` (Hermes); persona is profile-root `SOUL.md`.
 
 ### Mission memory
 
 Path:
 
-`~/.hermes/profiles/<workerId>/memory/missions/<missionId>/`
+`~/.hermes/profiles/<workerId>/memories/missions/<missionId>/`
 
 Files:
 
@@ -229,7 +210,7 @@ Event types:
 
 Path:
 
-`~/.hermes/profiles/<workerId>/memory/episodes/YYYY-MM-DD.md`
+`~/.hermes/profiles/<workerId>/memories/episodes/YYYY-MM-DD.md`
 
 Purpose:
 
@@ -255,7 +236,7 @@ Template:
 
 Worker-local session snapshot (for compaction / session renewal):
 
-`~/.hermes/profiles/<workerId>/memory/session-snapshots/<missionId>.md`
+`~/.hermes/profiles/<workerId>/memories/session-snapshots/<missionId>.md`
 
 Legacy path `memory/handoffs/` under the profile may still be read for backward compatibility but must not be used for new writes.
 
@@ -422,7 +403,7 @@ Memory framework adopts:
 
 Future `swarm-memory` skill should instruct workers to load:
 
-1. `IDENTITY.md`, `SOUL.md`, and `MEMORY.md`,
+1. `SOUL.md` and `MEMORY.md`,
 2. `runtime.json` to detect `currentMissionId`,
 3. active mission `SUMMARY.md`, if present,
 4. latest local/shared handoff for current mission, if present,
@@ -431,7 +412,7 @@ Future `swarm-memory` skill should instruct workers to load:
 Resume prompt should be compact:
 
 ```text
-Load your worker memory from ~/.hermes/profiles/<workerId>/memory/.
+Load durable memory from ~/.hermes/profiles/<workerId>/memories/ (MEMORY.md, USER.md).
 If runtime.json has currentMissionId, read that mission SUMMARY.md and latest handoff.
 Continue from the handoff's Next exact action.
 ```

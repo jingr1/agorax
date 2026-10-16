@@ -82,3 +82,7 @@ Matches Multica’s chooser, with runtime-copy renamed:
    (Hermes profile `skills/`, plus managed homes for Claude/Codex/Cursor/OpenCode/Kimi);
    skips platform-managed and already-catalogued rows
 
+## Future
+
+- **Managed 原生落盘（待开发）：** Claude/Codex 等改为物化到项目/会话级原生 skills 目录并由 runtime 自动发现，替代（或大幅收紧）prompt 注入。见 [`FUTURE-FEATURES.md`](../FUTURE-FEATURES.md) §9。
+

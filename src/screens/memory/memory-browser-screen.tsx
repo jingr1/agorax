@@ -513,7 +513,7 @@ export function MemoryBrowserScreen() {
                     ? 'projects/*/memory'
                     : selectedAgent?.memoryKind === 'codex'
                       ? 'memories (sqlite)'
-                      : 'memory/ · memories/ · projects/'}
+                      : 'memories/'}
                 </div>
                 {memoryUnsupported ? (
                   <div className="rounded-lg border border-primary-200 bg-primary-50/80 px-3 py-2 text-xs text-primary-400 dark:border-neutral-800 dark:bg-neutral-900/60 dark:text-neutral-500">

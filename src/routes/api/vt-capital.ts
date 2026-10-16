@@ -99,8 +99,8 @@ function listRecentNotes(): Array<{
 function readWorkerRuntime(workerId: string): JsonRecord {
   const profilePath = path.join(getProfilesDir(), workerId)
   const runtimePath = path.join(profilePath, 'runtime.json')
-  const memoryPath = path.join(profilePath, 'memory', 'MEMORY.md')
-  const identityPath = path.join(profilePath, 'memory', 'IDENTITY.md')
+  const memoryPath = path.join(profilePath, 'memories', 'MEMORY.md')
+  const soulPath = path.join(profilePath, 'SOUL.md')
   let runtime: JsonRecord = {}
   try {
     runtime = fs.existsSync(runtimePath)
@@ -119,7 +119,7 @@ function readWorkerRuntime(workerId: string): JsonRecord {
     lastSummary:
       typeof runtime.lastSummary === 'string' ? runtime.lastSummary : null,
     memoryExists: fs.existsSync(memoryPath),
-    identityExists: fs.existsSync(identityPath),
+    identityExists: fs.existsSync(soulPath),
     runtimeExists: fs.existsSync(runtimePath),
   }
 }

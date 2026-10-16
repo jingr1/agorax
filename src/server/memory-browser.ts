@@ -46,8 +46,9 @@ const AGENT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i
 
 function isHermesBrowserMemoryPath(relativePath: string): boolean {
   return (
+    relativePath === 'SOUL.md' ||
     relativePath === 'MEMORY.md' ||
-    relativePath.startsWith('memory/') ||
+    relativePath === 'USER.md' ||
     relativePath.startsWith('memories/')
   )
 }
@@ -154,16 +155,24 @@ function walkWorkspaceDir(
 
 function compareMemoryFiles(a: MemoryFileMeta, b: MemoryFileMeta): number {
   const rank = (p: string) => {
-    if (p === 'MEMORY.md' || p === 'CLAUDE.md' || p === 'AGENTS.md') return 0
-    if (p.startsWith('memory/') || p.startsWith('memories/')) return 1
-    if (p.startsWith('projects/')) return 2
-    return 3
+    if (p === 'SOUL.md') return 0
+    if (
+      p === 'MEMORY.md' ||
+      p === 'USER.md' ||
+      p === 'CLAUDE.md' ||
+      p === 'AGENTS.md'
+    )
+      return 1
+    if (p === 'memories/MEMORY.md' || p === 'memories/USER.md') return 2
+    if (p.startsWith('memories/')) return 3
+    if (p.startsWith('projects/')) return 4
+    return 5
   }
   const rankDiff = rank(a.path) - rank(b.path)
   if (rankDiff !== 0) return rankDiff
 
-  const aIsDaily = /^memories?\/\d{4}-\d{2}-\d{2}\.md$/.test(a.path)
-  const bIsDaily = /^memories?\/\d{4}-\d{2}-\d{2}\.md$/.test(b.path)
+  const aIsDaily = /^memories\/\d{4}-\d{2}-\d{2}\.md$/.test(a.path)
+  const bIsDaily = /^memories\/\d{4}-\d{2}-\d{2}\.md$/.test(b.path)
   if (aIsDaily && bIsDaily) return b.path.localeCompare(a.path)
 
   const modifiedDiff = Date.parse(b.modified) - Date.parse(a.modified)
@@ -176,14 +185,14 @@ function listHermesMemoryFilesInRoot(
 ): Array<MemoryFileMeta> {
   const results: Array<MemoryFileMeta> = []
 
-  pushIfMarkdownFile(
+  for (const name of ['SOUL.md', 'MEMORY.md', 'USER.md']) {
+    pushIfMarkdownFile(results, workspaceRoot, path.join(workspaceRoot, name))
+  }
+  walkWorkspaceDir(
     results,
     workspaceRoot,
-    path.join(workspaceRoot, 'MEMORY.md'),
+    path.join(workspaceRoot, 'memories'),
   )
-  for (const subdir of ['memory', 'memories']) {
-    walkWorkspaceDir(results, workspaceRoot, path.join(workspaceRoot, subdir))
-  }
 
   results.sort(compareMemoryFiles)
   return results

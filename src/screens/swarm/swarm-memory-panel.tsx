@@ -72,10 +72,9 @@ export function SwarmMemoryPanel({
       '',
     [profileQuery.data],
   )
-  const identity = useMemo(
+  const soul = useMemo(
     () =>
-      profileQuery.data?.files.find((f) => f.name === 'IDENTITY.md')?.content ??
-      '',
+      profileQuery.data?.files.find((f) => f.name === 'SOUL.md')?.content ?? '',
     [profileQuery.data],
   )
 
@@ -118,16 +117,16 @@ export function SwarmMemoryPanel({
         </span>
       </header>
 
-      {identity ? (
+      {soul ? (
         <details
           className="mb-1.5 text-[11px] text-[var(--theme-muted-2)]"
           open
         >
           <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--theme-muted)]/85">
-            Identity
+            SOUL.md
           </summary>
           <pre className="mt-1 max-h-[6rem] overflow-y-auto whitespace-pre-wrap break-words font-sans text-[11px] leading-snug">
-            {tail(identity, 600)}
+            {tail(soul, 600)}
           </pre>
         </details>
       ) : null}

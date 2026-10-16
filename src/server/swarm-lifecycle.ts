@@ -585,7 +585,7 @@ export async function renewWorker(workerId: string): Promise<{
     }
   // Wait for shell prompt to appear before sending the resume message.
   await new Promise((resolve) => setTimeout(resolve, 1500))
-  const resumePrompt = `RESUME_AFTER_HANDOFF. Read your latest shared handoff at ${hp} and the local session snapshot under ~/.hermes/profiles/${workerId}/memory/session-snapshots/, plus your runtime.json, then continue from "Next exact action". Reply with a fresh checkpoint when you have re-grounded.`
+  const resumePrompt = `RESUME_AFTER_HANDOFF. Read your latest shared handoff at ${hp} and the local session snapshot under ~/.hermes/profiles/${workerId}/memories/session-snapshots/, plus your runtime.json, then continue from "Next exact action". Reply with a fresh checkpoint when you have re-grounded.`
   const sent = await sendToWorker(workerId, resumePrompt)
   const ctx = readRuntimeMissionContext(workerId)
   try {

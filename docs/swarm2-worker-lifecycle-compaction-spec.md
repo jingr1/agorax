@@ -57,7 +57,7 @@ Durable handoff path (shared, cross-worker):
 Worker-local session snapshot (same renewal, profile copy):
 
 ```text
-~/.hermes/profiles/<workerId>/memory/session-snapshots/latest.md
+~/.hermes/profiles/<workerId>/memories/session-snapshots/latest.md
 ```
 
 Optional timestamped archive can exist later, but `latest.md` is the resume source.

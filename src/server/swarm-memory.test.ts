@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -38,13 +38,14 @@ describe('swarm-memory module', () => {
       model: 'GPT-5',
     })
     const root = mod.swarmWorkerMemoryRoot('swarmtest1')
-    expect(root.endsWith('profiles/swarmtest1/memory')).toBe(true)
+    expect(root.endsWith('profiles/swarmtest1/memories')).toBe(true)
     expect(root.startsWith(tempHome)).toBe(true)
-    expect(readFileSync(join(root, 'IDENTITY.md'), 'utf8')).toMatch(
-      /Worker ID: swarmtest1/,
+    expect(existsSync(join(root, 'IDENTITY.md'))).toBe(false)
+    expect(existsSync(join(root, 'missions'))).toBe(true)
+    expect(existsSync(join(root, 'episodes'))).toBe(true)
+    expect(existsSync(join(tempHome, 'profiles', 'swarmtest1', 'memory'))).toBe(
+      false,
     )
-    expect(readFileSync(join(root, 'MEMORY.md'), 'utf8')).toMatch(/swarmtest1/)
-    expect(readFileSync(join(root, 'SOUL.md'), 'utf8')).toMatch(/swarmtest1/)
   })
 
   it('appends mission and episodic memory events', async () => {

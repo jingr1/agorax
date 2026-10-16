@@ -94,10 +94,10 @@ agents.yaml                   ~/.hermes/profiles/<id>/           ~/.local/bin/
   runtime / role / tools       model + toolsets (profile 默认)       hermes -p <profile>
   tools: [...]                 toolsets: [...]
   skills: [...]                skills/<skill>/SKILL.md
-  mission / role               SOUL.md + memory/IDENTITY.md
+  mission / role               SOUL.md
 ```
 
-默认情况下 dispatch / tmux-start 不注入模型参数，Hermes 使用 profile 默认模型；只有 `agents.yaml` 或任务请求显式提供 model 时才通过 `swarm-runtime-model` 覆盖。toolsets、SOUL、IDENTITY、agent skills 由 `sync-swarm-profiles.mjs` 同步。
+默认情况下 dispatch / tmux-start 不注入模型参数，Hermes 使用 profile 默认模型；只有 `agents.yaml` 或任务请求显式提供 model 时才通过 `swarm-runtime-model` 覆盖。toolsets、SOUL、agent skills 由 `sync-swarm-profiles.mjs` 同步。
 
 ### 一键同步
 
@@ -106,7 +106,7 @@ agents.yaml                   ~/.hermes/profiles/<id>/           ~/.local/bin/
 ```bash
 cd ~/hermes-workspace
 
-# 1. 同步 config.yaml（toolsets）、SOUL.md、memory/IDENTITY.md、skills/swarm/ 下的角色技能
+# 1. 同步 config.yaml（toolsets）、SOUL.md、skills/swarm/ 下的角色技能
 #    以及 ~/.local/bin/<wrapper> 启动脚本（缺 wrapper 时 LangGraph 会卡在 ensure_sessions）
 #    注意：脚本不覆盖 config.yaml 的 model — 默认模型由 profile 管理
 node scripts/sync-swarm-profiles.mjs
@@ -121,8 +121,7 @@ bash scripts/sync-autoresearch-skills.sh
 | --------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------- |
 | `config.yaml` → `toolsets`                    | `tools`                                      | **learning** 为合并（union），保留原有 `hermes-cli` 等                    |
 | `config.yaml` → `kanban.orchestrator_profile` | orchestrator 固定为 `orchestrator`           |                                                                           |
-| `SOUL.md`                                     | `name`, `role`, `mission`, …                 | **learning** 原样复制 `agents/learning/SOUL.md`（教学 + 复盘写在同一文件） |
-| `memory/IDENTITY.md`                          | 同上 + `skills`, `capabilities`              | learning 额外标注 tutor + retrospective 双模式                            |
+| `SOUL.md`                                     | `name`, `role`, `mission`, `skills`, …       | **learning** 原样复制 `agents/learning/SOUL.md`（教学 + 复盘写在同一文件） |
 | `skills/<skill>/`                             | `skills` 列表中存在于 `skills/swarm/` 的条目 |                                                                           |
 
 Hub / bundled 技能（`gstack-for-hermes`、`llm-wiki`、`obsidian` 等）不在 `skills/swarm/`，由 Hermes profile skills hub 提供，脚本会跳过。
