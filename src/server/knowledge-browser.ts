@@ -4,6 +4,7 @@ import path from 'node:path'
 import YAML from 'yaml'
 import {
   readKnowledgeBaseConfig,
+  resolveDefaultWikiRoot,
   type KnowledgeBaseSource,
 } from './knowledge-config'
 
@@ -125,13 +126,15 @@ function extractWikilinks(content: string): Array<string> {
 // ─── Legacy env-var fallback ──────────────────────────────────────────────────
 
 function getLegacyKnowledgeRoot(): string {
-  if (process.env.KNOWLEDGE_DIR) return path.resolve(process.env.KNOWLEDGE_DIR)
-  const claudeHome = path.join(os.homedir(), '.claude')
-  const claudeKnowledge = path.join(claudeHome, 'knowledge')
+  // Prefer configured wiki default (`WIKI_PATH` / `~/wiki`).
+  // Keep existing Claude / home layout as discover-only fallbacks.
+  const preferred = resolveDefaultWikiRoot()
+  if (fs.existsSync(preferred)) return preferred
+  const claudeKnowledge = path.join(os.homedir(), '.claude', 'knowledge')
   if (fs.existsSync(claudeKnowledge)) return claudeKnowledge
   const homeKnowledge = path.join(os.homedir(), 'knowledge', 'wiki')
   if (fs.existsSync(homeKnowledge)) return homeKnowledge
-  return claudeKnowledge
+  return preferred
 }
 
 // ─── GitHub Knowledge Provider ─────────────────────────────────────────────────

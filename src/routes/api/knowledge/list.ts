@@ -5,7 +5,10 @@ import {
   knowledgeRootExists,
   listKnowledgePages,
 } from '../../../server/knowledge-browser'
-import { readKnowledgeBaseConfig } from '../../../server/knowledge-config'
+import {
+  getKnowledgeRootDisplayPath,
+  readKnowledgeBaseConfig,
+} from '../../../server/knowledge-config'
 
 export const Route = createFileRoute('/api/knowledge/list')({
   server: {
@@ -23,6 +26,7 @@ export const Route = createFileRoute('/api/knowledge/list')({
             pages: exists ? listKnowledgePages() : [],
             exists,
             source,
+            knowledgeRoot: getKnowledgeRootDisplayPath(),
           })
         } catch (error) {
           return json(

@@ -422,7 +422,7 @@ Example port map (adjust as needed):
 | developer             | `8644` |
 
 
-Disable the pool with `HERMES_GATEWAY_POOL=0` (remote `HERMES_API_URL` already disables it). Multiplex (`gateway.multiplex_profiles: true` on a shared listener) remains an alternative; see Hermes Agent docs.
+Disable the pool with `HERMES_GATEWAY_POOL=0` (remote `HERMES_API_URL` already disables it). When Hermes multiplex is live (`gateway.multiplex_profiles` / `gateway_state.served_profiles`), Agorax routes named profiles to `http://127.0.0.1:8642/p/<profile>` and only ensures the default host gateway — it does not spawn per-profile ports. With multiplex off, the pool still uses 8643+.
 
 ### Live re-pairing (no restart)
 

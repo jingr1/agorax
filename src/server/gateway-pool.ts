@@ -39,6 +39,13 @@ import {
   shouldApplyGatewayRoute,
   touchGatewayLease,
 } from './gateway-lifecycle'
+import {
+  isMultiplexProfileHealthy,
+  isProfileMultiplexServed,
+  multiplexProfileGatewayUrl,
+  readLiveMultiplexGateway,
+  shouldUseMultiplexGatewayPath,
+} from './hermes-multiplex'
 
 export {
   GATEWAY_BASE_PORT,
@@ -172,13 +179,27 @@ async function vacateForeignOccupant(
 export async function probeProfileGateway(
   profileName: string,
 ): Promise<boolean> {
-  const port = resolveProfileGatewayPort(profileName)
   const name = (profileName || 'default').trim() || 'default'
+  const live = readLiveMultiplexGateway()
+  if (live && (name === PINNED_GATEWAY_PROFILE || isProfileMultiplexServed(name))) {
+    return profileOwnsPort(PINNED_GATEWAY_PROFILE, live.port)
+  }
+  const port = resolveProfileGatewayPort(name)
   return profileOwnsPort(name, port)
 }
 
 export function getGatewayPoolSnapshot(): Array<PooledGateway> {
+  const live = readLiveMultiplexGateway()
   return listManagedProfileNames().map((profile) => {
+    if (live && (profile === PINNED_GATEWAY_PROFILE || live.servedProfiles.includes(profile))) {
+      return {
+        profile,
+        port: live.port,
+        url: multiplexProfileGatewayUrl(profile, live.port),
+        hermesHome: resolveProfileHermesHome(profile),
+        state: 'stopped' as GatewayPoolState,
+      }
+    }
     const port = resolveProfileGatewayPort(profile)
     return {
       profile,
@@ -192,7 +213,14 @@ export function getGatewayPoolSnapshot(): Array<PooledGateway> {
 
 export async function getGatewayPoolStatus(): Promise<Array<PooledGateway>> {
   const snapshot = getGatewayPoolSnapshot()
+  const live = readLiveMultiplexGateway()
   for (const entry of snapshot) {
+    if (live && (entry.profile === PINNED_GATEWAY_PROFILE || isProfileMultiplexServed(entry.profile))) {
+      entry.state = profileOwnsPort(PINNED_GATEWAY_PROFILE, live.port)
+        ? 'healthy'
+        : 'stopped'
+      continue
+    }
     entry.state = profileOwnsPort(entry.profile, entry.port)
       ? 'healthy'
       : 'stopped'
@@ -215,6 +243,66 @@ async function applyRouteIfActive(
   await applyRoute(url)
 }
 
+async function ensureMultiplexProfileGateway(
+  name: string,
+  options: { forceReplace?: boolean } = {},
+): Promise<EnsureGatewayResult> {
+  const hermesHome = resolveProfileHermesHome(name)
+  const host = await ensureProfileGatewayLocked(PINNED_GATEWAY_PROFILE, options)
+  const hostPort =
+    host.port ??
+    readLiveMultiplexGateway()?.port ??
+    resolveProfileGatewayPort(PINNED_GATEWAY_PROFILE)
+  const url = multiplexProfileGatewayUrl(name, hostPort)
+
+  if (!host.ok) {
+    return {
+      ok: false,
+      error:
+        ('error' in host && host.error) ||
+        `multiplex host gateway (default) unavailable for ${name}`,
+      profile: name,
+      hermesHome,
+      port: hostPort,
+      url,
+      started: false,
+    }
+  }
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (
+      (isProfileMultiplexServed(name) || attempt > 0) &&
+      (await isMultiplexProfileHealthy(name, 200))
+    ) {
+      await applyRouteIfActive(name, url)
+      touchGatewayLease(name)
+      touchGatewayLease(PINNED_GATEWAY_PROFILE)
+      return {
+        ok: true,
+        message: isProfileMultiplexServed(name)
+          ? 'multiplex'
+          : 'multiplex (health)',
+        profile: name,
+        hermesHome,
+        port: hostPort,
+        url,
+        started: Boolean(host.started),
+      }
+    }
+    await new Promise((resolveAttempt) => setTimeout(resolveAttempt, 100))
+  }
+
+  return {
+    ok: false,
+    error: `gateway for ${name} did not become healthy on :${hostPort}/p/${name}`,
+    profile: name,
+    hermesHome,
+    port: hostPort,
+    url,
+    started: false,
+  }
+}
+
 async function ensureProfileGatewayLocked(
   profileName: string,
   options: { forceReplace?: boolean } = {},
@@ -232,6 +320,9 @@ async function ensureProfileGatewayLocked(
         url: gatewayUrlForPort(resolveProfileGatewayPort(name)),
         started: false,
       }
+    }
+    if (shouldUseMultiplexGatewayPath(name)) {
+      return ensureMultiplexProfileGateway(name, options)
     }
   }
   const port = resolveProfileGatewayPort(name)

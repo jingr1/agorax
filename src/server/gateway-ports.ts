@@ -13,6 +13,11 @@ import {
 } from './profiles-browser'
 import { ensureSwarmProfileConfig } from './swarm-profile-config'
 import { getStateDir } from './workspace-state-dir'
+import {
+  isProfileMultiplexServed,
+  multiplexProfileGatewayUrl,
+  readLiveMultiplexGateway,
+} from './hermes-multiplex'
 
 export const GATEWAY_BASE_PORT = 8642
 /** Always-resident profile. Kept here to avoid gateway-pool ↔ lifecycle cycles. */
@@ -464,7 +469,11 @@ export function resolveProfileGatewayPort(profileName: string): number {
 }
 
 export function getProfileGatewayUrl(profileName: string): string {
-  return gatewayUrlForPort(resolveProfileGatewayPort(profileName))
+  const name = (profileName || 'default').trim() || 'default'
+  if (isProfileMultiplexServed(name) || readLiveMultiplexGateway()) {
+    return multiplexProfileGatewayUrl(name)
+  }
+  return gatewayUrlForPort(resolveProfileGatewayPort(name))
 }
 
 export function profileNameFromHermesHome(hermesHome: string): string | null {

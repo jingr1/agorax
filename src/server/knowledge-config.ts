@@ -11,12 +11,45 @@ export type KnowledgeBaseConfig = {
   source: KnowledgeBaseSource
 }
 
+/** Display / config default — aligned with llm-wiki `WIKI_PATH` (AGENTS.md). */
+export const DEFAULT_WIKI_PATH = '~/wiki'
+
 const DEFAULT_CONFIG: KnowledgeBaseConfig = {
-  source: { type: 'local', path: '' },
+  source: { type: 'local', path: DEFAULT_WIKI_PATH },
+}
+
+/** Resolve the default local wiki root (`WIKI_PATH` → `KNOWLEDGE_DIR` → `~/wiki`). */
+export function resolveDefaultWikiRoot(): string {
+  const fromEnv = process.env.WIKI_PATH?.trim() || process.env.KNOWLEDGE_DIR?.trim()
+  if (fromEnv) {
+    return path.resolve(fromEnv.replace(/^~\//, `${os.homedir()}/`))
+  }
+  return path.join(os.homedir(), 'wiki')
+}
+
+/** User-facing path label for empty states / settings. */
+export function getKnowledgeRootDisplayPath(): string {
+  const config = readKnowledgeBaseConfig()
+  if (config.source.type === 'github') {
+    const sub = config.source.path?.trim()
+    return sub
+      ? `${config.source.repo}/${sub}@${config.source.branch || 'main'}`
+      : `${config.source.repo}@${config.source.branch || 'main'}`
+  }
+  const p = config.source.path.trim()
+  if (p) return p
+  return process.env.WIKI_PATH?.trim() || process.env.KNOWLEDGE_DIR?.trim() || DEFAULT_WIKI_PATH
 }
 
 function getConfigPath(): string {
   return path.join(getStateDir(), 'knowledge-config.json')
+}
+
+function normalizeSource(source: KnowledgeBaseSource): KnowledgeBaseSource {
+  if (source.type === 'local' && !source.path.trim()) {
+    return { type: 'local', path: DEFAULT_WIKI_PATH }
+  }
+  return source
 }
 
 export function readKnowledgeBaseConfig(): KnowledgeBaseConfig {
@@ -26,7 +59,7 @@ export function readKnowledgeBaseConfig(): KnowledgeBaseConfig {
       const raw = fs.readFileSync(configPath, 'utf-8')
       const parsed = JSON.parse(raw) as Partial<KnowledgeBaseConfig>
       return {
-        source: parsed.source ?? DEFAULT_CONFIG.source,
+        source: normalizeSource(parsed.source ?? DEFAULT_CONFIG.source),
       }
     }
   } catch {
@@ -48,11 +81,7 @@ export function getKnowledgeBaseEffectiveRoot(): string {
   const config = readKnowledgeBaseConfig()
   if (config.source.type === 'local') {
     const p = config.source.path.trim()
-    if (p) return path.resolve(p.replace(/^~\//, os.homedir() + '/'))
+    if (p) return path.resolve(p.replace(/^~\//, `${os.homedir()}/`))
   }
-  // fallback: legacy env var or default
-  if (process.env.KNOWLEDGE_DIR) return path.resolve(process.env.KNOWLEDGE_DIR)
-  const claudeKnowledge = path.join(os.homedir(), '.claude', 'knowledge')
-  if (fs.existsSync(claudeKnowledge)) return claudeKnowledge
-  return claudeKnowledge
+  return resolveDefaultWikiRoot()
 }
