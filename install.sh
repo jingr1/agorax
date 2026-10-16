@@ -33,10 +33,9 @@ need() { command -v "$1" &>/dev/null || { red "Missing: $1"; red "$2"; exit 1; }
 banner() {
   cat <<'EOF'
 
-   ╭────────────────────────────────────────────╮
-   │  Agorax — zero-fork installer   │
-  │  Agorax                                     │
-   ╰────────────────────────────────────────────╯
+   ╭──────────────────────────────────────────╮
+   │  Agorax —  installer                     │
+   ╰──────────────────────────────────────────╯
 
 EOF
 }
@@ -116,14 +115,29 @@ green "  git $(git --version | awk '{print $3}') ✓"
 need curl "Install curl (usually: apt install curl / brew install curl)"
 green "  curl ✓"
 
+# Do NOT run `corepack enable` here: with system Node it tries to symlink
+# into /usr/bin and fails with EACCES for non-root. Installer must stay
+# sudo-free. Prefer a real `pnpm` on PATH via a user-writable npm prefix;
+# fall back to `corepack pnpm` (see pnpm_cmd).
 if ! command -v pnpm &>/dev/null; then
-  yellow "  pnpm not found — installing via corepack…"
+  yellow "  pnpm not found — installing (user-local, no sudo)…"
   if command -v corepack &>/dev/null; then
-    corepack enable 2>/dev/null || true
-    corepack prepare pnpm@latest --activate 2>/dev/null || true
+    corepack prepare pnpm@latest --activate >/dev/null 2>&1 || true
+  fi
+  if ! command -v pnpm &>/dev/null; then
+    node_bindir="$(dirname "$(command -v node)")"
+    if [[ -w "$node_bindir" ]]; then
+      npm install -g pnpm
+    else
+      mkdir -p "$HOME/.local/bin"
+      npm install -g --prefix "$HOME/.local" pnpm
+      ensure_path "$HOME/.local/bin"
+    fi
   fi
   if ! command -v pnpm &>/dev/null && ! (command -v corepack &>/dev/null && corepack pnpm --version &>/dev/null); then
-    npm install -g pnpm
+    red "Could not install pnpm without sudo."
+    red "Install manually: https://pnpm.io/installation"
+    exit 1
   fi
 fi
 green "  pnpm $(pnpm_cmd --version) ✓"
@@ -154,7 +168,7 @@ else
   if ! command -v hermes &>/dev/null; then
     red "  hermes-agent installed, but 'hermes' is not on PATH in this shell."
     yellow "  Open a new shell (or: source ~/.bashrc / ~/.zshrc) and re-run:"
-    yellow "    curl -fsSL https://hermes-workspace.com/install.sh | bash"
+    yellow "    curl -fsSL https://raw.githubusercontent.com/jingr1/agorax/main/install.sh | bash"
     exit 1
   fi
   green "  hermes-agent installed ✓ ($(command -v hermes))"
@@ -162,7 +176,7 @@ fi
 
 # ─── clone workspace ──────────────────────────────────────────────────────
 
-cyan "→ Cloning hermes-workspace…"
+cyan "→ Cloning Agorax…"
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   yellow "  $INSTALL_DIR exists; pulling latest"
   git -C "$INSTALL_DIR" pull --ff-only
@@ -174,7 +188,7 @@ else
   git clone "$REPO_URL" "$INSTALL_DIR"
 fi
 cd "$INSTALL_DIR"
-green "  Workspace ready at $INSTALL_DIR ✓"
+green "  Agorax ready at $INSTALL_DIR ✓"
 
 # ─── env + install ────────────────────────────────────────────────────────
 
