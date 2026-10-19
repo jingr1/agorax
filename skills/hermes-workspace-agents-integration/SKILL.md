@@ -257,7 +257,7 @@ Agents 列表继续用 `GET /api/agents`；详情用 `GET /api/agents/:id/capabi
 - **Codex 认证 env：** daemon 启动 Codex 时按 `~/.codex/config.toml` 的 `env_key` 注入凭证；Settings / `codex-settings.ts` 只维护 TOML，不在 Workspace 进程内 spawn Codex。
 - **Codex 配置 patch 要避免 duplicate key：** 原文件 block 缺失 `env_key`/`requires_openai_auth` 时，不能往文件末尾追加，必须紧跟对应 table header 插入到 block 内部。
 - **Codex 切换 provider 时清理旧 block：** 从 catalog provider 切回 `openai` 时，要把旧 catalog block 的 `env_key` 注释掉，否则 Codex 仍可能用旧 gateway 认证。
-- **Chat 品牌动态化：** `ChatComposer` / `AgentChatFrame` 不要写死 "Claude Code"，通过 `runtimeLabel` / `runtimeConfigHint` props 由 `ManagedAgentChatView` 按 agent runtime/brand 传入，并同步切换头像（`ClaudeCodeMark` / `CodexMark`）。
+- **Chat 品牌动态化：** `ChatComposer` / `AgentChatFrame` 不要写死 "Claude Code"，通过 `runtimeLabel` / `runtimeConfigHint` props 由 `ManagedAgentChatView` 按 agent runtime/brand 传入；头像用 `AssistantAvatarProvider` + `resolveAgentAvatarSrc`（Agent Identity，`public/agent-avatars/*-rounded.png`）。
 - **本地环境检查 agentId 一致：** `agents.yaml`、`local-env-check.ts`、`agent-env-action.ts` 中的 `agentId` 必须一一对应，否则 env-check 会返回 "Unsupported agent"。
 - **动态路由与静态路径并存：** `env-check` / `env-action` 使用 `src/routes/api/agents/$agentId/*`，对所有 managed agent 通用；专属路由（如 `codex-impl/config` 、`codex-impl/models`）仍然保留静态目录。
 - **sudo 密码仅用于本机提权：** 传输过程中不做加密，如需更高安全等级别请改用 keyring / pkexec / sudo -A。

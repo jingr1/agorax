@@ -3,8 +3,8 @@
  */
 import { useMemo } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
+import { AgentIdentityAvatar } from '@/components/avatars'
 import { assignPersona } from '@/lib/agent-personas'
-import { PERSONA_COLORS } from './pixel-avatar'
 import type { SwarmSession } from '@/stores/agent-swarm-store'
 import { cn } from '@/lib/utils'
 import { getSwarmSessionDisplayName } from './session-display-name'
@@ -58,14 +58,19 @@ const statusDotColor: Record<string, string> = {
   idle: 'bg-slate-400',
 }
 
-function AgentRosterItem({ session }: { session: SwarmSession }) {
+function AgentRosterItem({
+  session,
+  hermesSiblingCount,
+}: {
+  session: SwarmSession
+  hermesSiblingCount: number
+}) {
   const key = session.key ?? session.friendlyId ?? ''
   const persona = assignPersona(
     key,
     session.task ?? session.initialMessage ?? session.label ?? '',
   )
   const displayName = getSwarmSessionDisplayName(session)
-  const colors = PERSONA_COLORS[persona.name]
   const tokens =
     session.usage?.totalTokens ?? session.totalTokens ?? session.tokenCount ?? 0
   const isActive =
@@ -79,15 +84,13 @@ function AgentRosterItem({ session }: { session: SwarmSession }) {
       exit={{ opacity: 0, x: -10 }}
       className="flex items-center gap-2.5 rounded-lg bg-slate-800/40 px-3 py-2 border border-slate-700/30"
     >
-      {/* Color dot avatar */}
-      <div
-        className="flex size-8 shrink-0 items-center justify-center rounded-full text-sm"
-        style={{
-          backgroundColor: colors?.body ? `${colors.body}30` : '#6b728030',
-        }}
-      >
-        {persona.emoji}
-      </div>
+      <AgentIdentityAvatar
+        name={displayName}
+        runtime="hermes"
+        providerSiblingCount={Math.max(2, hermesSiblingCount)}
+        size={32}
+        className={isActive ? 'thinking-avatar-glow' : undefined}
+      />
 
       {/* Info */}
       <div className="min-w-0 flex-1">
@@ -227,6 +230,7 @@ export function ActivityPanel({ sessions, className }: ActivityPanelProps) {
               <AgentRosterItem
                 key={session.key ?? session.friendlyId}
                 session={session}
+                hermesSiblingCount={sessions.length}
               />
             ))}
           </AnimatePresence>

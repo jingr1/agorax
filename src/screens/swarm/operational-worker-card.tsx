@@ -11,7 +11,7 @@ import {
   Settings01Icon,
 } from '@hugeicons/core-free-icons'
 import { AgentProgress } from '@/components/agent-view/agent-progress'
-import { PixelAvatar } from '@/components/agent-swarm/pixel-avatar'
+import { AgentIdentityAvatar } from '@/components/avatars'
 import { useQuery } from '@tanstack/react-query'
 import {
   SwarmArtifacts,
@@ -33,17 +33,6 @@ type WorkerState =
   | 'writing'
   | 'reviewing'
   | 'waiting'
-
-const WORKER_COLORS = [
-  '#34d399',
-  '#60a5fa',
-  '#a78bfa',
-  '#f59e0b',
-  '#fb7185',
-  '#22d3ee',
-  '#84cc16',
-  '#f472b6',
-]
 
 function roleFromId(id: string): string {
   const m = id.match(/(\d+)/)
@@ -200,14 +189,6 @@ async function fetchWorkerProject(
   )
   if (!res.ok) return {}
   return (await res.json()) as WorkerProjectSnapshot
-}
-
-function colorForWorker(workerId: string) {
-  const number = parseInt(workerId.replace(/\D/g, ''), 10)
-  if (Number.isFinite(number) && number > 0) {
-    return WORKER_COLORS[(number - 1) % WORKER_COLORS.length]
-  }
-  return WORKER_COLORS[0]
 }
 
 type WorkerCardSettings = {
@@ -508,11 +489,16 @@ export function OperationalWorkerCard({
                 className={status.ring}
               />
               <div className="absolute inset-0 flex items-center justify-center">
-                <PixelAvatar
+                <AgentIdentityAvatar
+                  name={displayName}
+                  runtime="hermes"
+                  providerSiblingCount={6}
                   size={36}
-                  color={colorForWorker(member.id)}
-                  accentColor="#ffffff"
-                  status={status.avatar}
+                  className={
+                    status.avatar === 'thinking' || status.avatar === 'running'
+                      ? 'thinking-avatar-glow'
+                      : undefined
+                  }
                 />
               </div>
             </div>

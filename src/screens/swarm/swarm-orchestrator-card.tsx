@@ -10,7 +10,7 @@ import {
   ViewIcon,
 } from '@hugeicons/core-free-icons'
 import { AgentProgress } from '@/components/agent-view/agent-progress'
-import { PixelAvatar } from '@/components/agent-swarm/pixel-avatar'
+import { AgentIdentityAvatar } from '@/components/avatars'
 import { Button } from '@/components/ui/button'
 import {
   RouterChat,
@@ -285,11 +285,12 @@ export function SwarmOrchestratorCard({
               className="text-emerald-500"
             />
             <div className="absolute inset-0 flex items-center justify-center">
-              <PixelAvatar
+              <AgentIdentityAvatar
+                name={name}
+                runtime="hermes"
+                providerSiblingCount={Math.max(2, totalWorkers)}
                 size={42}
-                color="#f59e0b"
-                accentColor="#fbbf24"
-                status={isActive ? 'running' : 'idle'}
+                className={isActive ? 'thinking-avatar-glow' : undefined}
               />
             </div>
           </div>
@@ -457,29 +458,14 @@ export function SwarmOrchestratorCard({
                     >
                       <div className="flex items-start gap-2.5">
                         <div className="relative shrink-0">
-                          <PixelAvatar
+                          <AgentIdentityAvatar
+                            name={agent.workerName}
+                            runtime="hermes"
+                            providerSiblingCount={Math.max(
+                              2,
+                              members.length || totalWorkers,
+                            )}
                             size={30}
-                            color={
-                              isBlocked
-                                ? '#ef4444'
-                                : isReview
-                                  ? '#f59e0b'
-                                  : '#34d399'
-                            }
-                            accentColor={
-                              isBlocked
-                                ? '#fecaca'
-                                : isReview
-                                  ? '#fde68a'
-                                  : '#bbf7d0'
-                            }
-                            status={
-                              isBlocked
-                                ? 'failed'
-                                : isReview
-                                  ? 'thinking'
-                                  : 'running'
-                            }
                           />
                           <span
                             className={cn(

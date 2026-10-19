@@ -114,7 +114,7 @@ Operations 页面
 
 | 元素   | 字段                                           | 空状态           |
 | ------ | ---------------------------------------------- | ---------------- |
-| Avatar | `meta.emoji` + `meta.color` 生成的 PixelAvatar | 默认 🤖          |
+| Avatar | Agent Identity（`AgentIdentityAvatar` + runtime 底图） | Hermes 默认图 + 双字母 |
 | 名称   | `agent.name`                                   | "Unnamed agent"  |
 | 描述   | `meta.description` 或 `agent.description`      | "No description" |
 
@@ -421,7 +421,7 @@ Toolsets
 
 ### 10.2 可复用现有组件
 
-- `PixelAvatar`：agent 头像。
+- `AgentIdentityAvatar`：agent 头像（`public/agent-avatars/*-rounded.png`）。
 - `AgentProgress`：进度环（保留但需要更真实的进度数据）。
 - `Markdown`：chat 消息渲染。
 - `ModelSelector`：已存在于 `operations-new-agent-modal.tsx` 和 `operations-agent-detail.tsx`，抽象成通用组件。

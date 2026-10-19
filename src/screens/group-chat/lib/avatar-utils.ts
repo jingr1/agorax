@@ -1,4 +1,3 @@
-import { PERSONA_COLORS } from '@/components/agent-swarm/pixel-avatar'
 import { normalizeAgentAvatarProvider } from '@/lib/agent-avatar'
 import type { RoomParticipant } from '@/lib/group-chat-types'
 
@@ -48,17 +47,13 @@ function hashString(str: string): number {
   return Math.abs(hash)
 }
 
-export function getMemberColor(id: string, name: string): string {
-  const persona = PERSONA_COLORS[name]
-  if (persona) return persona.body
+/** Stable accent color for room tiles / human labels (not agent Identity art). */
+export function getMemberColor(id: string, _name: string): string {
   return PRESET_COLORS[hashString(id) % PRESET_COLORS.length]!
 }
 
 export function getMemberAccent(id: string, name: string): string {
-  const persona = PERSONA_COLORS[name]
-  if (persona) return persona.accent
-  const body = getMemberColor(id, name)
-  return lighten(body, 40)
+  return lighten(getMemberColor(id, name), 40)
 }
 
 function lighten(hex: string, amount: number): string {

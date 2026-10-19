@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { AgentProgress } from '@/components/agent-view/agent-progress'
-import { PixelAvatar } from '@/components/agent-swarm/pixel-avatar'
+import { AgentIdentityAvatar } from '@/components/avatars'
 import { cn } from '@/lib/utils'
 
 type ReportState =
@@ -454,23 +454,6 @@ function statePriority(state: Exclude<ReportState, 'all'>): number {
     case 'in_progress':
       return 4
   }
-}
-
-function colorForWorker(workerId: string): string {
-  const palette = [
-    '#34d399',
-    '#60a5fa',
-    '#a78bfa',
-    '#f59e0b',
-    '#fb7185',
-    '#22d3ee',
-    '#84cc16',
-    '#f472b6',
-  ]
-  const number = Number.parseInt(workerId.replace(/\D/g, ''), 10)
-  return Number.isFinite(number) && number > 0
-    ? palette[(number - 1) % palette.length]
-    : palette[0]
 }
 
 function roleFromWorkerId(workerId: string): string {
@@ -1132,17 +1115,11 @@ export function SwarmReportsView({
                           }
                         />
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <PixelAvatar
+                          <AgentIdentityAvatar
+                            name={card.workerName}
+                            runtime="hermes"
+                            providerSiblingCount={6}
                             size={34}
-                            color={colorForWorker(card.workerId)}
-                            accentColor="#fbbf24"
-                            status={
-                              card.state === 'blocked'
-                                ? 'failed'
-                                : card.state === 'ready'
-                                  ? 'running'
-                                  : 'idle'
-                            }
                           />
                         </div>
                       </div>

@@ -5,7 +5,7 @@
  */
 import { motion, AnimatePresence } from 'motion/react'
 import { useMemo } from 'react'
-import { PERSONA_COLORS, PixelAvatar } from './pixel-avatar'
+import { AgentIdentityAvatar } from '@/components/avatars'
 import { DESK_POSITIONS, LOCATIONS } from './agent-behaviors'
 import {
   useAgentBehaviors,
@@ -219,19 +219,19 @@ function ChatLine({
 function AnimatedAgent({
   behavior,
   session,
+  hermesSiblingCount,
 }: {
   behavior: AgentBehaviorView
   session: SwarmSession
+  hermesSiblingCount: number
 }) {
   const persona = assignPersona(
     behavior.sessionKey,
     session.task ?? session.initialMessage ?? session.label ?? '',
   )
   const displayName = getSwarmSessionDisplayName(session)
-  const colors = PERSONA_COLORS[persona.name] ?? {
-    body: '#6b7280',
-    accent: '#9ca3af',
-  }
+  const isBusy =
+    session.swarmStatus === 'running' || session.swarmStatus === 'thinking'
 
   return (
     <motion.div
@@ -270,15 +270,12 @@ function AnimatedAgent({
         )}
       </AnimatePresence>
 
-      {/* Pixel avatar */}
-      <PixelAvatar
-        color={colors.body}
-        accentColor={colors.accent}
+      <AgentIdentityAvatar
+        name={displayName}
+        runtime="hermes"
+        providerSiblingCount={Math.max(2, hermesSiblingCount)}
         size={44}
-        status={session.swarmStatus}
-        expression={behavior.expression}
-        isWalking={behavior.isWalking}
-        direction={behavior.direction}
+        className={isBusy ? 'thinking-avatar-glow' : undefined}
       />
 
       {/* Name */}
@@ -467,7 +464,12 @@ export function IsometricOffice({ sessions, className }: IsometricOfficeProps) {
           const behavior = behaviors.get(key)
           if (!behavior) return null
           return (
-            <AnimatedAgent key={key} behavior={behavior} session={session} />
+            <AnimatedAgent
+              key={key}
+              behavior={behavior}
+              session={session}
+              hermesSiblingCount={activeSessions.length}
+            />
           )
         })}
       </AnimatePresence>
