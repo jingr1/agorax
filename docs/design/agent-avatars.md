@@ -31,10 +31,10 @@
 | codex | `codex-rounded.png` | **192×192** RGBA |
 | cursor | `cursor-rounded.png` | **192×192** RGBA |
 | opencode | `opencode-rounded.png` | **192×192** RGBA |
-| openclaw | `openclaw-rounded.png` | **192×192** RGBA |
 | kimi / kimi-code | `kimi-rounded.png` | **192×192** RGBA |
-| deepseek-harness | `deepseek-rounded.png` | **192×192** RGBA |
-| agorax / 未知（fallback） | `agorax-rounded.png` + 同图 `fallback.png` | **192×192** RGBA（两文件同像素） |
+| agorax / 未知（fallback） | `agorax-rounded.png` | **192×192** RGBA（`agorax` / `fallback` 同 URL） |
+| openclaw | （资产暂缺） | 暂用 `agorax-rounded.png`；需要时再加 `openclaw-rounded.png` |
+| deepseek-harness | （资产暂缺） | 暂用 `agorax-rounded.png`；需要时再加 `deepseek-rounded.png` |
 
 常见 agent id 别名（见 `RUNTIME_ALIASES`）：`cc-impl` → claude-code，`codex-impl` → codex，`cursor-impl` → cursor，等。
 
@@ -95,34 +95,31 @@ const presentation = projectAgentIdentityAvatar({
 | 外形 | **圆角矩形（app icon）**，不是正圆遮罩，也不是直角满幅方图 |
 | 圆角半径 | **36px @ 192×192**（边长的 **18.75%**，即 `R = 0.1875 × edge`）。换尺寸时按比例缩放，例如 256→`R=48` |
 | UI 裁剪 | 组件侧固定 `rounded-full`（正圆裁切）；资产圆角必须统一，否则圆裁后四角透出量不一致 |
-| 构图 | 居中品牌标；主体约占画幅 55–70%；四周留白均匀；标不要顶到圆角 |
+| 构图 | 居中品牌标；Agorax 脚本默认主体 **76%** 画幅（合同范围约 55–80%）；四周留白均匀；标不要顶到圆角 |
 | 底色 | **浅色 / 白** soft 底（可有极轻阴影或渐变）；避免整图黑底 |
 | 层次 | 一层标 + 一层底即可；避免「圆 → 圆角方 → logo」三层嵌套（codex 现状） |
 | 题材 | **品牌符号 / 几何标**；不做人物插画、不做写实照片 |
 | 光影 | 可有轻微 soft UI 浮起感；勿强 3D 写实 |
 | 禁止 | 黑底白标整图、二次元角色、正圆满幅遮罩、直角无圆角、与基准族明显不同的色板/线稿语言 |
 
-**圆角对照（实测近似）**
+**画幅 + 底板（已统一）**：`public/agent-avatars/*-rounded.png` 全部为：
 
-| 文件 | 外形 | 等效 R @192 | 相对合同 |
-| --- | --- | --- | --- |
-| claude / cursor / openclaw | 透明外 + 圆角方 | **≈36px** | 基准 |
-| opencode | 同上 | ≈37px | 接近（画幅 191×192） |
-| codex | 透明外 + 内缩更多 | ≈27px（且 256 源） | 偏小 + 规格漂移 |
-| agorax | 近正圆遮罩 | ≈93px | **过大（几乎正圆）** |
-| hermes | 直角满幅、无透明角 | 0 | **无圆角** |
-| kimi / deepseek | 黑底满幅方 | 0 | **无圆角** |
+| 项 | 值 |
+| --- | --- |
+| 画幅 | **192×192** 严格正方形 |
+| 通道 | **RGBA**，四角透明（A≈0） |
+| 底板 | **浅色 / 白 soft**（可有轻阴影） |
+| 圆角 | **R = 36px**（边长 18.75%；顶边首个不透明点 @x≈36） |
+| 标占比 | 约 **76%**（hermes 人像约 92% 以免过小） |
 
-`fallback.png` 与 `agorax-rounded.png` 应保持同图；重做 Agorax 底图时两处一起换。
-
-**现状分组（待对齐）**
-
-| 组 | 文件 | 说明 |
-| --- | --- | --- |
-| 接近基准 | claude、cursor、openclaw | 白底 soft + R≈36 + 居中标 |
-| 略偏 | opencode（尺寸）、codex（多层 + R 偏小）、openclaw 题材（角色标） | 次优；可择机收紧 |
-| 偏离 | hermes（人物 + 无圆角）、kimi / deepseek（黑底 + 无圆角）、agorax（黑底 + 近正圆） | **优先重做** |
-| 规格漂移 | kimi / deepseek（640×640 调色板）、hermes（无 alpha）、codex（256）、opencode（191×192） | 替换时一并改成 192×192 RGBA、R=36 |
+| 文件 | 备注 |
+| --- | --- |
+| agorax | 脚本生成：白 soft + 黑标 |
+| claude / cursor / opencode | 白 soft + 原品牌色标 |
+| codex | 品牌图缩至 192（与 kimi 同类处理） |
+| kimi | 品牌图缩至 192（黑底白 K，圆角自带；与白 soft 族略异） |
+| hermes | 人像插画裁进白 soft 圆角方（题材仍为人像，外形已齐） |
+| openclaw / deepseek | **暂无独立 PNG**；映射到 agorax，用时再补资产 |
 
 ### 替换验收清单
 
@@ -136,24 +133,79 @@ const presentation = projectAgentIdentityAvatar({
 - [ ] 非整图黑底；与 claude / cursor / openclaw 并排时风格与圆角一致
 - [ ] UI `rounded-full` 圆裁后四角透出量与基准图一致、无糊边（Chat / Agents 列表硬刷新目视）
 - [ ] 同 provider 多 agent 时双字母微章仍可读（底图勿过花、右下角留一点对比）
-- [ ] 若改的是 agorax：同步更新 `fallback.png`
+- [ ] 若改的是 agorax：跑 `node scripts/generate-pwa-icons.js`（或直接覆盖 `agorax-rounded.png`）
 - [ ] 无需改组件；仅新 provider 才改 `presentation.ts`
 
 ---
 
 ## 2. 品牌 / PWA / 登录（产品 logo，非 agent 头像）
 
-| 用途 | 路径 | 要求尺寸 |
-| --- | --- | --- |
-| 侧栏 / Onboarding / 启动屏 | `public/agorax-icon-512.png` | **512×512** RGBA |
-| PWA / 小图标备用 | `public/agorax-icon-192.png` | **192×192** RGBA |
-| Favicon | `public/agorax-favicon.png` | **32×32** RGBA |
-| Apple touch | `public/agorax-apple-touch-icon.png` | **180×180** RGBA |
-| 横幅 / wordmark | `public/agorax.png` | 宽幅自定（现状约 1536×415）；保持比例 |
-| 方图营销 | `public/agorax-image.png` | 建议 **≥462×462** 正方形 |
-| OG / 封面 | `public/cover.png` | **1200×630**（常见社交预览比） |
+多数尺寸由脚本从源图生成，**不要**手改各尺寸衍生文件后忘了源图。
 
-**替换**：按上表尺寸覆盖；侧栏引用 `/agorax-icon-512.png`（UI 再缩到约 28–112px 展示）。Hermes Identity 底图只用 `public/agent-avatars/hermes-rounded.png`。
+### 源图（手维护）
+
+| 路径 | 用途 | 要求 |
+| --- | --- | --- |
+| `public/agorax-image.png` | 品牌矢量标；PWA / favicon / Identity Agorax 的**唯一视觉源** | 见下表 |
+| `public/agorax.png` | 横幅 wordmark（README / OG） | 见下表；**手拼成品**，不进 PWA 脚本 |
+
+**`agorax.png` 横幅 wordmark 规格**
+
+| 项 | 要求 |
+| --- | --- |
+| 格式 | **PNG + RGBA**；透明底（深色 README / OG 下看白字与白 soft 标） |
+| 构图 | 左：Identity 同款白 soft 圆角方 + 黑 AX 标（可用 `agorax-rounded.png`）；右：文案 **`AgoraX`** |
+| 对齐 | 图标高度 = 文字**大写高度**（cap height）；顶对齐；`g` 下行可略伸出图标底 |
+| 字体 | **[Alkatra](https://fonts.google.com/specimen/Alkatra)** Bold（可变字体 `wght=700`）；Google Fonts / SIL OFL 1.1 |
+| 字体文件 | **不入库**。重渲时从 [google/fonts `ofl/alkatra`](https://github.com/google/fonts/tree/main/ofl/alkatra) 取 `Alkatra[wght].ttf`（本地可暂放 `public/fonts/`，勿提交） |
+| 仓库真相源 | 只跟踪烤好的 `public/agorax.png`；换字重/字号后覆盖该 PNG 即可 |
+
+**`agorax-image.png` 源图规格（现状已对齐）**
+
+| 项 | 要求 |
+| --- | --- |
+| 画幅 | **正方形**；现状 **1024×1024**（最低建议 ≥512，避免生成 512 时被放大） |
+| 格式 | **PNG + RGBA** |
+| 四角透明 | 画布仍是正方形，但四角像素 **A≈0**（不是白/黑实心角）。深色 UI 下只看到标，不出现大方色块 |
+| 标本身 | **透明底上的深色/黑色笔画**（RGB 可为纯黑）；**不要**铺满白底，也不要用「白底 + 半透明挖空」假透明 |
+| 体积 | 软限制；现状约 250KB 可接受 |
+
+> **PNG + RGBA，四角透明**：带 Alpha 通道的 PNG；角上全透，中间是标。预览时若背景是黑色，黑标会「融」进背景，属正常，请用棋盘格或浅色底查看。
+
+### 脚本常量（全尺寸共用）
+
+脚本：[`scripts/generate-pwa-icons.js`](../../scripts/generate-pwa-icons.js)（Pillow / `python3`）。
+
+| 常量 | 值 | 说明 |
+| --- | --- | --- |
+| 底板外形 | 白 soft **圆角方**（非正圆） | favicon / apple-touch / 192 / 512 / Identity **同一套** |
+| 圆角 R | 边长 × **18.75%**（192→36px，512→96px） | 与 Identity 合同一致 |
+| 标占比 | 边长 × **76%**（`size * 0.76`） | 所有上述输出共用；改一处即全局 |
+| 标颜色 | 压成**纯黑** + 保留 alpha | 源图可带彩色；脚本统一黑标以便深色 UI 靠白底托住 |
+| 无 `fallback.png` | — | 未知 runtime 直接用 `agorax-rounded.png` |
+
+```bash
+node scripts/generate-pwa-icons.js
+# 需：python3 -m pip install Pillow
+```
+
+### 衍生图（脚本生成，勿当源稿）
+
+| 输出 | 尺寸 | 说明 |
+| --- | --- | --- |
+| `agorax-favicon.png` | **32×32** | 白 soft 圆角方 + 黑标（76%） |
+| `agorax-apple-touch-icon.png` | **180×180** | 同上 |
+| `agorax-icon-192.png` | **192×192**，R=36 | 同上 |
+| `agorax-icon-512.png` | **512×512**，同比圆角 | 侧栏 / Onboarding / 启动屏 |
+| `agent-avatars/agorax-rounded.png` | **192×192** | 与 icon-192 同算法；Identity Agorax + 未知 runtime |
+
+**换品牌 / 调占比流程**
+
+1. 替换 `public/agorax-image.png`（须符合上表），或改脚本里的 `0.76` / 圆角比例
+2. 跑 `node scripts/generate-pwa-icons.js`
+3. 硬刷新 UI；侧栏看 `/agorax-icon-512.png`，Chat 未知 runtime 看 `agorax-rounded.png`
+
+Hermes 及其它 provider 的 `public/agent-avatars/*-rounded.png` **不**走此脚本，须手供并符合 §1 风格合同。
 
 ---
 
@@ -211,12 +263,13 @@ Swarm / Office / Activity 面板的 agent 头像与 Chat 相同，一律用 **§
 
 | 类别 | 路径模式 | 源文件要求 | 常见 UI |
 | --- | --- | --- | --- |
-| Agent Identity | `public/agent-avatars/*-rounded.png`、`fallback.png` | **192×192** RGBA，R=36 | 28–36px 圆裁 |
-| 产品大图标 | `agorax-icon-512.png` | **512×512** | 侧栏 / 启动 ~28–112px |
-| 产品小图标 | `agorax-icon-192.png` | **192×192** | PWA 等 |
-| Favicon | `agorax-favicon.png` | **32×32** | 浏览器标签 |
-| Apple touch | `agorax-apple-touch-icon.png` | **180×180** | iOS 主屏 |
-| OG 封面 | `cover.png` | **1200×630** | 链接预览 |
+| Agent Identity | `public/agent-avatars/*-rounded.png` | **一律** 192×192 RGBA + 白 soft + **R=36**（agorax 脚本生成） | 28–36px 圆裁 |
+| 品牌源图（标） | `agorax-image.png` | **1024×1024** PNG RGBA，四角透明，黑标 | 仅作生成源 |
+| 品牌源图（横幅） | `agorax.png` | PNG RGBA；Alkatra Bold「AgoraX」+ 标 | README / OG |
+| 产品大图标 | `agorax-icon-512.png` | **512×512** 白 soft 圆角方+黑标 76% | 侧栏 / 启动 ~28–112px |
+| 产品小图标 | `agorax-icon-192.png` | **192×192** 同上 | PWA 等 |
+| Favicon | `agorax-favicon.png` | **32×32** 同上 | 浏览器标签 |
+| Apple touch | `agorax-apple-touch-icon.png` | **180×180** 同上 | iOS 主屏 |
 | Provider logo | `public/providers/*.png` | **640×640** | ~20–24px |
 | 用户头像 | settings data URL | 建议 ≥128（推荐 256–512） | ~28px |
 
@@ -225,7 +278,9 @@ Swarm / Office / Activity 面板的 agent 头像与 Chat 相同，一律用 **§
 | 想换什么 | 做什么 |
 | --- | --- |
 | Chat / Agents / Groups 成员图 | 换 `public/agent-avatars/*-rounded.png`（192×192，必要时改 `presentation.ts`） |
-| 产品 logo | 按尺寸表换 `public/agorax-icon-*.png` 等 |
+| 产品 logo / Agorax Identity | 换 `agorax-image.png`（或改脚本 76%）后跑 `node scripts/generate-pwa-icons.js` |
+| 横幅 wordmark | 按 §2「`agorax.png` 规格」用 Alkatra Bold 重拼，覆盖 `public/agorax.png`（字体不入库） |
+| 标占比 | 改 `scripts/generate-pwa-icons.js` 内 `size * 0.76`，再跑脚本 |
 | Provider 登录图标 | 换 `public/providers/*.png`（640×640） |
 | 用户自己的脸 | Settings → Profile 上传 |
 | Swarm / Office 头像 | 同 Identity（`hermes-rounded.png`）；勿另做像素人 |

@@ -185,7 +185,7 @@ export const Route = createRootRoute({
       },
       {
         property: 'og:image',
-        content: '/cover.png',
+        content: '/agorax.png',
       },
       {
         property: 'og:image:type',
@@ -197,7 +197,7 @@ export const Route = createRootRoute({
       },
       {
         name: 'twitter:image',
-        content: '/cover.png',
+        content: '/agorax.png',
       },
       // PWA meta tags
       {

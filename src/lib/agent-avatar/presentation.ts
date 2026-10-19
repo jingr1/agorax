@@ -32,9 +32,10 @@ export const AGENT_AVATAR_ASSET_URLS: Record<AgentAvatarProviderKey, string> = {
   codex: '/agent-avatars/codex-rounded.png',
   cursor: '/agent-avatars/cursor-rounded.png',
   opencode: '/agent-avatars/opencode-rounded.png',
-  openclaw: '/agent-avatars/openclaw-rounded.png',
+  // Dedicated art deferred — reuse Agorax until openclaw/deepseek assets ship.
+  openclaw: AGORAX_AVATAR_SRC,
   kimi: '/agent-avatars/kimi-rounded.png',
-  'deepseek-harness': '/agent-avatars/deepseek-rounded.png',
+  'deepseek-harness': AGORAX_AVATAR_SRC,
   agorax: AGORAX_AVATAR_SRC,
   fallback: AGORAX_AVATAR_SRC,
 }

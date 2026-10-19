@@ -69,13 +69,16 @@ describe('projectAgentIdentityAvatar', () => {
     expect(result.src).toBe('/agent-avatars/hermes-rounded.png')
   })
 
-  it('uses kimi and deepseek provider art', () => {
+  it('uses kimi art; openclaw/deepseek fall back to agorax until assets ship', () => {
     expect(resolveAgentAvatarSrc('kimi')).toBe('/agent-avatars/kimi-rounded.png')
     expect(resolveAgentAvatarSrc('kimi-code')).toBe(
       '/agent-avatars/kimi-rounded.png',
     )
     expect(resolveAgentAvatarSrc('deepseek-harness')).toBe(
-      '/agent-avatars/deepseek-rounded.png',
+      '/agent-avatars/agorax-rounded.png',
+    )
+    expect(resolveAgentAvatarSrc('openclaw')).toBe(
+      '/agent-avatars/agorax-rounded.png',
     )
   })
 
