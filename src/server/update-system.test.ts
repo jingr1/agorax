@@ -7,8 +7,9 @@ import {
 describe('update-system helpers', () => {
   it('matches GitHub URL forms against expected repo aliases', () => {
     expect(
-      remoteUrlMatches('https://github.com/outsourc-e/hermes-workspace.git', [
-        'outsourc-e/hermes-workspace',
+      remoteUrlMatches('https://github.com/jingr1/agorax.git', [
+        'agorax',
+        'jingr1/agorax',
       ]),
     ).toBe(true)
     expect(
@@ -17,9 +18,7 @@ describe('update-system helpers', () => {
       ]),
     ).toBe(true)
     expect(
-      remoteUrlMatches('https://github.com/example/other.git', [
-        'hermes-workspace',
-      ]),
+      remoteUrlMatches('https://github.com/example/other.git', ['agorax']),
     ).toBe(false)
   })
 

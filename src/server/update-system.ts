@@ -429,8 +429,8 @@ export function readWorkspaceUpdateStatus(
 
   const remoteUrl = git(['remote', 'get-url', 'origin'], gitRepo)
   const repoMatches = remoteUrlMatches(remoteUrl, [
-    'hermes-workspace',
-    'outsourc-e/hermes-workspace',
+    'agorax',
+    'jingr1/agorax',
   ])
   if (repoMatches) maybeFetchOrigin(gitRepo, resolveFetchMode(options))
   const currentHead = git(['rev-parse', 'HEAD'], gitRepo)
@@ -478,7 +478,7 @@ export function readWorkspaceUpdateStatus(
               : 'blocked'
             : 'current',
     reason: !repoMatches
-      ? 'Workspace origin remote does not look like hermes-workspace.'
+      ? 'Workspace origin remote does not look like an Agorax repo.'
       : !supportedBranch
         ? 'Workspace one-click updates are only enabled on main/master branches.'
         : dirty

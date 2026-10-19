@@ -209,7 +209,8 @@ TanStack Start 文件路由：每个 `.ts` 文件export server handlers。
 
 | 路由文件 | 说明 |
 |----------|------|
-| `gateway-status.ts`、`hermes-config.ts`、`hermes-update.ts` | Gateway / Hermes 配置 |
+| `gateway-status.ts`、`hermes-config.ts` | Gateway / Hermes 配置 |
+| `update/status.ts`、`update/workspace.ts`、`update/agent.ts` | 产品更新检查 / 一键更新 |
 | `auth.anthropic.ts`、`oauth.device-code.ts` | 鉴权 |
 | `integrations.ts`、`plugins.ts`、`claude-jobs.ts` | 集成 / 插件 / job |
 | `agent-runtime/{install,login,status,enable,daemon.restart}.ts` | Managed runtime 安装/启用 |
