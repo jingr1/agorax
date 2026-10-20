@@ -130,6 +130,7 @@ API 要点：
 
 ## 四、操作规则
 
+- **UI 优先标准组件：** 弹层 / 菜单 / 分段选择 / 表单控件优先用 `src/components/ui/`（`Dialog`、`AlertDialog`、`Menu`、`Tabs`、`Button`、`Input` 等），不要手写 absolute 浮层或自定义选中态 class；破坏性确认用 `AlertDialog`，互斥选项用 `Tabs`。
 - 改 agent 时保持 `agents.yaml`（tools / skills / mission）与 profile toolset、skills、SOUL、wrapper 对齐。模型默认值由 profile `config.yaml` 管理；只有需要显式覆盖时才在 `agents.yaml` 使用可选 `model`。
 - **GBrain ≡ llm-wiki**：本仓库未部署本地 `gbrain` skill/MCP。Brain-first 查询用 Hermes 内置 `llm-wiki`（`WIKI_PATH`，默认 `~/wiki`），外加 `memory/swarm/` 下的 mission 记忆。
 - **Brain-first 顺序**（先于 web 搜索）：① 读 `$WIKI_PATH/SCHEMA.md` + `index.md` + 近期 `log.md`；② grep `memory/swarm/` 与 dispatch handoff；③ `session_search` 查历史会话；④ 本地不足再用外部 `web` / `arxiv`。

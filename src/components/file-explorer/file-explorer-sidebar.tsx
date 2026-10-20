@@ -42,6 +42,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { toast } from '@/components/ui/toast'
 import {
   TooltipContent,
@@ -1709,28 +1710,32 @@ export function FileExplorerSidebar({
         }}
       >
         <DialogContent>
-          <div className="p-5 space-y-3">
-            <DialogTitle>
+          <div className="p-4">
+            <DialogTitle className="mb-1">
               {promptState?.mode === 'rename'
                 ? 'Rename'
                 : promptState?.mode === 'new-folder'
                   ? 'New Folder'
                   : 'New File'}
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="mb-3">
               {promptState?.mode === 'rename'
                 ? 'Enter a new name.'
                 : 'Enter a name to create.'}
             </DialogDescription>
-            <input
-              value={promptValue}
-              onChange={(event) => setPromptValue(event.target.value)}
-              className="w-full rounded-md border border-primary-200 bg-primary-50 px-3 py-2 text-sm text-primary-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
-              autoFocus
-            />
-            <div className="flex justify-end gap-2 pt-2">
-              <DialogClose render={<Button variant="outline">Cancel</Button>} />
-              <Button onClick={handlePromptSubmit}>Save</Button>
+            <div className="flex flex-col gap-3">
+              <Input
+                value={promptValue}
+                onChange={(event) => setPromptValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') handlePromptSubmit()
+                }}
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <DialogClose>Cancel</DialogClose>
+                <Button onClick={handlePromptSubmit}>Save</Button>
+              </div>
             </div>
           </div>
         </DialogContent>

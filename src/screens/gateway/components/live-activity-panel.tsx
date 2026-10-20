@@ -6,6 +6,12 @@ import type {
 } from './agents-working-panel'
 import { AgentOutputPanel } from './agent-output-panel'
 import type { HubTask } from './task-board'
+import {
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+} from '@/components/ui/menu'
 
 export type LiveActivityPanelProps = {
   agents: AgentWorkingRow[]
@@ -110,8 +116,6 @@ function AgentCard({
   onPause?: (pause: boolean) => void
   onSteer?: (message: string) => void
 }) {
-  const [menuOpen, setMenuOpen] = useState(false)
-
   return (
     <div
       className={cn(
@@ -175,100 +179,53 @@ function AgentCard({
         </button>
 
         {/* ⋯ Overflow menu — warden controls */}
-        <div className="relative">
-          <button
+        <MenuRoot>
+          <MenuTrigger
             type="button"
             onClick={(e) => {
+              e.preventDefault()
               e.stopPropagation()
-              setMenuOpen((p) => !p)
             }}
             className="rounded-lg px-2 py-1 text-[13px] text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
             aria-label="Agent options"
           >
             ⋯
-          </button>
-          {menuOpen ? (
-            <>
-              <div
-                className="fixed inset-0 z-10"
-                onClick={() => setMenuOpen(false)}
-                aria-hidden
-              />
-              <div
-                className="absolute right-0 top-full z-20 mt-1 min-w-[140px] rounded-xl border border-neutral-200 bg-white py-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
-                style={{ overflow: 'visible' }}
-              >
-                <button
-                  type="button"
+          </MenuTrigger>
+          <MenuContent side="bottom" align="end" className="min-w-[140px]">
+            <MenuItem onClick={() => onView()}>View Output</MenuItem>
+            {agent.status === 'error' ? (
+              <MenuItem onClick={() => onRespawn()}>Respawn</MenuItem>
+            ) : null}
+            {agent.status !== 'none' && agent.status !== 'error' ? (
+              <>
+                <MenuItem
                   onClick={() => {
-                    setMenuOpen(false)
-                    onView()
+                    if (!onSteer) return
+                    const directive = window.prompt(
+                      `Send directive to ${agent.name}`,
+                      '',
+                    )
+                    if (!directive || !directive.trim()) return
+                    onSteer(directive.trim())
                   }}
-                  className="block w-full px-3 py-1.5 text-left text-[11px] text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 >
-                  View Output
-                </button>
-                {agent.status === 'error' ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false)
-                      onRespawn()
-                    }}
-                    className="block w-full px-3 py-1.5 text-left text-[11px] text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/20"
-                  >
-                    Respawn
-                  </button>
-                ) : null}
-                {agent.status !== 'none' && agent.status !== 'error' ? (
-                  <>
-                    <div className="my-1 border-t border-neutral-100 dark:border-neutral-800" />
-                    <p className="px-3 pb-0.5 pt-1 text-[9px] font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-600">
-                      Warden
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMenuOpen(false)
-                        if (!onSteer) return
-                        const directive = window.prompt(
-                          `Send directive to ${agent.name}`,
-                          '',
-                        )
-                        if (!directive || !directive.trim()) return
-                        onSteer(directive.trim())
-                      }}
-                      className="block w-full px-3 py-1.5 text-left text-[11px] text-neutral-600 transition-colors hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
-                    >
-                      Steer
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMenuOpen(false)
-                        onPause?.(agent.status !== 'paused')
-                      }}
-                      className="block w-full px-3 py-1.5 text-left text-[11px] text-neutral-600 transition-colors hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
-                    >
-                      {agent.status === 'paused' ? 'Resume' : 'Pause'}
-                    </button>
-                  </>
-                ) : null}
-                <div className="my-1 border-t border-neutral-100 dark:border-neutral-800" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    onKill()
-                  }}
-                  className="block w-full px-3 py-1.5 text-left text-[11px] text-red-500 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/20"
+                  Steer
+                </MenuItem>
+                <MenuItem
+                  onClick={() => onPause?.(agent.status !== 'paused')}
                 >
-                  Kill session
-                </button>
-              </div>
-            </>
-          ) : null}
-        </div>
+                  {agent.status === 'paused' ? 'Resume' : 'Pause'}
+                </MenuItem>
+              </>
+            ) : null}
+            <MenuItem
+              className="text-red-700 hover:bg-red-50 dark:hover:bg-red-900/30/80 data-highlighted:bg-red-50/80"
+              onClick={() => onKill()}
+            >
+              Kill session
+            </MenuItem>
+          </MenuContent>
+        </MenuRoot>
       </div>
     </div>
   )

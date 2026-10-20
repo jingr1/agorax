@@ -11,6 +11,8 @@ import {
   readJobModelPinFromRecord,
   type JobFormSubmitInput,
 } from './job-form-types'
+import { Input } from '@/components/ui/input'
+import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
 
 const SCHEDULE_PRESETS = [
   { label: 'Every 15m', value: 'every 15m' },
@@ -424,80 +426,37 @@ export function EditJobDialog({
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Repeat</label>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setForm((current) => ({
-                          ...current,
-                          repeatMode: 'unlimited',
-                        }))
-                      }
-                      className="rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
-                      style={{
-                        background:
-                          form.repeatMode === 'unlimited'
-                            ? 'var(--theme-accent)'
-                            : 'var(--theme-card)',
-                        borderColor:
-                          form.repeatMode === 'unlimited'
-                            ? 'var(--theme-accent)'
-                            : 'var(--theme-border)',
-                        color:
-                          form.repeatMode === 'unlimited'
-                            ? '#fff'
-                            : 'var(--theme-text)',
-                      }}
+                  <Tabs
+                    value={form.repeatMode}
+                    onValueChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        repeatMode: value as 'unlimited' | 'limited',
+                      }))
+                    }
+                  >
+                    <TabsList
+                      className="rounded-lg border border-border bg-input p-1"
+                      variant="default"
                     >
-                      Unlimited
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setForm((current) => ({
-                          ...current,
-                          repeatMode: 'limited',
-                        }))
-                      }
-                      className="rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
-                      style={{
-                        background:
-                          form.repeatMode === 'limited'
-                            ? 'var(--theme-accent)'
-                            : 'var(--theme-card)',
-                        borderColor:
-                          form.repeatMode === 'limited'
-                            ? 'var(--theme-accent)'
-                            : 'var(--theme-border)',
-                        color:
-                          form.repeatMode === 'limited'
-                            ? '#fff'
-                            : 'var(--theme-text)',
-                      }}
-                    >
-                      Set count
-                    </button>
-                  </div>
-                  {form.repeatMode === 'limited' ? (
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={form.repeatCount}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          repeatCount: event.target.value,
-                        }))
-                      }
-                      className="w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-1"
-                      style={{
-                        background: 'var(--theme-input)',
-                        borderColor: 'var(--theme-border)',
-                        color: 'var(--theme-text)',
-                      }}
-                    />
-                  ) : null}
+                      <TabsTab value="unlimited">Unlimited</TabsTab>
+                      <TabsTab value="limited">Set count</TabsTab>
+                    </TabsList>
+                    <TabsPanel value="limited" className="mt-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={form.repeatCount}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            repeatCount: event.target.value,
+                          }))
+                        }
+                      />
+                    </TabsPanel>
+                  </Tabs>
                 </div>
               </section>
             </div>

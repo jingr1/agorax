@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Button } from '@/components/ui/button'
 import {
-  DialogContent,
-  DialogDescription,
-  DialogRoot,
-  DialogTitle,
-} from '@/components/ui/dialog'
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogRoot,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { toast } from '@/components/ui/toast'
 import { killAgentSession } from '@/lib/gateway-api'
 
@@ -46,46 +47,32 @@ export function KillConfirmDialog({
   }
 
   return (
-    <DialogRoot
+    <AlertDialogRoot
       open={open}
       onOpenChange={(nextOpen) => {
         if (pending && !nextOpen) return
         onOpenChange(nextOpen)
       }}
     >
-      <DialogContent className="w-[min(420px,92vw)]">
-        <div className="space-y-4 p-5">
-          <div className="space-y-1">
-            <DialogTitle className="text-base">Kill {agentName}?</DialogTitle>
-            <DialogDescription>
-              This will terminate the agent session immediately.
-            </DialogDescription>
-          </div>
-
-          <div className="flex items-center justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={pending}
-              onClick={function onClickCancel() {
-                onOpenChange(false)
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
+      <AlertDialogContent className="w-[min(420px,92vw)]">
+        <div className="p-4">
+          <AlertDialogTitle className="mb-1">
+            Kill {agentName}?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="mb-4">
+            This will terminate the agent session immediately.
+          </AlertDialogDescription>
+          <div className="flex justify-end gap-2">
+            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
               disabled={pending || !sessionKey}
-              onClick={function onClickConfirm() {
-                void handleConfirmKill()
-              }}
+              onClick={() => void handleConfirmKill()}
             >
               {pending ? 'Terminating...' : 'Kill'}
-            </Button>
+            </AlertDialogAction>
           </div>
         </div>
-      </DialogContent>
-    </DialogRoot>
+      </AlertDialogContent>
+    </AlertDialogRoot>
   )
 }

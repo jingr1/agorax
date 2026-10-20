@@ -1,6 +1,12 @@
 import { useState } from 'react'
 import { AGENT_ACCENT_COLORS, AgentAvatar } from './agent-avatar'
 import { cn } from '@/lib/utils'
+import {
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+} from '@/components/ui/menu'
 
 function formatRelativeTime(ts: number): string {
   const diffMs = Math.max(0, Date.now() - ts)
@@ -144,7 +150,6 @@ function AgentRow({
   onPause?: (pause: boolean) => void
   onSteer?: (message: string) => void
 }) {
-  const [menuOpen, setMenuOpen] = useState(false)
   const accent = AGENT_ACCENT_COLORS[accentIndex % AGENT_ACCENT_COLORS.length]
   const isActive = agent.status === 'active'
   const isSpawning = agent.status === 'spawning'
@@ -242,74 +247,55 @@ function AgentRow({
 
           {/* Context menu */}
           {onKill ? (
-            <div className="relative">
-              <button
+            <MenuRoot>
+              <MenuTrigger
                 type="button"
                 onClick={(e) => {
+                  e.preventDefault()
                   e.stopPropagation()
-                  setMenuOpen((p) => !p)
                 }}
-                className="shrink-0 text-sm text-neutral-500 transition-colors group-hover:text-neutral-700 hover:text-neutral-900"
+                className="shrink-0 rounded-md px-1.5 py-0.5 text-sm text-neutral-500 transition-colors group-hover:text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900"
+                aria-label={`Options for ${agent.name}`}
               >
                 ⋯
-              </button>
-              {menuOpen ? (
-                <>
-                  <div
-                    className="fixed inset-0 z-10"
+              </MenuTrigger>
+              <MenuContent side="top" align="end">
+                {canSteer && onSteer ? (
+                  <MenuItem
                     onClick={(e) => {
                       e.stopPropagation()
-                      setMenuOpen(false)
+                      const directive = window.prompt(
+                        `Send directive to ${agent.name}`,
+                        '',
+                      )
+                      if (!directive || !directive.trim()) return
+                      onSteer(directive.trim())
                     }}
-                    aria-hidden
-                  />
-                  <div className="absolute bottom-full right-0 z-20 mb-1 min-w-[110px] rounded-lg border border-neutral-200 bg-white shadow-xl">
-                    {canSteer && onSteer ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setMenuOpen(false)
-                          const directive = window.prompt(
-                            `Send directive to ${agent.name}`,
-                            '',
-                          )
-                          if (!directive || !directive.trim()) return
-                          onSteer(directive.trim())
-                        }}
-                        className="block w-full rounded-lg px-3 py-2 text-left text-[11px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
-                      >
-                        Send directive
-                      </button>
-                    ) : null}
-                    {canSteer && onPause ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setMenuOpen(false)
-                          onPause(agent.status !== 'paused')
-                        }}
-                        className="block w-full rounded-lg px-3 py-2 text-left text-[11px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
-                      >
-                        {agent.status === 'paused' ? 'Resume' : 'Pause'}
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setMenuOpen(false)
-                        onKill()
-                      }}
-                      className="block w-full rounded-lg px-3 py-2 text-left text-[11px] font-medium text-red-400 transition-colors hover:bg-red-950/20"
-                    >
-                      Kill session
-                    </button>
-                  </div>
-                </>
-              ) : null}
-            </div>
+                  >
+                    Send directive
+                  </MenuItem>
+                ) : null}
+                {canSteer && onPause ? (
+                  <MenuItem
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onPause(agent.status !== 'paused')
+                    }}
+                  >
+                    {agent.status === 'paused' ? 'Resume' : 'Pause'}
+                  </MenuItem>
+                ) : null}
+                <MenuItem
+                  className="text-red-700 hover:bg-red-50 dark:hover:bg-red-900/30/80 data-highlighted:bg-red-50/80"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onKill()
+                  }}
+                >
+                  Kill session
+                </MenuItem>
+              </MenuContent>
+            </MenuRoot>
           ) : null}
         </div>
 

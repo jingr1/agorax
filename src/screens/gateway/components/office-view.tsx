@@ -6,6 +6,12 @@ import type {
 } from './agents-working-panel'
 import type { ModelPresetId } from './team-panel'
 import { AGENT_ACCENT_COLORS, AgentAvatar } from './agent-avatar'
+import {
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+} from '@/components/ui/menu'
 
 export type RemoteSession = {
   sessionKey: string
@@ -633,7 +639,6 @@ export function OfficeView({
   // When containerHeight is set, we use compact mode: header only (no footer), SVG fills remaining space
   const compact = Boolean(containerHeight)
   const [tick, setTick] = useState(0)
-  const [layoutPickerOpen, setLayoutPickerOpen] = useState(false)
   const [remoteCollapsed, setRemoteCollapsed] = useState(true)
   const [layoutTemplate, setLayoutTemplate] = useState<OfficeLayoutTemplate>(
     () => {
@@ -660,19 +665,6 @@ export function OfficeView({
       window.localStorage.setItem('clawsuite:office-layout', nextTemplate)
     }
   }
-
-  // Close layout picker on outside click
-  useEffect(() => {
-    if (!layoutPickerOpen) return
-    function onDown(e: MouseEvent) {
-      const target = e.target as Element
-      if (!target.closest('[data-layout-picker]')) {
-        setLayoutPickerOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [layoutPickerOpen])
 
   useEffect(() => {
     // 500ms interval (was 200ms) — the office animations are subtle (drift, bob, walk),
@@ -871,38 +863,31 @@ export function OfficeView({
 
       {/* Desktop office canvas — layout picker (pencil icon) */}
       <div className="hidden shrink-0 justify-end px-3 pb-1 pt-2 md:flex">
-        <div className="relative" data-layout-picker>
-          <button
+        <MenuRoot>
+          <MenuTrigger
             type="button"
-            onClick={() => setLayoutPickerOpen((v) => !v)}
             className="inline-flex min-h-11 items-center rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-50 dark:border-slate-700 dark:bg-slate-800 dark:text-neutral-300 dark:hover:bg-slate-700 sm:px-4 sm:py-2 sm:text-sm"
             title="Change office layout"
+            aria-label="Change office layout"
           >
             <span>✏️</span>
-          </button>
-          {layoutPickerOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
-              {LAYOUT_TEMPLATE_OPTIONS.map((opt) => (
-                <button
-                  key={opt.key}
-                  type="button"
-                  onClick={() => {
-                    changeLayout(opt.key)
-                    setLayoutPickerOpen(false)
-                  }}
-                  className={cn(
-                    'w-full px-3 py-2 text-left text-[12px] transition-colors hover:bg-neutral-50 dark:hover:bg-slate-800',
-                    layoutTemplate === opt.key
-                      ? 'font-medium text-accent-600'
-                      : 'text-neutral-700 dark:text-slate-300',
-                  )}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+          </MenuTrigger>
+          <MenuContent side="bottom" align="end" className="min-w-[120px]">
+            {LAYOUT_TEMPLATE_OPTIONS.map((opt) => (
+              <MenuItem
+                key={opt.key}
+                onClick={() => changeLayout(opt.key)}
+                className={
+                  layoutTemplate === opt.key
+                    ? 'font-medium text-accent-600'
+                    : undefined
+                }
+              >
+                {opt.label}
+              </MenuItem>
+            ))}
+          </MenuContent>
+        </MenuRoot>
       </div>
       <div
         className={cn(

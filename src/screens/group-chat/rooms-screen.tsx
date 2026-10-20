@@ -20,7 +20,6 @@ import { cn } from '@/lib/utils'
 import { Markdown } from '@/components/prompt-kit/markdown'
 import { Button } from '@/components/ui/button'
 import { ComposerPrimaryButton } from '@/screens/chat/components/composer-primary-button'
-import {} from '@/components/ui/menu'
 import {
   answerPendingTurn,
   sendMessage as apiSendMessage,
@@ -412,11 +411,7 @@ export function RoomsScreen() {
               <div className="mt-3 text-xs text-danger">{workspaceError}</div>
             ) : null}
             <div className="mt-4 flex justify-end gap-2">
-              <DialogClose type="button" className="inline-flex">
-                <Button variant="ghost" disabled={workspaceSaving}>
-                  Cancel
-                </Button>
-              </DialogClose>
+              <DialogClose disabled={workspaceSaving}>Cancel</DialogClose>
               <Button onClick={handleSaveWorkspace} disabled={workspaceSaving}>
                 {workspaceSaving ? 'Saving…' : 'Save'}
               </Button>

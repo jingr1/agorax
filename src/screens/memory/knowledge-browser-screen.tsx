@@ -25,6 +25,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { CHAT_PENDING_MESSAGE_STORAGE_KEY } from '@/screens/chat/chat-events'
 import { readLastAgent } from '@/screens/chat/last-session'
@@ -530,51 +531,29 @@ export function KnowledgeBrowserScreen() {
                 <span className="hidden sm:inline">Settings</span>
               </DialogTrigger>
               <DialogContent className="w-[min(440px,92vw)]">
-                <div className="border-b border-[var(--theme-border)] px-5 py-4">
-                  <DialogTitle>Knowledge Base Settings</DialogTitle>
-                  <DialogDescription className="mt-1">
+                <div className="p-4">
+                  <DialogTitle className="mb-1">
+                    Knowledge Base Settings
+                  </DialogTitle>
+                  <DialogDescription className="mb-3">
                     Choose where your knowledge base is located. Changes take
                     effect immediately.
                   </DialogDescription>
-                </div>
-
-                <div className="space-y-4 px-5 py-4">
-                  <div className="space-y-2">
-                    <label className="text-sm text-[var(--theme-muted)]">
-                      Source type
-                    </label>
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className={cn(
-                          'flex-1 justify-start',
-                          settingsSource?.type === 'local' &&
-                            'border-[var(--theme-accent)] bg-[var(--theme-accent-soft)]',
-                        )}
-                        onClick={() =>
-                          setSettingsSource((prev) => ({
-                            type: 'local',
-                            path: prev?.type === 'local' ? prev.path : '',
-                          }))
-                        }
-                      >
-                        <HugeiconsIcon
-                          icon={Folder01Icon}
-                          size={16}
-                          strokeWidth={1.7}
-                        />
-                        Local folder
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className={cn(
-                          'flex-1 justify-start',
-                          settingsSource?.type === 'github' &&
-                            'border-[var(--theme-accent)] bg-[var(--theme-accent-soft)]',
-                        )}
-                        onClick={() =>
+                  <div className="flex flex-col gap-3">
+                    <div className="space-y-2">
+                      <label className="text-sm text-primary-600">
+                        Source type
+                      </label>
+                      <Tabs
+                        value={settingsSource?.type ?? 'local'}
+                        onValueChange={(value) => {
+                          if (value === 'local') {
+                            setSettingsSource((prev) => ({
+                              type: 'local',
+                              path: prev?.type === 'local' ? prev.path : '',
+                            }))
+                            return
+                          }
                           setSettingsSource((prev) => ({
                             type: 'github',
                             repo: prev?.type === 'github' ? prev.repo : '',
@@ -582,198 +561,224 @@ export function KnowledgeBrowserScreen() {
                               prev?.type === 'github' ? prev.branch : 'main',
                             path: prev?.type === 'github' ? prev.path : '',
                           }))
-                        }
+                        }}
                       >
-                        <HugeiconsIcon
-                          icon={CodeIcon}
-                          size={16}
-                          strokeWidth={1.7}
-                        />
-                        GitHub repo
-                      </Button>
-                    </div>
-                  </div>
-
-                  {settingsSource?.type === 'local' && (
-                    <div className="space-y-1.5">
-                      <label
-                        className="text-sm text-[var(--theme-muted)]"
-                        htmlFor="kb-local-path"
-                      >
-                        Folder path
-                      </label>
-                      <Input
-                        id="kb-local-path"
-                        type="text"
-                        value={settingsSource.path}
-                        onChange={(e) =>
-                          setSettingsSource((prev) =>
-                            prev?.type === 'local'
-                              ? { ...prev, path: e.target.value }
-                              : prev,
-                          )
-                        }
-                        placeholder="~/my-wiki or /absolute/path"
-                      />
-                    </div>
-                  )}
-
-                  {settingsSource?.type === 'github' && (
-                    <div className="space-y-3">
-                      <div className="space-y-1.5">
-                        <label
-                          className="text-sm text-[var(--theme-muted)]"
-                          htmlFor="kb-gh-repo"
+                        <TabsList
+                          className="w-full rounded-lg border border-border bg-input p-1"
+                          variant="default"
                         >
-                          Repository
-                        </label>
-                        <Input
-                          id="kb-gh-repo"
-                          type="text"
-                          value={settingsSource.repo}
-                          onChange={(e) =>
-                            setSettingsSource((prev) =>
-                              prev?.type === 'github'
-                                ? { ...prev, repo: e.target.value }
-                                : prev,
-                            )
-                          }
-                          placeholder="owner/repo (e.g. dontcallmejames/my-wiki)"
-                        />
-                      </div>
-                      <div className="flex gap-3">
-                        <div className="flex-1 space-y-1.5">
+                          <TabsTab value="local" className="flex-1">
+                            <HugeiconsIcon
+                              icon={Folder01Icon}
+                              size={16}
+                              strokeWidth={1.7}
+                            />
+                            Local folder
+                          </TabsTab>
+                          <TabsTab value="github" className="flex-1">
+                            <HugeiconsIcon
+                              icon={CodeIcon}
+                              size={16}
+                              strokeWidth={1.7}
+                            />
+                            GitHub repo
+                          </TabsTab>
+                        </TabsList>
+                        <TabsPanel value="local" className="mt-3 space-y-1.5">
                           <label
-                            className="text-sm text-[var(--theme-muted)]"
-                            htmlFor="kb-gh-branch"
+                            className="text-sm text-primary-600"
+                            htmlFor="kb-local-path"
                           >
-                            Branch
+                            Folder path
                           </label>
                           <Input
-                            id="kb-gh-branch"
+                            id="kb-local-path"
                             type="text"
-                            value={settingsSource.branch}
-                            onChange={(e) =>
-                              setSettingsSource((prev) =>
-                                prev?.type === 'github'
-                                  ? { ...prev, branch: e.target.value }
-                                  : prev,
-                              )
+                            value={
+                              settingsSource?.type === 'local'
+                                ? settingsSource.path
+                                : ''
                             }
-                            placeholder="main"
-                          />
-                        </div>
-                        <div className="flex-1 space-y-1.5">
-                          <label
-                            className="text-sm text-[var(--theme-muted)]"
-                            htmlFor="kb-gh-path"
-                          >
-                            Sub-folder
-                          </label>
-                          <Input
-                            id="kb-gh-path"
-                            type="text"
-                            value={settingsSource.path}
                             onChange={(e) =>
                               setSettingsSource((prev) =>
-                                prev?.type === 'github'
+                                prev?.type === 'local'
                                   ? { ...prev, path: e.target.value }
                                   : prev,
                               )
                             }
-                            placeholder="wiki (optional)"
+                            placeholder="~/my-wiki or /absolute/path"
                           />
-                        </div>
-                      </div>
-
-                      {syncError ? (
-                        <p className="rounded-md border border-[color-mix(in_srgb,var(--theme-danger)_28%,var(--theme-border))] bg-[color-mix(in_srgb,var(--theme-danger)_10%,var(--theme-input))] px-3 py-2 text-xs text-[var(--theme-danger)]">
-                          {syncError}
-                        </p>
-                      ) : null}
+                        </TabsPanel>
+                        <TabsPanel
+                          value="github"
+                          className="mt-3 flex flex-col gap-3"
+                        >
+                          <div className="space-y-1.5">
+                            <label
+                              className="text-sm text-primary-600"
+                              htmlFor="kb-gh-repo"
+                            >
+                              Repository
+                            </label>
+                            <Input
+                              id="kb-gh-repo"
+                              type="text"
+                              value={
+                                settingsSource?.type === 'github'
+                                  ? settingsSource.repo
+                                  : ''
+                              }
+                              onChange={(e) =>
+                                setSettingsSource((prev) =>
+                                  prev?.type === 'github'
+                                    ? { ...prev, repo: e.target.value }
+                                    : prev,
+                                )
+                              }
+                              placeholder="owner/repo (e.g. dontcallmejames/my-wiki)"
+                            />
+                          </div>
+                          <div className="flex gap-3">
+                            <div className="flex-1 space-y-1.5">
+                              <label
+                                className="text-sm text-primary-600"
+                                htmlFor="kb-gh-branch"
+                              >
+                                Branch
+                              </label>
+                              <Input
+                                id="kb-gh-branch"
+                                type="text"
+                                value={
+                                  settingsSource?.type === 'github'
+                                    ? settingsSource.branch
+                                    : 'main'
+                                }
+                                onChange={(e) =>
+                                  setSettingsSource((prev) =>
+                                    prev?.type === 'github'
+                                      ? { ...prev, branch: e.target.value }
+                                      : prev,
+                                  )
+                                }
+                                placeholder="main"
+                              />
+                            </div>
+                            <div className="flex-1 space-y-1.5">
+                              <label
+                                className="text-sm text-primary-600"
+                                htmlFor="kb-gh-path"
+                              >
+                                Sub-folder
+                              </label>
+                              <Input
+                                id="kb-gh-path"
+                                type="text"
+                                value={
+                                  settingsSource?.type === 'github'
+                                    ? settingsSource.path
+                                    : ''
+                                }
+                                onChange={(e) =>
+                                  setSettingsSource((prev) =>
+                                    prev?.type === 'github'
+                                      ? { ...prev, path: e.target.value }
+                                      : prev,
+                                  )
+                                }
+                                placeholder="wiki (optional)"
+                              />
+                            </div>
+                          </div>
+                          {syncError ? (
+                            <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                              {syncError}
+                            </p>
+                          ) : null}
+                        </TabsPanel>
+                      </Tabs>
                     </div>
-                  )}
-                </div>
 
-                <div className="flex items-center justify-end gap-2 border-t border-[var(--theme-border)] px-5 py-3">
-                  <DialogClose
-                    render={
-                      <Button variant="outline" size="sm">
-                        Cancel
-                      </Button>
-                    }
-                  />
-                  {settingsSource?.type === 'github' ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={syncing || !settingsSource.repo}
-                      onClick={async () => {
-                        if (!settingsSource || settingsSource.type !== 'github')
-                          return
-                        setSyncing(true)
-                        setSyncError(null)
-                        try {
-                          const res = await fetch('/api/knowledge/sync', {
+                    <div className="flex justify-end gap-2">
+                      <DialogClose>Cancel</DialogClose>
+                      {settingsSource?.type === 'github' ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={syncing || !settingsSource.repo}
+                          onClick={async () => {
+                            if (
+                              !settingsSource ||
+                              settingsSource.type !== 'github'
+                            )
+                              return
+                            setSyncing(true)
+                            setSyncError(null)
+                            try {
+                              const res = await fetch('/api/knowledge/sync', {
+                                method: 'POST',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                  source: settingsSource,
+                                }),
+                              })
+                              const data = (await res.json()) as {
+                                error?: string
+                              }
+                              if (data.error) {
+                                setSyncError(data.error)
+                              } else {
+                                queryClient.invalidateQueries({
+                                  queryKey: ['knowledge', 'list'],
+                                })
+                              }
+                            } catch (err) {
+                              setSyncError(
+                                err instanceof Error
+                                  ? err.message
+                                  : 'Sync failed',
+                              )
+                            } finally {
+                              setSyncing(false)
+                            }
+                          }}
+                        >
+                          {syncing ? 'Syncing…' : 'Sync now'}
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        onClick={async () => {
+                          if (!settingsSource) return
+                          const source =
+                            settingsSource.type === 'local'
+                              ? {
+                                  type: 'local' as const,
+                                  path: settingsSource.path,
+                                }
+                              : {
+                                  type: 'github' as const,
+                                  repo: settingsSource.repo,
+                                  branch: settingsSource.branch || 'main',
+                                  path: settingsSource.path || '',
+                                }
+                          await fetch('/api/knowledge/config', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              source: settingsSource,
-                            }),
+                            body: JSON.stringify({ source }),
                           })
-                          const data = (await res.json()) as {
-                            error?: string
-                          }
-                          if (data.error) {
-                            setSyncError(data.error)
-                          } else {
-                            queryClient.invalidateQueries({
-                              queryKey: ['knowledge', 'list'],
-                            })
-                          }
-                        } catch (err) {
-                          setSyncError(
-                            err instanceof Error ? err.message : 'Sync failed',
-                          )
-                        } finally {
-                          setSyncing(false)
-                        }
-                      }}
-                    >
-                      {syncing ? 'Syncing…' : 'Sync now'}
-                    </Button>
-                  ) : null}
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={async () => {
-                      if (!settingsSource) return
-                      const source =
-                        settingsSource.type === 'local'
-                          ? {
-                              type: 'local' as const,
-                              path: settingsSource.path,
-                            }
-                          : {
-                              type: 'github' as const,
-                              repo: settingsSource.repo,
-                              branch: settingsSource.branch || 'main',
-                              path: settingsSource.path || '',
-                            }
-                      await fetch('/api/knowledge/config', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ source }),
-                      })
-                      queryClient.invalidateQueries({
-                        queryKey: ['knowledge', 'list'],
-                      })
-                      setSettingsOpen(false)
-                    }}
-                  >
-                    Save
-                  </Button>
+                          queryClient.invalidateQueries({
+                            queryKey: ['knowledge', 'list'],
+                          })
+                          setSettingsOpen(false)
+                        }}
+                      >
+                        Save
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               </DialogContent>
             </DialogRoot>

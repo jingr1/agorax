@@ -12,6 +12,14 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import {
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogRoot,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
   MenuContent,
   MenuItem,
   MenuRoot,
@@ -19,9 +27,9 @@ import {
 } from '@/components/ui/menu'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  MoreVerticalCircle01Icon,
+  MoreHorizontalIcon,
   Delete01Icon,
-  Edit02Icon,
+  Pen01Icon,
   PauseIcon,
   PlayIcon,
   Add01Icon,
@@ -340,9 +348,7 @@ export function GroupChatLayout() {
                       <div className="text-xs text-danger">{createError}</div>
                     ) : null}
                     <div className="flex justify-end gap-2">
-                      <DialogClose type="button" className="inline-flex">
-                        <Button variant="ghost">Cancel</Button>
-                      </DialogClose>
+                      <DialogClose>Cancel</DialogClose>
                       <Button onClick={handleCreateRoom}>Create</Button>
                     </div>
                   </div>
@@ -417,73 +423,89 @@ export function GroupChatLayout() {
                       <MenuRoot>
                         <MenuTrigger
                           type="button"
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                          }}
                           className={cn(
-                            'inline-flex size-7 items-center justify-center rounded-md text-primary-500 transition-opacity hover:bg-primary-300/60',
-                            'md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100',
-                            'aria-expanded:opacity-100',
-                            isActive && 'md:opacity-100',
+                            'inline-flex size-7 items-center justify-center rounded-md text-primary-700',
+                            'opacity-0 transition-opacity group-hover:opacity-100 hover:bg-primary-200 dark:hover:bg-primary-800',
+                            'aria-expanded:opacity-100 aria-expanded:bg-primary-200',
+                            isActive && 'opacity-100',
                           )}
                           aria-label={`Room options for ${room.title}`}
                         >
                           <HugeiconsIcon
-                            icon={MoreVerticalCircle01Icon}
-                            size={18}
-                            strokeWidth={2}
-                            color="currentColor"
+                            icon={MoreHorizontalIcon}
+                            size={20}
+                            strokeWidth={1.5}
                           />
                         </MenuTrigger>
-                        <MenuContent align="end" side="bottom">
+                        <MenuContent side="bottom" align="end">
                           <MenuItem
-                            onClick={() => {
+                            onClick={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
                               setRenameTarget(room)
                               setRenameTitle(room.title)
                             }}
+                            className="gap-2"
                           >
                             <HugeiconsIcon
-                              icon={Edit02Icon}
-                              size={16}
+                              icon={Pen01Icon}
+                              size={20}
                               strokeWidth={1.5}
                             />
                             Rename
                           </MenuItem>
                           {room.state === 'paused' ? (
                             <MenuItem
-                              onClick={() => {
+                              onClick={(event) => {
+                                event.preventDefault()
+                                event.stopPropagation()
                                 void updateRoom(room.id, {
                                   state: 'active',
                                 }).then(() => loadRooms())
                               }}
+                              className="gap-2"
                             >
                               <HugeiconsIcon
                                 icon={PlayIcon}
-                                size={16}
+                                size={20}
                                 strokeWidth={1.5}
                               />
                               Resume room
                             </MenuItem>
                           ) : room.state === 'active' ? (
                             <MenuItem
-                              onClick={() => {
+                              onClick={(event) => {
+                                event.preventDefault()
+                                event.stopPropagation()
                                 void updateRoom(room.id, {
                                   state: 'paused',
                                 }).then(() => loadRooms())
                               }}
+                              className="gap-2"
                             >
                               <HugeiconsIcon
                                 icon={PauseIcon}
-                                size={16}
+                                size={20}
                                 strokeWidth={1.5}
                               />
                               Pause room
                             </MenuItem>
                           ) : null}
                           <MenuItem
-                            className="text-danger focus:text-danger"
-                            onClick={() => setDeleteTarget(room)}
+                            onClick={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              setDeleteTarget(room)
+                            }}
+                            className="gap-2 text-red-700 hover:bg-red-50 dark:hover:bg-red-900/30/80 data-highlighted:bg-red-50/80"
                           >
                             <HugeiconsIcon
                               icon={Delete01Icon}
-                              size={16}
+                              size={20}
                               strokeWidth={1.5}
                             />
                             Delete room
@@ -536,55 +558,61 @@ export function GroupChatLayout() {
         }}
       >
         <DialogContent>
-          <DialogTitle>Rename room</DialogTitle>
-          <DialogDescription>
-            Change the display name for this room.
-          </DialogDescription>
-          <div className="flex gap-2 mt-4">
-            <Input
-              placeholder="Room title"
-              value={renameTitle}
-              onChange={(e) => setRenameTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleConfirmRename()
-              }}
-              disabled={renaming}
-              autoFocus
-            />
-            <Button
-              disabled={renaming || !renameTitle.trim()}
-              onClick={() => void handleConfirmRename()}
-            >
-              {renaming ? 'Saving…' : 'Save'}
-            </Button>
+          <div className="p-4">
+            <DialogTitle className="mb-1">Rename room</DialogTitle>
+            <DialogDescription className="mb-3">
+              Change the display name for this room.
+            </DialogDescription>
+            <div className="flex flex-col gap-3">
+              <Input
+                placeholder="Room title"
+                value={renameTitle}
+                onChange={(e) => setRenameTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleConfirmRename()
+                }}
+                disabled={renaming}
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <DialogClose disabled={renaming}>Cancel</DialogClose>
+                <Button
+                  disabled={renaming || !renameTitle.trim()}
+                  onClick={() => void handleConfirmRename()}
+                >
+                  {renaming ? 'Saving…' : 'Save'}
+                </Button>
+              </div>
+            </div>
           </div>
         </DialogContent>
       </DialogRoot>
 
-      <DialogRoot
+      <AlertDialogRoot
         open={deleteTarget !== null}
         onOpenChange={(open) => {
           if (!open && !deleting) setDeleteTarget(null)
         }}
       >
-        <DialogContent>
-          <DialogTitle>Delete room?</DialogTitle>
-          <DialogDescription>
-            This will permanently remove <strong>{deleteTarget?.title}</strong>{' '}
-            and all its messages, participants, and pending turns.
-          </DialogDescription>
-          <div className="mt-5 flex justify-end gap-2">
-            <DialogClose disabled={deleting}>Cancel</DialogClose>
-            <Button
-              variant="destructive"
-              disabled={deleting}
-              onClick={() => void handleConfirmDelete()}
-            >
-              {deleting ? 'Deleting…' : 'Delete'}
-            </Button>
+        <AlertDialogContent>
+          <div className="p-4">
+            <AlertDialogTitle className="mb-1">Delete room?</AlertDialogTitle>
+            <AlertDialogDescription className="mb-4">
+              This will permanently remove "{deleteTarget?.title}" and all its
+              messages, participants, and pending turns.
+            </AlertDialogDescription>
+            <div className="flex justify-end gap-2">
+              <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={deleting}
+                onClick={() => void handleConfirmDelete()}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </AlertDialogAction>
+            </div>
           </div>
-        </DialogContent>
-      </DialogRoot>
+        </AlertDialogContent>
+      </AlertDialogRoot>
 
       <main className="flex-1 min-w-0 bg-[var(--theme-bg)]">
         <GroupChatRoomsContext.Provider value={rooms}>
