@@ -527,9 +527,11 @@ body {
   white-space: pre;
 }
 
-.code-block-pre--single {
+.code-block-pre.code-block-pre--single {
   padding-top: 12px;
   padding-bottom: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .code-block code {

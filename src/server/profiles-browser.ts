@@ -515,6 +515,32 @@ function profileStateDbPath(name: string): string {
     : path.join(getProfilesRoot(), normalized, 'state.db')
 }
 
+/** Hermes index: idx_sessions_effective_activity (COALESCE(last_activity_at, started_at) DESC). */
+function sessionActivityOrderSql(columns: Set<string>): string {
+  return columns.has('last_activity_at')
+    ? 'COALESCE(last_activity_at, started_at)'
+    : 'started_at'
+}
+
+function readSessionColumnNames(db: {
+  prepare: (sql: string) => {
+    all: (...params: Array<unknown>) => Array<Record<string, unknown>>
+  }
+}): Set<string> {
+  const names = new Set<string>()
+  for (const row of db.prepare('PRAGMA table_info(sessions)').all()) {
+    const name = row.name
+    if (typeof name === 'string' && name.length > 0) names.add(name)
+  }
+  return names
+}
+
+function unixSecondsToMs(value: unknown): number {
+  const seconds = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0
+  return seconds * 1000
+}
+
 function openProfileStateDb(dbPath: string): {
   prepare: (sql: string) => {
     all: (...params: Array<unknown>) => Array<Record<string, unknown>>
@@ -567,18 +593,23 @@ export function listSessionsForProfile(name: string): Array<{
   if (!db) return []
 
   try {
+    const columns = readSessionColumnNames(db)
+    const activitySql = sessionActivityOrderSql(columns)
+    const archivedSql = columns.has('archived')
+      ? 'WHERE archived = 0 OR archived IS NULL'
+      : ''
     const stmt = db.prepare(
-      `SELECT id, title, model, started_at, message_count
+      `SELECT id, title, model, ${activitySql} AS activity_at, message_count
        FROM sessions
-       WHERE archived = 0 OR archived IS NULL
-       ORDER BY started_at DESC
+       ${archivedSql}
+       ORDER BY ${activitySql} DESC
        LIMIT 100`,
     )
     const results = stmt.all()
     return results.map((r: Record<string, unknown>) => ({
       key: String(r.id ?? ''),
       friendlyId: String(r.id ?? ''),
-      updatedAt: typeof r.started_at === 'number' ? r.started_at * 1000 : 0,
+      updatedAt: unixSecondsToMs(r.activity_at),
       source: `profile:${normalized}`,
       title: (r.title as string) || null,
       messageCount: typeof r.message_count === 'number' ? r.message_count : 0,

@@ -7,6 +7,7 @@ vi.mock('../gateway-pool', () => ({
 vi.mock('../gateway-ports', () => ({
   getProfileGatewayUrl: vi.fn((name: string) => `http://127.0.0.1:86${name}`),
   resolveProfileGatewayPort: vi.fn(() => 8642),
+  resolveGatewayTopology: vi.fn(() => ({ kind: 'per-port' as const })),
 }))
 
 vi.mock('../gateway-port-owner', () => ({
@@ -15,7 +16,8 @@ vi.mock('../gateway-port-owner', () => ({
 
 import { probeProfileGateway } from '../gateway-pool'
 import { isPortInUse } from '../gateway-port-owner'
-import { getProfileGatewayUrl } from '../gateway-ports'
+import { getProfileGatewayUrl, resolveGatewayTopology } from '../gateway-ports'
+import type { GatewayTopology } from '../gateway-ports'
 import {
   clearHermesGatewayProbeCache,
   probeHermesProfileGateway,
@@ -29,6 +31,7 @@ describe('probeHermesProfileGateway', () => {
     vi.mocked(getProfileGatewayUrl).mockImplementation(
       (name: string) => `http://127.0.0.1:8642/${name}`,
     )
+    vi.mocked(resolveGatewayTopology).mockReturnValue({ kind: 'per-port' })
   })
 
   afterEach(() => {
@@ -63,6 +66,21 @@ describe('probeHermesProfileGateway', () => {
       available: false,
       detail: 'hermes gateway port not owned (http://127.0.0.1:8642/default)',
     })
+  })
+
+  it('treats a multiplex host as available for named profiles', async () => {
+    vi.mocked(resolveGatewayTopology).mockReturnValue({
+      kind: 'multiplex',
+      port: 8642,
+      served: ['default', 'architect'],
+    } satisfies GatewayTopology)
+    vi.mocked(probeProfileGateway).mockImplementation(async (name) => name === 'default')
+
+    await expect(probeHermesProfileGateway('architect')).resolves.toEqual({
+      available: true,
+      detail: 'hermes gateway http://127.0.0.1:8642/architect',
+    })
+    expect(probeProfileGateway).toHaveBeenCalledWith('default')
   })
 
   it('caches positive results longer than negatives', async () => {

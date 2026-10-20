@@ -242,7 +242,7 @@ export function projectActivityMessagesToChat(
   return foldAssistantsPerUserTurn(collapseAdjacentAssistantEchoes(out))
 }
 
-function assistantPlainText(message: ChatMessage): string {
+function assistantBodyText(message: ChatMessage): string {
   if (!Array.isArray(message.content)) return ''
   return message.content
     .map((part) => {
@@ -257,8 +257,22 @@ function assistantPlainText(message: ChatMessage): string {
       return ''
     })
     .join('')
-    .replace(/\s+/g, ' ')
-    .trim()
+}
+
+/** Echo / richness key. Not the bubble body — collapsing here drops fences. */
+function assistantPlainText(message: ChatMessage): string {
+  return assistantBodyText(message).replace(/\s+/g, ' ').trim()
+}
+
+function mergeAssistantBodies(current: string, next: string): string {
+  if (!next.trim()) return current
+  if (!current.trim()) return next
+  const flat = (value: string) => value.replace(/\s+/g, ' ').trim()
+  const currentFlat = flat(current)
+  const nextFlat = flat(next)
+  if (currentFlat.includes(nextFlat)) return current
+  if (nextFlat.includes(currentFlat)) return next
+  return `${current.replace(/\s+$/, '')}\n\n${next.replace(/^\s+/, '')}`
 }
 
 function assistantHostRichness(message: ChatMessage): number {
@@ -428,14 +442,7 @@ function mergeAssistantHostGroup(hosts: readonly ChatMessage[]): ChatMessage {
           : partThinking
         : partThinking
     }
-    const partText = assistantPlainText(host)
-    if (partText) {
-      text = text
-        ? text.length >= partText.length
-          ? text
-          : partText
-        : partText
-    }
+    text = mergeAssistantBodies(text, assistantBodyText(host))
     const partTools = toolCallsFromChatMessage(host)
     if (partTools.length > 0) {
       const seen = new Set(tools.map((tool) => tool.id))

@@ -102,11 +102,59 @@ describe('hermes-multiplex', () => {
         isPortInUse: (port: number) => port === 8642,
       }
     })
+    process.env.HERMES_API_URL = 'http://127.0.0.1:8642'
+    delete process.env.HERMES_GATEWAY_POOL
     const ports = await import('./gateway-ports')
+    expect(ports.resolveGatewayTopology()).toMatchObject({
+      kind: 'multiplex',
+      port: 8642,
+    })
     expect(ports.getProfileGatewayUrl('architect')).toBe(
       'http://127.0.0.1:8642/p/architect',
     )
     expect(ports.getProfileGatewayUrl('default')).toBe('http://127.0.0.1:8642')
+  })
+
+  it('uses multiplex urls when multiplex_profiles is configured and the host is down', async () => {
+    const home = makeHome()
+    mkdirSync(path.join(home, 'profiles', 'architect'), { recursive: true })
+    mkdirSync(path.join(home, 'workspace'), { recursive: true })
+    process.env.AGORAX_STATE_DIR = path.join(home, 'workspace')
+    process.env.HERMES_API_URL = 'http://127.0.0.1:8642'
+    delete process.env.HERMES_GATEWAY_POOL
+    writeFileSync(
+      path.join(home, 'config.yaml'),
+      'gateway:\n  multiplex_profiles: true\n',
+    )
+    const ports = await import('./gateway-ports')
+    expect(ports.resolveGatewayTopology()).toEqual({
+      kind: 'multiplex',
+      port: 8642,
+      served: [],
+    })
+    expect(ports.getProfileGatewayUrl('architect')).toBe(
+      'http://127.0.0.1:8642/p/architect',
+    )
+  })
+
+  it('stays remote when pairing is not loopback, even if multiplex is configured', async () => {
+    const home = makeHome()
+    mkdirSync(path.join(home, 'workspace'), { recursive: true })
+    process.env.AGORAX_STATE_DIR = path.join(home, 'workspace')
+    process.env.HERMES_API_URL = 'http://100.64.0.10:8642'
+    delete process.env.HERMES_GATEWAY_POOL
+    writeFileSync(
+      path.join(home, 'config.yaml'),
+      'gateway:\n  multiplex_profiles: true\n',
+    )
+    const ports = await import('./gateway-ports')
+    expect(ports.resolveGatewayTopology()).toEqual({
+      kind: 'remote',
+      url: 'http://100.64.0.10:8642',
+    })
+    expect(ports.getProfileGatewayUrl('architect')).toBe(
+      'http://100.64.0.10:8642',
+    )
   })
 
   it('keeps multiplex routing for a standalone profile (mixed mode unsupported)', async () => {
@@ -135,6 +183,8 @@ describe('hermes-multiplex', () => {
         isPortInUse: (port: number) => port === 8642,
       }
     })
+    process.env.HERMES_API_URL = 'http://127.0.0.1:8642'
+    delete process.env.HERMES_GATEWAY_POOL
     const mod = await import('./hermes-multiplex')
     expect(mod.isProfileStandalone('aider')).toBe(true)
     expect(mod.isProfileStandalone('architect')).toBe(false)

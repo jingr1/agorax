@@ -9,6 +9,7 @@ import {
   readProfile,
   updateProfileConfig,
   getMessagesForProfile,
+  listSessionsForProfile,
   updateProfileModelProvider,
   updateAllProfilesModelProvider,
   readModelProviderFromConfig,
@@ -433,5 +434,88 @@ describe('profile model/provider updates', () => {
       model: 'Kimi-K2.7-Code',
       provider: 'custom:tokenx',
     })
+  })
+})
+
+describe('listSessionsForProfile', () => {
+  let tempHome: string
+
+  beforeEach(() => {
+    tempHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'hermes-workspace-sessions-'),
+    )
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome)
+    delete process.env.HERMES_HOME
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    fs.rmSync(tempHome, { recursive: true, force: true })
+  })
+
+  function openDb() {
+    const profileRoot = path.join(tempHome, '.hermes', 'profiles', 'aider')
+    fs.mkdirSync(profileRoot, { recursive: true })
+    const Database = nodeRequire('better-sqlite3') as new (
+      path: string,
+    ) => {
+      exec: (sql: string) => void
+      close: () => void
+    }
+    return new Database(path.join(profileRoot, 'state.db'))
+  }
+
+  it('orders sessions by last activity, not creation time', () => {
+    const db = openDb()
+    db.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        model TEXT,
+        started_at REAL,
+        last_activity_at REAL,
+        message_count INTEGER,
+        archived INTEGER
+      );
+      INSERT INTO sessions
+        (id, title, model, started_at, last_activity_at, message_count, archived)
+        VALUES
+          ('old-active', 'still used', 'm', 1000, 5000, 4, 0),
+          ('new-idle', 'just created', 'm', 4000, 4000, 1, 0),
+          ('archived', 'gone', 'm', 9000, 9000, 1, 1);
+    `)
+    db.close()
+
+    const sessions = listSessionsForProfile('aider')
+    expect(sessions.map((session) => session.friendlyId)).toEqual([
+      'old-active',
+      'new-idle',
+    ])
+    expect(sessions[0]?.updatedAt).toBe(5000 * 1000)
+  })
+
+  it('falls back to started_at when the activity column is absent', () => {
+    const db = openDb()
+    db.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        model TEXT,
+        started_at REAL,
+        message_count INTEGER
+      );
+      INSERT INTO sessions (id, title, model, started_at, message_count)
+        VALUES
+          ('older', 'a', 'm', 1000, 1),
+          ('newer', 'b', 'm', 2000, 1);
+    `)
+    db.close()
+
+    const sessions = listSessionsForProfile('aider')
+    expect(sessions.map((session) => session.friendlyId)).toEqual([
+      'newer',
+      'older',
+    ])
+    expect(sessions[0]?.updatedAt).toBe(2000 * 1000)
   })
 })

@@ -14,9 +14,9 @@ import {
 import { ensureSwarmProfileConfig } from './swarm-profile-config'
 import { getStateDir } from './workspace-state-dir'
 import {
-  isProfileMultiplexServed,
   multiplexProfileGatewayUrl,
   readLiveMultiplexGateway,
+  readMultiplexProfilesConfig,
 } from './hermes-multiplex'
 
 export const GATEWAY_BASE_PORT = 8642
@@ -71,6 +71,34 @@ export function isGatewayPoolEnabled(): boolean {
   if (flag === '0' || flag === 'false' || flag === 'off') return false
   if (flag === '1' || flag === 'true' || flag === 'on') return true
   return isLoopbackUrl(pairingGatewayUrl())
+}
+
+/**
+ * One gateway shape for ensure, URL, process probe, and eviction.
+ * Remote pairing and an explicit pool-off never manage local processes.
+ * A live multiplex host, or `gateway.multiplex_profiles: true`, is one
+ * process (`default` on its port). Otherwise each profile has its own port.
+ */
+export type GatewayTopology =
+  | { kind: 'remote'; url: string }
+  | { kind: 'multiplex'; port: number; served: string[] }
+  | { kind: 'per-port' }
+
+export function resolveGatewayTopology(): GatewayTopology {
+  const url = pairingGatewayUrl()
+  const flag = envFlag('HERMES_GATEWAY_POOL')
+  const poolOff = flag === '0' || flag === 'false' || flag === 'off'
+  if (poolOff || !isLoopbackUrl(url)) {
+    return { kind: 'remote', url }
+  }
+  const live = readLiveMultiplexGateway()
+  if (live) {
+    return { kind: 'multiplex', port: live.port, served: live.servedProfiles }
+  }
+  if (readMultiplexProfilesConfig() === true) {
+    return { kind: 'multiplex', port: GATEWAY_BASE_PORT, served: [] }
+  }
+  return { kind: 'per-port' }
 }
 
 export function gatewayUrlForPort(port: number): string {
@@ -470,8 +498,10 @@ export function resolveProfileGatewayPort(profileName: string): number {
 
 export function getProfileGatewayUrl(profileName: string): string {
   const name = (profileName || 'default').trim() || 'default'
-  if (isProfileMultiplexServed(name) || readLiveMultiplexGateway()) {
-    return multiplexProfileGatewayUrl(name)
+  const topology = resolveGatewayTopology()
+  if (topology.kind === 'remote') return topology.url
+  if (topology.kind === 'multiplex') {
+    return multiplexProfileGatewayUrl(name, topology.port)
   }
   return gatewayUrlForPort(resolveProfileGatewayPort(name))
 }

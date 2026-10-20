@@ -14,6 +14,7 @@ import type { AgentProbeResult } from './types'
 import { probeProfileGateway } from '../gateway-pool'
 import {
   getProfileGatewayUrl,
+  resolveGatewayTopology,
   resolveProfileGatewayPort,
 } from '../gateway-ports'
 import { isPortInUse } from '../gateway-port-owner'
@@ -63,7 +64,11 @@ export async function probeHermesProfileGateway(
 
   const work = (async (): Promise<AgentProbeResult> => {
     try {
-      const owned = await probeProfileGateway(name)
+      const topology = resolveGatewayTopology()
+      const owned =
+        topology.kind === 'multiplex'
+          ? await probeProfileGateway('default')
+          : await probeProfileGateway(name)
       const url = getProfileGatewayUrl(name)
       if (owned) {
         return {

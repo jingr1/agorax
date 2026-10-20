@@ -1,6 +1,9 @@
 /**
- * Lazy gateway residency: cold-start on first use, LRU eviction when more
- * than N profiles stay warm simultaneously.
+ * Lazy gateway residency for the per-port topology: cold-start on first use,
+ * LRU eviction when more than N profile processes stay warm.
+ *
+ * Multiplex is one process (`default`). Named profiles are routes and are
+ * not leases. Remote pairing does not start this scheduler.
  *
  * `default` is pinned: never LRU-evicted, and restarted if it dies.
  * It still counts toward maxResident so the pool stays at most N warm
@@ -19,6 +22,7 @@ import {
   listManagedProfileNames,
   listPersistedOrphanProfilePorts,
   PINNED_GATEWAY_PROFILE,
+  resolveGatewayTopology,
   resolveProfileGatewayPort,
 } from './gateway-ports'
 import { pidListeningOnPort } from './gateway-port-owner'
@@ -203,8 +207,14 @@ export function selectEvictionCandidates(
 }
 
 async function listRunningLeases(): Promise<Array<GatewayLease>> {
+  const topology = resolveGatewayTopology()
+  if (topology.kind === 'remote') return []
+  const names =
+    topology.kind === 'multiplex'
+      ? [PINNED_GATEWAY_PROFILE]
+      : listManagedProfileNames()
   const running: Array<GatewayLease> = []
-  for (const name of listManagedProfileNames()) {
+  for (const name of names) {
     if (!(await isProfileGatewayRunning(name))) continue
     const lease = leases.get(name) ?? {
       profile: name,
@@ -222,7 +232,7 @@ async function listRunningLeases(): Promise<Array<GatewayLease>> {
 export async function runEvictionCycle(options?: {
   incomingProfile?: string
 }): Promise<Array<string>> {
-  if (!isGatewayPoolEnabled()) return []
+  if (resolveGatewayTopology().kind === 'remote') return []
 
   const config = readGatewayLifecycleConfig()
   const now = Date.now()
@@ -244,7 +254,7 @@ export async function runEvictionCycle(options?: {
     if (isPinnedGatewayProfile(profile)) continue
     const stopped = stopProfileGateway(profile)
     clearGatewayLease(profile)
-    if (stopped.ok) {
+    if (stopped.message === 'stopped') {
       console.log(`[gateway-pool] evicted gateway for profile ${profile}`)
     }
   }
@@ -278,7 +288,7 @@ export async function ensureDefaultResidentGateway(): Promise<void> {
 }
 
 export function ensureGatewayLifecycleScheduler(): void {
-  if (!isGatewayPoolEnabled()) return
+  if (resolveGatewayTopology().kind === 'remote') return
   const generation = bumpEvictGeneration()
   if (getEvictTimer()) {
     setEvictTimer(null)
@@ -322,7 +332,7 @@ export function ensureGatewayLifecycleScheduler(): void {
 
 /** Stop gateways for profiles removed from disk but still listed in gateway-pool.json. */
 export async function reconcileRemovedProfileGateways(): Promise<string[]> {
-  if (!isGatewayPoolEnabled()) return []
+  if (resolveGatewayTopology().kind !== 'per-port') return []
   const orphans = listPersistedOrphanProfilePorts()
   if (orphans.length === 0) return []
 
@@ -360,6 +370,6 @@ export async function reconcileRemovedProfileGateways(): Promise<string[]> {
 export async function evictBeforeGatewayStart(
   profileName: string,
 ): Promise<void> {
-  if (!isGatewayPoolEnabled()) return
+  if (resolveGatewayTopology().kind !== 'per-port') return
   await runEvictionCycle({ incomingProfile: profileName })
 }

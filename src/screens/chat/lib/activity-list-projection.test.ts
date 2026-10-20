@@ -86,10 +86,83 @@ describe('foldAssistantsPerUserTurn', () => {
         }),
         expect.objectContaining({
           type: 'text',
-          text: expect.stringContaining('之前已经分析过'),
+          text: '是的，之前已经分析过：\n\n- IO tensor → context',
         }),
       ]),
     )
+  })
+
+  it('keeps fences when a turn has two assistant text rows', () => {
+    const intro =
+      'udev 规则没生效。可能是 subsystem 不匹配或设备名不对，我来诊断一下。'
+    const body = [
+      '找到原因了：',
+      '',
+      '## 需要你手动在板端执行',
+      '',
+      '```bash',
+      "sudo tee /etc/udev/rules.d/99-allspark-npu.rules <<'EOF'",
+      'KERNEL=="ad_npu_procfs_c1", MODE="0666"',
+      'EOF',
+      '```',
+    ].join('\n')
+    const folded = foldAssistantsPerUserTurn([
+      {
+        id: 'u1',
+        role: 'user',
+        content: [{ type: 'text', text: 'run it' }],
+        timestamp: 1,
+      } as ChatMessage,
+      {
+        id: 'msg-16292',
+        messageId: 'msg-16292',
+        role: 'assistant',
+        content: [{ type: 'text', text: intro }],
+        timestamp: 2,
+      } as ChatMessage,
+      {
+        id: 'msg-16298',
+        messageId: 'msg-16298',
+        role: 'assistant',
+        content: [{ type: 'text', text: body }],
+        timestamp: 3,
+      } as ChatMessage,
+    ])
+    expect(folded.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+    ])
+    const text = folded[1]?.content?.find((part) => part.type === 'text')?.text
+    expect(text).toBe(`${intro}\n\n${body}`)
+  })
+
+  it('does not append a segment already inside the longer host', () => {
+    const body = '找到原因了：\n\n```bash\necho hi\n```'
+    const live = `先看一下。\n\n${body}`
+    const folded = foldAssistantsPerUserTurn([
+      {
+        id: 'u1',
+        role: 'user',
+        content: [{ type: 'text', text: 'run it' }],
+        timestamp: 1,
+      } as ChatMessage,
+      {
+        id: 'assistant:run-1',
+        messageId: 'assistant:run-1',
+        role: 'assistant',
+        content: [{ type: 'text', text: live }],
+        timestamp: 2,
+      } as ChatMessage,
+      {
+        id: 'msg-16298',
+        messageId: 'msg-16298',
+        role: 'assistant',
+        content: [{ type: 'text', text: body }],
+        timestamp: 3,
+      } as ChatMessage,
+    ])
+    const text = folded[1]?.content?.find((part) => part.type === 'text')?.text
+    expect(text).toBe(live)
   })
 })
 

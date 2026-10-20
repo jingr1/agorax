@@ -11,6 +11,7 @@ import {
   extractReasoningFromGatewayEvent,
   extractReasoningFromToolProgress,
   extractStreamingThinking,
+  takeAssistantCompletedContent,
 } from './send-stream'
 
 describe('extractReasoningFromToolProgress', () => {
@@ -129,6 +130,24 @@ describe('extractStreamingThinking', () => {
     expect(split.displayText).toBe('hello ')
     expect(split.pendingThinking).toBe('')
     expect(split.remainingBuffer).toBe('hello <thinking')
+  })
+})
+
+describe('takeAssistantCompletedContent', () => {
+  it('drops final_response when deltas already streamed it', () => {
+    const streamed = 'udev 规则没生效。\n\n找到原因了。'
+    expect(
+      takeAssistantCompletedContent(streamed, '找到原因了。', true),
+    ).toBe(streamed)
+    expect(takeAssistantCompletedContent(streamed, streamed, true)).toBe(
+      streamed,
+    )
+  })
+
+  it('uses final_response when the turn produced no deltas', () => {
+    expect(takeAssistantCompletedContent('', 'final reply', false)).toBe(
+      'final reply',
+    )
   })
 })
 

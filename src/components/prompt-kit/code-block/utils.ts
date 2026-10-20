@@ -108,7 +108,9 @@ export function inferLanguageFromContent(content: string): string | null {
 
   if (
     /(?:^|\n)\s*#!\/(?:usr\/)?bin\/(?:ba)?sh/m.test(sample) ||
-    /(?:^|\n)\s*(?:export|source|curl|apt-get|docker|ollama|acompile)\b/m.test(
+    /^(?:bash|sh|zsh|sudo)\b/.test(sample) ||
+    /<<\s*['"]?[A-Za-z_]/.test(sample) ||
+    /(?:^|\n)\s*(?:export|source|curl|apt-get|docker|ollama|acompile|bash|sudo|pnpm|npm|npx)\b/m.test(
       sample,
     ) ||
     /\/bin\/bash\b/.test(sample) ||
@@ -135,6 +137,17 @@ export function inferLanguageFromContent(content: string): string | null {
   }
 
   return null
+}
+
+const SHELL_COMMAND_LEAD =
+  /^(?:bash|sh|zsh|sudo|python3?|pnpm|npm|npx|yarn|curl|wget|git|docker|ssh|chmod|chown|tee|cat|echo|printf|systemctl|journalctl)\b/
+
+/** Long shell one-liners should be a code block, not a clipped inline chip. */
+export function looksLikeShellCommand(content: string): boolean {
+  const sample = content.trim()
+  if (sample.length < 16) return false
+  if (/<<\s*['"]?[A-Za-z_]/.test(sample)) return true
+  return SHELL_COMMAND_LEAD.test(sample) && sample.length >= 40 && /\s/.test(sample)
 }
 
 /** Combine fence tag (if any) with content heuristics for CodeBlock rendering. */

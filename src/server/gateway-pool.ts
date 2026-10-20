@@ -1,6 +1,8 @@
 /**
- * Multi-gateway pool: one Hermes API server per profile, lazy start,
- * LRU eviction when more than N profiles stay warm (see gateway-lifecycle.ts).
+ * Local gateway residency. Topology is `resolveGatewayTopology()`:
+ * remote pairing does not spawn; multiplex keeps one `default` host and
+ * routes named profiles at `/p/<name>`; per-port lazy-starts one process
+ * per profile and LRU-evicts past N (see gateway-lifecycle.ts).
  * `default` is pinned resident; background starts never steal HERMES_API.
  */
 import path from 'node:path'
@@ -25,6 +27,7 @@ import {
   isGatewayPoolEnabled,
   listManagedProfileNames,
   profileNameFromHermesHome,
+  resolveGatewayTopology,
   resolveProfileGatewayPort,
 } from './gateway-ports'
 import {
@@ -45,7 +48,6 @@ import {
   isProfileStandalone,
   multiplexProfileGatewayUrl,
   readLiveMultiplexGateway,
-  shouldUseMultiplexGatewayPath,
 } from './hermes-multiplex'
 
 export {
@@ -179,33 +181,42 @@ async function vacateForeignOccupant(
  * Ensure/spawn paths that need HTTP readiness use their own `ownedHealthy`
  * loops with retries; they must not rely on this helper for that.
  */
+/**
+ * Does this profile own a gateway process?
+ * Multiplex: only `default` (the host on its port). Named profiles are
+ * `/p/<name>` routes; reachability is `isMultiplexProfileHealthy`.
+ */
 export async function probeProfileGateway(
   profileName: string,
 ): Promise<boolean> {
   const name = (profileName || 'default').trim() || 'default'
-  const live = readLiveMultiplexGateway()
-  if (
-    live &&
-    (name === PINNED_GATEWAY_PROFILE || isProfileMultiplexServed(name))
-  ) {
-    return profileOwnsPort(PINNED_GATEWAY_PROFILE, live.port)
+  const topology = resolveGatewayTopology()
+  if (topology.kind === 'remote') return false
+  if (topology.kind === 'multiplex') {
+    if (name !== PINNED_GATEWAY_PROFILE) return false
+    return profileOwnsPort(PINNED_GATEWAY_PROFILE, topology.port)
   }
   const port = resolveProfileGatewayPort(name)
   return profileOwnsPort(name, port)
 }
 
 export function getGatewayPoolSnapshot(): Array<PooledGateway> {
-  const live = readLiveMultiplexGateway()
+  const topology = resolveGatewayTopology()
   return listManagedProfileNames().map((profile) => {
-    if (
-      live &&
-      (profile === PINNED_GATEWAY_PROFILE ||
-        live.servedProfiles.includes(profile))
-    ) {
+    if (topology.kind === 'multiplex') {
       return {
         profile,
-        port: live.port,
-        url: multiplexProfileGatewayUrl(profile, live.port),
+        port: topology.port,
+        url: multiplexProfileGatewayUrl(profile, topology.port),
+        hermesHome: resolveProfileHermesHome(profile),
+        state: 'stopped' as GatewayPoolState,
+      }
+    }
+    if (topology.kind === 'remote') {
+      return {
+        profile,
+        port: resolveProfileGatewayPort(profile),
+        url: topology.url,
         hermesHome: resolveProfileHermesHome(profile),
         state: 'stopped' as GatewayPoolState,
       }
@@ -223,18 +234,16 @@ export function getGatewayPoolSnapshot(): Array<PooledGateway> {
 
 export async function getGatewayPoolStatus(): Promise<Array<PooledGateway>> {
   const snapshot = getGatewayPoolSnapshot()
-  const live = readLiveMultiplexGateway()
-  for (const entry of snapshot) {
-    if (
-      live &&
-      (entry.profile === PINNED_GATEWAY_PROFILE ||
-        isProfileMultiplexServed(entry.profile))
-    ) {
-      entry.state = profileOwnsPort(PINNED_GATEWAY_PROFILE, live.port)
-        ? 'healthy'
-        : 'stopped'
-      continue
+  const topology = resolveGatewayTopology()
+  if (topology.kind === 'remote') return snapshot
+  if (topology.kind === 'multiplex') {
+    const healthy = profileOwnsPort(PINNED_GATEWAY_PROFILE, topology.port)
+    for (const entry of snapshot) {
+      entry.state = healthy ? 'healthy' : 'stopped'
     }
+    return snapshot
+  }
+  for (const entry of snapshot) {
     entry.state = profileOwnsPort(entry.profile, entry.port)
       ? 'healthy'
       : 'stopped'
@@ -289,7 +298,6 @@ async function ensureMultiplexProfileGateway(
       (await isMultiplexProfileHealthy(name, 200))
     ) {
       await applyRouteIfActive(name, url)
-      touchGatewayLease(name)
       touchGatewayLease(PINNED_GATEWAY_PROFILE)
       return {
         ok: true,
@@ -335,7 +343,7 @@ async function ensureProfileGatewayLocked(
         started: false,
       }
     }
-    if (shouldUseMultiplexGatewayPath(name)) {
+    if (resolveGatewayTopology().kind === 'multiplex') {
       if (isProfileStandalone(name)) {
         const port = resolveProfileGatewayPort(PINNED_GATEWAY_PROFILE)
         return {
@@ -481,7 +489,8 @@ export async function ensureProfileGateway(
   options: { forceReplace?: boolean } = {},
 ): Promise<EnsureGatewayResult> {
   const name = (profileName || 'default').trim() || 'default'
-  if (!isGatewayPoolEnabled()) {
+  const topology = resolveGatewayTopology()
+  if (topology.kind === 'remote') {
     const port = resolveProfileGatewayPort(name)
     return {
       ok: true,
@@ -489,7 +498,7 @@ export async function ensureProfileGateway(
       profile: name,
       hermesHome: resolveProfileHermesHome(name),
       port,
-      url: gatewayUrlForPort(port),
+      url: topology.url,
       started: false,
     }
   }
@@ -508,7 +517,7 @@ export async function ensureProfileGateway(
 export async function ensureActiveProfileGateway(options?: {
   forceReplace?: boolean
 }): Promise<EnsureGatewayResult> {
-  if (!isGatewayPoolEnabled()) {
+  if (resolveGatewayTopology().kind === 'remote') {
     const started = await startHermesAgent({
       profileName: getActiveProfileName(),
       forceReplace: options?.forceReplace,
@@ -517,7 +526,11 @@ export async function ensureActiveProfileGateway(options?: {
   }
   const name = getActiveProfileName() || 'default'
   const result = await ensureProfileGateway(name, options)
-  if (result.ok && (await probeProfileGateway(name))) {
+  const topology = resolveGatewayTopology()
+  const reachable =
+    result.ok &&
+    (topology.kind === 'multiplex' || (await probeProfileGateway(name)))
+  if (reachable) {
     await applyRoute(getProfileGatewayUrl(name))
     return result
   }
@@ -550,9 +563,14 @@ export async function ensureActiveProfileGateway(options?: {
 }
 
 export async function syncActiveProfileGatewayRoute(): Promise<string | null> {
-  if (!isGatewayPoolEnabled()) return null
+  if (resolveGatewayTopology().kind === 'remote') return null
   const name = getActiveProfileName() || 'default'
-  if (await probeProfileGateway(name)) {
+  const topology = resolveGatewayTopology()
+  const reachable =
+    topology.kind === 'multiplex'
+      ? await probeProfileGateway(PINNED_GATEWAY_PROFILE)
+      : await probeProfileGateway(name)
+  if (reachable) {
     const url = getProfileGatewayUrl(name)
     await applyRoute(url)
     return url

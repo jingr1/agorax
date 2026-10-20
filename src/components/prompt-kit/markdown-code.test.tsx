@@ -47,6 +47,36 @@ describe('Markdown fenced code blocks', () => {
     expect(html).not.toContain('Plain Text')
   })
 
+  it('renders a one-line shell command as a wrapping code block', async () => {
+    const command =
+      "bash sudo tee /etc/udev/rules.d/99-allspark-npu.rules <<'EOF' KERNEL==\"ad_npu_procfs_c1\", MODE=\"0666\""
+    const html = await renderToHtml(
+      <Markdown>{`先执行\n\n\`${command}\`\n`}</Markdown>,
+    )
+    expect(html).toContain('code-block')
+    expect(html).toContain('Bash')
+    expect(html).toContain('0666')
+    expect(html).not.toContain('inline-code')
+  })
+
+  it('keeps short inline tokens as chips', async () => {
+    const html = await renderToHtml(
+      <Markdown>{'设备 `/dev/ad_npu_procfs_c1` 的权限'}</Markdown>,
+    )
+    expect(html).toContain('inline-code')
+    expect(html).toContain('/dev/ad_npu_procfs_c1')
+    expect(html).not.toContain('code-block')
+  })
+
+  it('renders a one-line unlabeled fence as a code block', async () => {
+    const html = await renderToHtml(
+      <Markdown>{['```', 'echo hi', '```'].join('\n')}</Markdown>,
+    )
+    expect(html).toContain('code-block')
+    expect(html).toContain('echo hi')
+    expect(html).not.toContain('inline-code')
+  })
+
   it('infers bash for unlabeled CLI usage fences', async () => {
     const html = await renderToHtml(
       <Markdown>

@@ -289,6 +289,8 @@ describe('ensureProfileGateway mixed-mode guard', () => {
       path.join(dir, 'config.yaml'),
       'gateway:\n  standalone: true\n',
     )
+    process.env.HERMES_API_URL = 'http://127.0.0.1:8642'
+    delete process.env.HERMES_GATEWAY_POOL
     const pool = await import('./gateway-pool')
     const result = await pool.ensureProfileGateway('aider')
     if (result.ok) throw new Error('expected mixed mode to be rejected')

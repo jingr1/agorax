@@ -9,6 +9,7 @@ import {
 import {
   getProfileGatewayUrl,
   isGatewayPoolEnabled,
+  resolveGatewayTopology,
   resolveProfileGatewayPort,
 } from '../../../server/gateway-ports'
 import {
@@ -54,7 +55,12 @@ export const Route = createFileRoute('/api/profiles/activate')({
 
           void (async () => {
             try {
-              if (await probeProfileGateway(name)) return
+              const topology = resolveGatewayTopology()
+              if (topology.kind === 'multiplex') {
+                if (await probeProfileGateway('default')) return
+              } else if (await probeProfileGateway(name)) {
+                return
+              }
               await ensureProfileGateway(name)
             } catch (error) {
               console.warn(

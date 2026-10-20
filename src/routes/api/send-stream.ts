@@ -163,6 +163,21 @@ export function consumeInlineThinking(
   }
 }
 
+/**
+ * Gateway contract: `assistant.delta` is the token stream, and
+ * `assistant.completed.content` is `final_response` emitted once after that
+ * stream. It is the same text again, not more tokens. Append it only when
+ * no delta arrived (the reply was not streamed).
+ */
+export function takeAssistantCompletedContent(
+  buffer: string,
+  completed: string,
+  sawDelta: boolean,
+): string {
+  if (!completed || sawDelta) return buffer
+  return completed
+}
+
 function readNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   return undefined
@@ -1274,6 +1289,8 @@ export const Route = createFileRoute('/api/send-stream')({
               // Buffers raw assistant deltas so we can split out <thinking>
               // blocks that the gateway inlines into the text stream.
               let assistantTextBuffer = ''
+              // True once assistant.delta has already written this turn's text.
+              let sawAssistantDelta = false
               // In enhanced mode, the HTTP stream response delivers all events
               // directly to useStreamingMessage. Skip publishChatEvent to prevent
               // useRealtimeChatHistory from creating duplicate message bubbles.
@@ -1571,14 +1588,17 @@ export const Route = createFileRoute('/api/send-stream')({
                       }
 
                       if (event === 'assistant.completed') {
-                        // Send full content as a chunk — covers cases where
-                        // deltas were missed or response was too short for streaming.
-                        // Split out any inline thinking blocks so they land in
-                        // the Activity panel, not the visible bubble.
+                        // content is final_response, already delivered via
+                        // assistant.delta. Appending it prints the reply twice.
+                        // Use it only when the turn produced no deltas.
                         const content =
                           typeof data.content === 'string' ? data.content : ''
-                        if (content) {
-                          assistantTextBuffer += content
+                        assistantTextBuffer = takeAssistantCompletedContent(
+                          assistantTextBuffer,
+                          content,
+                          sawAssistantDelta,
+                        )
+                        if (content && !sawAssistantDelta) {
                           const displayText = publishInlineThinking(
                             sessionKeyFromEvent,
                             runId,
@@ -1665,6 +1685,7 @@ export const Route = createFileRoute('/api/send-stream')({
                           })
                         }
                         if (!delta) return
+                        sawAssistantDelta = true
                         // Split inline <thinking> blocks out of the text stream
                         // so they render in the Activity panel instead of
                         // appearing in the visible assistant bubble.

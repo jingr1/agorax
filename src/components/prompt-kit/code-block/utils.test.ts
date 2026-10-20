@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   extractLanguageFromClassName,
   inferLanguageFromContent,
+  looksLikeShellCommand,
   normalizeLanguage,
   resolveCodeBlockLanguage,
   resolveLanguage,
@@ -68,6 +69,19 @@ describe('inferLanguageFromContent', () => {
 | Application      |
 +------------------+`
     expect(inferLanguageFromContent(sample)).toBe(null)
+  })
+
+  it('detects a one-line shell command with a heredoc', () => {
+    const sample =
+      "bash sudo tee /etc/udev/rules.d/99-allspark-npu.rules <<'EOF' KERNEL==\"ad_npu_procfs_c1\", MODE=\"0666\""
+    expect(inferLanguageFromContent(sample)).toBe('bash')
+    expect(looksLikeShellCommand(sample)).toBe(true)
+  })
+
+  it('leaves short tokens as inline code', () => {
+    expect(looksLikeShellCommand('/dev/ad_npu_procfs_c1')).toBe(false)
+    expect(looksLikeShellCommand('crw-rw-rw-')).toBe(false)
+    expect(looksLikeShellCommand('git status')).toBe(false)
   })
 
   it('detects bash CLI usage blocks', () => {

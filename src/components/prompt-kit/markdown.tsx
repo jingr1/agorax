@@ -17,7 +17,10 @@ import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import { CodeBlock } from './code-block'
-import { extractLanguageFromClassName } from './code-block/utils'
+import {
+  extractLanguageFromClassName,
+  looksLikeShellCommand,
+} from './code-block/utils'
 import type { Components } from 'react-markdown'
 import { normalizeMathDelimiters } from '@/lib/markdown-math'
 import {
@@ -181,9 +184,34 @@ function extractFencedCodeContent(children: React.ReactNode): string {
   return String(children ?? '').replace(/\n$/, '')
 }
 
-function isFencedCodeBlock(className: string, content: string): boolean {
+function isFencedCodeBlock(
+  className: string,
+  raw: string,
+  content: string,
+): boolean {
   if (extractLanguageFromClassName(className) !== 'text') return true
-  return content.includes('\n')
+  // A fence always includes a trailing newline. Stripping it first made a
+  // one-line ``` block look like inline code, which nowrap then clipped.
+  if (raw.includes('\n')) return true
+  return looksLikeShellCommand(content)
+}
+
+function paragraphNeedsBlock(node: React.ReactNode): boolean {
+  if (node == null || typeof node === 'boolean') return false
+  if (Array.isArray(node)) return node.some(paragraphNeedsBlock)
+  if (typeof node !== 'object' || !('type' in node)) return false
+  const typeName =
+    typeof node.type === 'function' ? (node.type.name ?? '') : ''
+  const props = node.props as
+    | { className?: string; children?: React.ReactNode }
+    | undefined
+  // react-markdown passes the `code` component element, not the rendered block.
+  if (typeName === 'CodeComponent') {
+    const raw = String(props?.children ?? '')
+    const content = raw.replace(/\n$/, '')
+    if (isFencedCodeBlock(props?.className ?? '', raw, content)) return true
+  }
+  return props?.children ? paragraphNeedsBlock(props.children) : false
 }
 
 function normalizeFenceLanguage(language: string): string {
@@ -194,12 +222,13 @@ function normalizeFenceLanguage(language: string): string {
 
 const INITIAL_COMPONENTS: Partial<Components> = {
   code: function CodeComponent({ className, children, ...props }) {
+    const raw = String(children ?? '')
     const content = extractFencedCodeContent(children)
     const fenceLanguage = normalizeFenceLanguage(
       extractLanguageFromClassName(className),
     )
 
-    if (isFencedCodeBlock(className ?? '', content)) {
+    if (isFencedCodeBlock(className ?? '', raw, content)) {
       if (fenceLanguage === 'mermaid') {
         return (
           <Suspense fallback={null}>
@@ -345,6 +374,15 @@ const INITIAL_COMPONENTS: Partial<Components> = {
     )
   },
   p: function PComponent({ children }) {
+    // A promoted shell command is a <div>/<pre>. Keeping it inside <p>
+    // makes the browser drop the block and clip the command.
+    if (paragraphNeedsBlock(children)) {
+      return (
+        <div className="text-primary-950 text-pretty leading-relaxed">
+          {children}
+        </div>
+      )
+    }
     return (
       <p className="text-primary-950 text-pretty leading-relaxed">{children}</p>
     )
