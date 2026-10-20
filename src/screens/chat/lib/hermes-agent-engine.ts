@@ -553,7 +553,8 @@ export function createHermesCommandPort(
             })
             options.onSessionResolved?.({
               sessionKey: resolvedHeaders.sessionKey,
-              friendlyId: resolvedHeaders.friendlyId,
+              friendlyId:
+                resolvedHeaders.friendlyId || resolvedHeaders.sessionKey,
             })
           }
 

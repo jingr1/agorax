@@ -35,7 +35,10 @@ import {
 } from './chat-screen-utils'
 import { useHermesEngineChatState } from './hooks/use-hermes-engine-chat'
 import { AgentInteractionPanel } from './components/agent-interaction-panel'
-import { getHermesChatRuntime } from '@/stores/hermes-chat-runtime'
+import {
+  forgetHermesMappingCache,
+  getHermesChatRuntime,
+} from '@/stores/hermes-chat-runtime'
 import {
   findLastUserMessage,
   historyIndexOf,
@@ -1247,8 +1250,17 @@ export function ChatScreen({
       !isNewChat && Boolean(resolvedSessionKey) && historyQuery.isSuccess,
   })
 
-  // Phase 4.1: Smart Model Suggestions — prefer per-agent catalog when set.
-  const resolvedModelsEndpoint = modelsEndpoint?.trim() || '/api/models'
+  // Per-agent catalog (Hermes profile / managed runtime). Never fall back to
+  // global `/api/models` — that path 401s against the gateway pool and leaves
+  // the composer stuck on "⚕ Hermes Agent" / "No models available".
+  const modelsAgentId =
+    skillsAgentId?.trim() ||
+    workspaceProfileName ||
+    activeProfileName ||
+    'default'
+  const resolvedModelsEndpoint =
+    modelsEndpoint?.trim() ||
+    `/api/agents/${encodeURIComponent(modelsAgentId)}/models`
   const modelsQuery = useQuery({
     queryKey: ['models', resolvedModelsEndpoint],
     queryFn: async () => {
@@ -1257,7 +1269,7 @@ export function ChatScreen({
       const data = await res.json()
       return data
     },
-    enabled: !historyLoading,
+    // Catalog is independent of history — keep picker usable during session switch.
     staleTime: 5 * 60 * 1000, // 5 minutes
   })
 
@@ -2747,56 +2759,51 @@ export function ChatScreen({
       try {
         const profile =
           workspaceProfileName || activeProfileName || 'default'
-        const activationId = `activate-${crypto.randomUUID()}`
-        const clientSubmitId = crypto.randomUUID()
-        const provisionalId = preferredFriendlyId?.trim() || clientSubmitId
-
-        // Wait for activateSession's real gateway create (onSessionResolved),
-        // not getMapping — hydrate used to invent gatewaySessionId=provisionalId
-        // and the poll would return early → chat/stream 404.
-        const resolved = await new Promise<{
-          sessionKey: string
-          friendlyId: string
-        }>((resolve, reject) => {
-          const timeout = window.setTimeout(() => {
-            reject(new Error('Hermes create session timed out'))
-          }, 15_000)
-          const runtime = getHermesChatRuntime(profile, {
-            profileName: profile,
-            onSessionResolved: (payload) => {
-              window.clearTimeout(timeout)
-              resolve(payload)
-            },
-          })
-          const accepted = runtime.engine.activateSession({
-            mode: 'new',
-            activationId,
-            agentSessionId: provisionalId,
-            agentTargetId: 'hermes-native',
-            clientSubmitId,
-            workspaceId: profile,
-            ...(preferredFriendlyId?.trim()
-              ? { title: preferredFriendlyId.trim() }
-              : {}),
-          })
-          if (!accepted) {
-            window.clearTimeout(timeout)
-            reject(new Error('Hermes Engine rejected activateSession'))
-          }
-        })
-
-        const sessionKey = resolved.sessionKey.trim()
-        const friendlyId =
-          resolved.friendlyId.trim() ||
-          deriveFriendlyIdFromKey(sessionKey) ||
-          sessionKey
-        if (!sessionKey) {
-          throw new Error('Invalid session response')
-        }
-
         const runtime = getHermesChatRuntime(profile, {
           profileName: profile,
         })
+        // Engine activateSession → POST /api/sessions + agorax_run_mapping.
+        // Do NOT wait on shared onSessionResolved — streaming hooks overwrite it
+        // and a partial payload caused `undefined.trim()` toasts on New Chat.
+        const requestId = `activate-${crypto.randomUUID()}`
+        const clientSubmitId = crypto.randomUUID()
+        const provisionalId = preferredFriendlyId?.trim() || clientSubmitId
+        forgetHermesMappingCache(provisionalId)
+        const acceptedAt = Date.now()
+        const accepted = runtime.engine.activateSession({
+          mode: 'new',
+          requestId,
+          agentSessionId: provisionalId,
+          agentTargetId: 'hermes-native',
+          clientSubmitId,
+          workspaceId: profile,
+          ...(preferredFriendlyId?.trim()
+            ? { title: preferredFriendlyId.trim() }
+            : {}),
+        })
+        if (!accepted) {
+          throw new Error('Hermes Engine rejected activateSession')
+        }
+
+        // ensureSessionHydrated no longer invents gateway ids, so the first
+        // mapping with updatedAt >= acceptedAt is from the real POST.
+        let sessionKey = ''
+        for (let i = 0; i < 80; i += 1) {
+          const mapping = await runtime.getMapping(provisionalId)
+          const gateway = mapping?.gatewaySessionId?.trim() || ''
+          const updated = mapping?.updatedAtUnixMs ?? 0
+          if (gateway && updated >= acceptedAt) {
+            sessionKey = gateway
+            break
+          }
+          await new Promise((r) => setTimeout(r, 50))
+        }
+        if (!sessionKey) {
+          throw new Error('Hermes create session timed out')
+        }
+        const friendlyId =
+          deriveFriendlyIdFromKey(sessionKey) || sessionKey
+
         // Re-key mapping to gateway session id for send/cancel lookup.
         await runtime.putMapping({
           agentSessionId: sessionKey,
@@ -3633,6 +3640,10 @@ export function ChatScreen({
         // visible, then wait for the gateway session before streaming.
         // Sending in parallel used to 404; navigating after send used to
         // abort the in-flight SSE (#297 cancel-on-nav).
+        // Mark recent immediately so shouldRedirectToNew/hideUi cannot lock
+        // the composer (model picker greyed as "⚕ Hermes Agent") while the
+        // provisional UUID is not yet in the sessions list.
+        setRecentSession(threadId)
         routeToSession(threadId)
 
         if (isPortableMode) {
@@ -3646,7 +3657,8 @@ export function ChatScreen({
           })
           .catch((err: unknown) => {
             // Never send with the provisional UUID — gateway has no such session
-            // (chat/stream → session_not_found 404).
+            // (chat/stream → session_not_found 404). Leave the dead URL so
+            // hideUi does not freeze the model/runtime controls.
             if (import.meta.env.DEV) {
               console.warn('[chat] failed to register new thread', err)
             }
@@ -3660,6 +3672,13 @@ export function ChatScreen({
               err instanceof Error ? err.message : 'Failed to create session',
               { type: 'error' },
             )
+            if (canMutateChatRoute) {
+              navigate({
+                to: '/chat/$sessionKey',
+                params: { sessionKey: 'new' },
+                replace: true,
+              })
+            }
           })
         return
       }
@@ -4414,7 +4433,7 @@ export function ChatScreen({
               gatewayQueriesEnabled: !historyLoading,
               slashRuntime: hermesSlashRuntime,
               skillsAgentId,
-              modelsEndpoint,
+              modelsEndpoint: resolvedModelsEndpoint,
               runtimeLabel:
                 runtimeLabel?.trim() || agentName?.trim() || undefined,
             }}

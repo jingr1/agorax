@@ -63,11 +63,11 @@ export function ingestEngineUserPromptMessage(input: {
     agentSessionId: string
   }) => void
 }): void {
-  const agentSessionId = input.agentSessionId.trim()
-  const clientSubmitId = input.clientSubmitId.trim()
-  const text = input.text.trim()
+  const agentSessionId = input.agentSessionId?.trim() ?? ''
+  const clientSubmitId = input.clientSubmitId?.trim() ?? ''
+  const text = input.text?.trim() ?? ''
   if (!agentSessionId || !clientSubmitId || !text) return
-  const workspaceId = input.workspaceId.trim() || 'default'
+  const workspaceId = input.workspaceId?.trim() || 'default'
   if (!selectEngineSession(input.engine.getSnapshot(), agentSessionId)) {
     input.ensureSession?.({ workspaceId, agentSessionId })
   }

@@ -378,6 +378,12 @@ export function resetHermesChatRuntimesForTests(): void {
   mappingCache.clear()
 }
 
+/** Drop a cached mapping so the next getMapping hits network/DB (or misses). */
+export function forgetHermesMappingCache(agentSessionId: string): void {
+  const id = agentSessionId.trim()
+  if (id) mappingCache.delete(id)
+}
+
 /**
  * Wait until Engine has observed a busy turn and then returned to idle.
  * Used by the streaming hook after submitPrompt so callers can await completion.

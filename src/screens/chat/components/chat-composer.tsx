@@ -1006,11 +1006,18 @@ function ChatComposerComponent({
   runtimeLabel,
   runtimeConfigHint,
 }: ChatComposerProps) {
-  const resolvedModelsEndpoint = modelsEndpoint?.trim() || '/api/models'
+  const { activeProfileName, activeProfile, workspaceProfileName } =
+    useProfiles()
+  // Prefer caller endpoint; otherwise agent/profile catalog — never global
+  // `/api/models` (gateway-pool 401 → empty picker / "⚕ Hermes Agent").
+  const resolvedModelsEndpoint =
+    modelsEndpoint?.trim() ||
+    `/api/agents/${encodeURIComponent(skillsAgentId?.trim() || workspaceProfileName || activeProfileName || 'default')}/models`
   const useCustomModelsEndpoint = Boolean(modelsEndpoint?.trim())
-  const modelsQueryEnabled =
-    useCustomModelsEndpoint || gatewayQueriesEnabled
-  // Expanding "other providers" only makes sense for the Hermes catalog.
+  // Catalog fetch must not wait on history/gateway deferral — otherwise the
+  // picker stays empty while the button falls back to "⚕ Hermes Agent".
+  const modelsQueryEnabled = true
+  // Expanding "other providers" only makes sense for the legacy Hermes catalog.
   const allowProviderExpansion = !useCustomModelsEndpoint && gatewayQueriesEnabled
   // Per-agent modelsEndpoint is shared by Hermes + managed. Identity chrome
   // must not key off that flag alone — managed passes runtimeConfigHint;
@@ -1149,8 +1156,6 @@ function ChatComposerComponent({
       )
     },
   })
-  const { activeProfileName, activeProfile, workspaceProfileName } =
-    useProfiles()
   const currentModelQuery = useQuery({
     queryKey: [
       'claude',
@@ -1644,12 +1649,23 @@ function ChatComposerComponent({
   }, [draftStorageKey])
 
   useEffect(() => {
+    setIsModelMenuOpen(false)
+  }, [sessionKey])
+
+  useEffect(() => {
     if (!isModelMenuOpen && !isThinkingMenuOpen && !isControlsMenuOpen) return
     function handleOutsideClick(event: MouseEvent) {
       const target = event.target as Node
       if (controlsMenuRef.current?.contains(target)) return
       if (modelSelectorRef.current?.contains(target)) return
       if (thinkingMenuRef.current?.contains(target)) return
+      // Portaled desktop model menu lives under document.body
+      if (
+        target instanceof Element &&
+        target.closest('[data-agorax-model-menu]')
+      ) {
+        return
+      }
       setIsControlsMenuOpen(false)
       setIsModelMenuOpen(false)
       setIsProviderSwitcherExpanded(false)
@@ -3645,13 +3661,44 @@ function ChatComposerComponent({
                           {modelButtonLabel}
                         </span>
                       </button>
-                      {isModelMenuOpen && (
-                        <>
-                          <div
-                            className="fixed inset-0 z-[199]"
-                            onClick={() => setIsModelMenuOpen(false)}
-                          />
-                          <div className="absolute bottom-full left-0 mb-2 z-[200] w-[min(28rem,calc(100vw-2rem))] min-w-[18rem] origin-bottom-left overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-xl dark:border-neutral-700 dark:bg-neutral-900 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                      {/* Portal to body: composer parents use overflow:hidden, so an
+                          inline absolute menu + fixed inset overlay get clipped /
+                          constrained and block the model button forever. */}
+                      {typeof document !== 'undefined' &&
+                      isModelMenuOpen &&
+                      !isMobileViewport
+                        ? createPortal(
+                            <>
+                              <button
+                                type="button"
+                                aria-label="Close model picker"
+                                className="fixed inset-0 z-[199] cursor-default bg-transparent"
+                                onClick={() => setIsModelMenuOpen(false)}
+                              />
+                              <div
+                                data-agorax-model-menu
+                                className="fixed z-[200] w-[min(28rem,calc(100vw-2rem))] min-w-[18rem] origin-bottom-left overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-xl dark:border-neutral-700 dark:bg-neutral-900 animate-in fade-in slide-in-from-bottom-2 duration-150"
+                                style={(() => {
+                                  const rect =
+                                    modelSelectorRef.current?.getBoundingClientRect()
+                                  if (!rect) {
+                                    return { left: 16, bottom: 96 }
+                                  }
+                                  return {
+                                    left: Math.max(
+                                      8,
+                                      Math.min(
+                                        rect.left,
+                                        window.innerWidth - 18 * 16,
+                                      ),
+                                    ),
+                                    bottom: Math.max(
+                                      8,
+                                      window.innerHeight - rect.top + 8,
+                                    ),
+                                  }
+                                })()}
+                              >
                             <div className="max-h-[20rem] overflow-y-auto overflow-x-hidden p-1">
                               {(() => {
                                 const allModels = modelsQuery.data?.models ?? []
@@ -3660,7 +3707,11 @@ function ChatComposerComponent({
                                 if (allModels.length === 0) {
                                   return (
                                     <div className="p-4 text-center text-sm text-neutral-500">
-                                      No models available
+                                      {modelsQuery.isFetching
+                                        ? 'Loading models…'
+                                        : modelsQuery.isError
+                                          ? 'Failed to load models'
+                                          : 'No models available'}
                                     </div>
                                   )
                                 }
@@ -3821,9 +3872,11 @@ function ChatComposerComponent({
                                 )
                               })()}
                             </div>
-                          </div>
-                        </>
-                      )}
+                              </div>
+                            </>,
+                            document.body,
+                          )
+                        : null}
                     </div>
                   </>
                 ) : null}

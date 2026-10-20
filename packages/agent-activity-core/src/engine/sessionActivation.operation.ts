@@ -19,11 +19,13 @@ export function requestSessionActivation(
   context: SessionActivationOperationContext,
   input: AgentSessionActivationInput
 ): boolean {
-  const agentSessionId = input.agentSessionId.trim();
-  const requestId = input.requestId.trim();
+  // Optional-chain: callers that omit requestId/clientSubmitId must get
+  // accepted:false, not `undefined.trim()` TypeErrors bubbled to chat toasts.
+  const agentSessionId = input.agentSessionId?.trim() ?? "";
+  const requestId = input.requestId?.trim() ?? "";
   const agentTargetId = input.agentTargetId?.trim() ?? "";
   const clientSubmitId =
-    input.mode === "new" ? input.clientSubmitId.trim() : "";
+    input.mode === "new" ? (input.clientSubmitId?.trim() ?? "") : "";
   const initialDisplayPrompt = input.initialDisplayPrompt?.trim() || undefined;
   const title = input.title?.trim() || undefined;
   if (
