@@ -12,6 +12,7 @@ import {
   buildHermesTmuxShellCommand,
   buildHermesTmuxTuiCommand,
   resolveTmuxTransportMode,
+  tmuxDismissSharedMetricsConsentIfPresent,
   tmuxPaneLooksLikeHermesTui,
   tmuxPaneLooksLikeShellReady,
   type TmuxTransportMode,
@@ -208,9 +209,13 @@ function startSession(
           transport === 'cli'
             ? () => sessionHasShellReady(tmuxBin, sessionName)
             : () => sessionHasHermesTui(tmuxBin, sessionName)
-        const maxRetries = 10
+        // Cold start + first-run shared-metrics consent can exceed 10s.
+        const maxRetries = 25
         let ready = false
         for (let attempt = 0; attempt < maxRetries; attempt++) {
+          if (transport === 'tui') {
+            await tmuxDismissSharedMetricsConsentIfPresent(tmuxBin, sessionName)
+          }
           ready = await isReady()
           if (ready) break
           await sleep(1_000)

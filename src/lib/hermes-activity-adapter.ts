@@ -68,18 +68,25 @@ function ensureIds(
   runId: string | null,
 ): HermesActivityAdapterState {
   const resolvedRun = (runId ?? state.runId ?? '').trim() || null
-  const assistantMessageId =
-    state.assistantMessageId ??
-    (resolvedRun
-      ? assistantMessageIdForRun(resolvedRun, ctx.agentSessionId)
-      : assistantMessageIdForRun(null, ctx.agentSessionId, ctx.turnId))
-  const thinkingMessageId =
-    state.thinkingMessageId ?? `${assistantMessageId}:thinking`
+  if (state.assistantMessageId) {
+    return {
+      ...state,
+      runId: resolvedRun ?? state.runId,
+    }
+  }
+  // No durable host until SSE/daemon supplies runId — processing pulse owns face.
+  if (!resolvedRun) {
+    return { ...state, runId: state.runId }
+  }
+  const assistantMessageId = assistantMessageIdForRun(
+    resolvedRun,
+    ctx.agentSessionId,
+  )
   return {
     ...state,
-    runId: resolvedRun ?? state.runId,
+    runId: resolvedRun,
     assistantMessageId,
-    thinkingMessageId,
+    thinkingMessageId: `${assistantMessageId}:thinking`,
   }
 }
 

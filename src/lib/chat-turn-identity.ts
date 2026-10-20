@@ -11,18 +11,16 @@ export function assistantMessageIdForRun(
   runId: string | null | undefined,
   sessionKey: string,
   /**
-   * Open-turn nonce (clientSubmitId / turnId). Required when runId is absent —
-   * session-only `assistant:pending:<session>` collided across turns.
+   * @deprecated Ignored. Open-turn face is transcript `processing:…`; do not
+   * invent `assistant:pending:…` when runId is absent.
    */
-  turnKey?: string | null,
+  _turnKey?: string | null,
 ): string {
   const trimmedRun = typeof runId === 'string' ? runId.trim() : ''
   if (trimmedRun) return `assistant:${trimmedRun}`
   const trimmedSession = sessionKey.trim() || 'session'
-  const trimmedTurn = typeof turnKey === 'string' ? turnKey.trim() : ''
-  if (trimmedTurn) return `assistant:pending:${trimmedSession}:${trimmedTurn}`
   throw new Error(
-    `assistantMessageIdForRun: turnKey required when runId is missing (session=${trimmedSession})`,
+    `assistantMessageIdForRun: runId required (session=${trimmedSession})`,
   )
 }
 

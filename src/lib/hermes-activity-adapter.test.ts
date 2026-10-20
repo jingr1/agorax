@@ -60,42 +60,26 @@ describe('hermesSseToActivityEvents', () => {
     })
   })
 
-  it('keeps pre-seeded pending host across started→runId (no second row)', () => {
-    const pendingId = 'assistant:pending:sess-1:c-seed'
-    let state = {
-      ...createHermesActivityAdapterState(),
-      assistantMessageId: pendingId,
-      thinkingMessageId: `${pendingId}:thinking`,
-    }
-    const started = hermesSseToActivityEvents(ctx, state, 'started', {
-      runId: 'run-seed',
-    })
+  it('does not invent assistant:pending when started has no runId', () => {
+    let state = createHermesActivityAdapterState()
+    const started = hermesSseToActivityEvents(ctx, state, 'started', {})
     state = started.state
-    expect(state.assistantMessageId).toBe(pendingId)
-    expect(started.events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          eventType: 'message_delta',
-          data: expect.objectContaining({
-            messageId: pendingId,
-            content: { operation: 'set', value: '' },
-          }),
-        }),
-      ]),
-    )
+    expect(state.assistantMessageId).toBeNull()
+    expect(
+      started.events.some((e) => e.eventType === 'message_delta'),
+    ).toBe(false)
     const chunk = hermesSseToActivityEvents(ctx, state, 'chunk', {
-      runId: 'run-seed',
+      runId: 'run-late',
       text: 'Answer',
       fullReplace: true,
     })
+    expect(chunk.state.assistantMessageId).toBe('assistant:run-late')
     expect(chunk.events[0]).toMatchObject({
-      data: { messageId: pendingId, content: { operation: 'set', value: 'Answer' } },
+      data: {
+        messageId: 'assistant:run-late',
+        content: { operation: 'set', value: 'Answer' },
+      },
     })
-    expect(chunk.events.every((e) => {
-      if (e.eventType !== 'message_delta') return true
-      const id = (e.data as { messageId?: string }).messageId ?? ''
-      return !id.startsWith('assistant:run-')
-    })).toBe(true)
   })
 
   it('maps thinking to assistant_thinking / reasoning deltas', () => {

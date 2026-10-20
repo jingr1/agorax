@@ -442,6 +442,10 @@ export function createAgentActivitySessionReconcileExecutor(
         assertExecutionActive(signal);
         return skippedResult();
       }
+      // Replace (historyAuthoritative) only for composite authoritative reads:
+      // authoritativeMessages + state_and_messages + fence-stable revision.
+      // Incremental / mid-turn / older-page reads must use message/snapshotReceived
+      // (merge). Omit-from-page = delete when this path applies.
       if (command.authoritativeMessages === true) {
         if (command.scope !== "state_and_messages") {
           throw new Error(

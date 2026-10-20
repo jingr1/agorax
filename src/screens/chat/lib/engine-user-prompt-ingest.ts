@@ -1,9 +1,9 @@
 /**
- * Shared send-time user + empty assistant host (Hermes + managed).
+ * Shared send-time optimistic user (Hermes + managed).
  *
- * Seeds `user:<clientSubmitId>` and `assistant:pending:<session>:<turn>` so the
- * list can mount one MessageItem (avatar glow) before the first runtime delta.
- * Later daemon/SSE rows fold onto this host via turnId / foldOpenTurnIntoLiveHost.
+ * Seeds only `user:<clientSubmitId>` into the Engine message bucket.
+ * Open-turn UI uses transcript `processing:<clientSubmitId>` (not a message
+ * row) until daemon/SSE writes the first durable assistant messageId.
  */
 
 import {
@@ -11,7 +11,44 @@ import {
   type AgentActivityDurableMessage,
   type AgentSessionEngine,
 } from '@agorax/agent-activity-core'
-import { assistantMessageIdForRun } from '@/lib/chat-turn-identity'
+
+type RememberedOpenTurn = {
+  clientSubmitId: string
+  turnId: string
+}
+
+/** Open-turn nonce per session — turn identity, not a messageId. */
+const rememberedOpenTurnBySession = new Map<string, RememberedOpenTurn>()
+
+export function rememberOpenTurn(input: {
+  agentSessionId: string
+  clientSubmitId: string
+  turnId: string
+}): void {
+  const agentSessionId = input.agentSessionId.trim()
+  const clientSubmitId = input.clientSubmitId.trim()
+  const turnId = input.turnId.trim()
+  if (!agentSessionId || !clientSubmitId) return
+  rememberedOpenTurnBySession.set(agentSessionId, {
+    clientSubmitId,
+    turnId: turnId || `turn-${clientSubmitId}`,
+  })
+}
+
+export function clearRememberedOpenTurn(agentSessionId: string): void {
+  rememberedOpenTurnBySession.delete(agentSessionId.trim())
+}
+
+export function getRememberedOpenTurn(
+  agentSessionId: string,
+): RememberedOpenTurn | null {
+  return rememberedOpenTurnBySession.get(agentSessionId.trim()) ?? null
+}
+
+/** Test helper — do not use in product paths. */
+export function __resetRememberedOpenTurnForTests(): void {
+  rememberedOpenTurnBySession.clear()
+}
 
 export function ingestEngineUserPromptMessage(input: {
   engine: AgentSessionEngine
@@ -49,26 +86,9 @@ export function ingestEngineUserPromptMessage(input: {
     payload: { text, content: text, clientSubmitId, displayPrompt: text },
     occurredAtUnixMs,
   }
-  const assistantMessageId = assistantMessageIdForRun(
-    null,
-    agentSessionId,
-    clientSubmitId,
-  )
-  const assistantShell: AgentActivityDurableMessage = {
-    workspaceId,
-    agentSessionId,
-    messageId: assistantMessageId,
-    version: occurredAtUnixMs + 1,
-    sequence: occurredAtUnixMs + 1,
-    turnId,
-    role: 'assistant',
-    kind: 'text',
-    status: 'streaming',
-    payload: { text: '', content: '', clientSubmitId },
-    occurredAtUnixMs: occurredAtUnixMs + 1,
-  }
+  rememberOpenTurn({ agentSessionId, clientSubmitId, turnId })
   input.engine.dispatch({
     type: 'message/snapshotReceived',
-    messages: [userMessage, assistantShell],
+    messages: [userMessage],
   })
 }

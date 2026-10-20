@@ -561,7 +561,8 @@ describe('thinking + visible content through the stream store', () => {
 
     store.beginStreamingTurn({
       sessionKey,
-      messageId: 'assistant:pending:next-turn',
+      messageId: 'assistant:run-next',
+      runId: 'run-next',
     })
 
     const assistants = store
@@ -575,7 +576,7 @@ describe('thinking + visible content through the stream store', () => {
     expect(
       assistants.some(
         (message) =>
-          (message as { id?: string }).id === 'assistant:pending:next-turn',
+          (message as { id?: string }).id === 'assistant:run-next',
       ),
     ).toBe(true)
     expect(
@@ -589,9 +590,9 @@ describe('thinking + visible content through the stream store', () => {
     const sessionKey = 'e2e-empty-done-keeps-seed'
     resetStore(sessionKey)
     const store = useChatStore.getState()
-    const messageId = `assistant:pending:${sessionKey}:turn-empty`
+    const messageId = 'assistant:run-empty'
 
-    store.beginStreamingTurn({ sessionKey, messageId })
+    store.beginStreamingTurn({ sessionKey, messageId, runId: 'run-empty' })
     expect(
       store
         .getRealtimeMessages(sessionKey)

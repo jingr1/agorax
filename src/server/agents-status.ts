@@ -63,7 +63,8 @@ function attachPresenceFields(
   }
 }
 
-function summarizeHealth(
+/** Aggregate KPIs for the declared roster only (callers must exclude orphans). */
+export function summarizeHealth(
   agents: Array<AgentStatusEntry>,
 ): AgentsHealthSummary {
   let online = 0
@@ -85,7 +86,8 @@ function summarizeHealth(
     if (status.blocked || status.error || status.unifiedStatus === 'blocked') {
       blocked += 1
     }
-    if (status.needsHuman || status.blocked) needsHuman += 1
+    // Separate chip from blocked — do not double-count sticky blocked as needsHuman.
+    if (status.needsHuman) needsHuman += 1
     if (status.needsSetup) needsSetup += 1
   }
   return {
@@ -233,8 +235,14 @@ export async function buildAgentsStatusPayload(): Promise<AgentsStatusPayload> {
 
 export async function buildAgentsSnapshotPayload(): Promise<AgentsSnapshotPayload> {
   const status = await buildAgentsStatusPayload()
+  // Orphan Hermes profiles stay in `agents` for discovery, but KPIs match the
+  // Agents board (agents.yaml roster) — otherwise "15/13 online" / phantom blocked.
+  const orphanIds = new Set(status.orphanProfiles)
+  const rosterAgents = status.agents.filter(
+    (entry) => !orphanIds.has(entry.agentId),
+  )
   return {
     ...status,
-    health: summarizeHealth(status.agents),
+    health: summarizeHealth(rosterAgents),
   }
 }

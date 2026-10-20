@@ -134,13 +134,22 @@ describe('assistantHasVisibleHostContent', () => {
     ).toBe(false)
   })
 
-  it('keeps empty streaming host so Working can anchor above the live row', () => {
+  it('keeps empty streaming host so the durable assistant row stays mounted', () => {
     expect(
       assistantHasVisibleHostContent({
         content: [],
         __streamingStatus: 'streaming',
       }),
     ).toBe(true)
+  })
+
+  it('does not keep empty non-streaming rows by pending messageId alone', () => {
+    expect(
+      assistantHasVisibleHostContent({
+        content: [],
+        messageId: 'assistant:pending:sess:c1',
+      }),
+    ).toBe(false)
   })
 
   it('keeps streaming rows that only have sidecar thinking', () => {

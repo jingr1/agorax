@@ -9,10 +9,8 @@ import {
   upsertSwarmRosterWorker,
   patchSwarmRosterWorker,
   type SwarmRosterUpsert,
-  isSwarmWorkerId,
   isBuiltinAgentId,
 } from './swarm-roster'
-import { listSwarmWorkerIds } from './swarm-foundation'
 import { resetAgentRuntimeRouter } from './agent-runtime/router'
 import type { AgentRuntimeKind } from './agent-runtime/types'
 import { AGORAX_MANAGED_AGENT_BACKENDS } from '@/lib/managed-agent-runtime/agent-targets'
@@ -44,12 +42,6 @@ const DEFAULT_AGENT = {
   execution: 'local' as const,
   dispatchable: false,
   enabled: true,
-}
-
-function rosterIds(): Array<string> {
-  return listSwarmWorkerIds().filter(
-    (id) => id !== 'workspace' && isSwarmWorkerId(id),
-  )
 }
 
 function normalizeInput(input: Record<string, unknown>): SwarmRosterUpsert {
@@ -125,7 +117,9 @@ export function createAgentDeclaration(input: Record<string, unknown>) {
       )
     }
   }
-  const roster = upsertSwarmRosterWorker(next, rosterIds())
+  // Pass [] so disk orphan profiles are not merged into agents.yaml on write.
+  // Orphans stay claimable via the separate import/claim flow (see listAgentDeclarations).
+  const roster = upsertSwarmRosterWorker(next, [])
   resetAgentRuntimeRouter()
   return roster
 }
@@ -155,7 +149,7 @@ export function updateAgentDeclaration(
   }
   // Builtin template agents: identity fields may be patched in local
   // agents.yaml; runtime/profile binds stay locked (checks above).
-  const roster = patchSwarmRosterWorker(agentId, next, rosterIds())
+  const roster = patchSwarmRosterWorker(agentId, next, [])
   resetAgentRuntimeRouter()
   return roster
 }
@@ -171,7 +165,7 @@ export function deleteAgentDeclaration(agentId: string) {
       `Builtin agent "${agentId}" is defined in agents.yaml.example and cannot be deleted`,
     )
   }
-  const roster = deleteSwarmRosterWorker(agentId, rosterIds())
+  const roster = deleteSwarmRosterWorker(agentId, [])
   if (current.runtime === 'hermes') {
     deleteProfile(current.profile ?? current.id)
   }

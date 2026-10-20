@@ -9,7 +9,11 @@
  * AgoraxManagedAgentBridge → daemon targets. There is no local CLI adapter
  * fallback — without AGORAX_MANAGED_AGENT_URL the slot is unavailable.
  */
-import { loadAgentsRegistry } from './agents-config'
+import { existsSync, statSync } from 'node:fs'
+import {
+  getAgentsYamlPath,
+  loadAgentsRegistry,
+} from './agents-config'
 import type { AgentDeclaration, AgentsRegistry } from './agents-config'
 import type { AgentProbeResult, AgentRuntimeAdapter } from './types'
 import { probeHermesProfileGateway } from './hermes-gateway-probe'
@@ -213,16 +217,40 @@ export class AgentRuntimeRouter {
 
 const ROUTER_KEY = '__agent_runtime_router__' as const
 
+type RouterHolder = {
+  router: AgentRuntimeRouter
+  /** agents.yaml mtimeMs when this router was built (0 = unknown / test). */
+  yamlMtimeMs: number
+}
+
+function readAgentsYamlMtimeMs(repoRoot?: string): number {
+  const yamlPath = getAgentsYamlPath(repoRoot)
+  try {
+    if (!existsSync(yamlPath)) return 0
+    return statSync(yamlPath).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
 export function getAgentRuntimeRouter(): AgentRuntimeRouter {
   const g = globalThis as Record<string, unknown>
   // HMR: this module calls resetAgentRuntimeRouter() on
   // dispose so the next access rebuilds with fresh bridge code. Do not
   // reconstruct on every request — that would drop in-flight run lookups and
   // waste parse work on the hot chat path.
-  if (!g[ROUTER_KEY]) {
-    g[ROUTER_KEY] = new AgentRuntimeRouter()
+  //
+  // Cheap mtime check: UI / CLI may edit agents.yaml without going through
+  // resetAgentRuntimeRouter (or a peer process wrote the file). Rebuild when
+  // the file changes so stale cards like deleted agents cannot linger.
+  const yamlMtimeMs = readAgentsYamlMtimeMs()
+  const holder = g[ROUTER_KEY] as RouterHolder | undefined
+  if (holder && holder.yamlMtimeMs === yamlMtimeMs) {
+    return holder.router
   }
-  return g[ROUTER_KEY] as AgentRuntimeRouter
+  const router = new AgentRuntimeRouter()
+  g[ROUTER_KEY] = { router, yamlMtimeMs } satisfies RouterHolder
+  return router
 }
 
 /** Drop the cached router (tests + HMR). */
@@ -236,8 +264,14 @@ export function setAgentRuntimeRouterForTests(
   router: AgentRuntimeRouter | null,
 ): void {
   const g = globalThis as Record<string, unknown>
-  if (router) g[ROUTER_KEY] = router
-  else delete g[ROUTER_KEY]
+  if (router) {
+    g[ROUTER_KEY] = {
+      router,
+      yamlMtimeMs: readAgentsYamlMtimeMs(),
+    } satisfies RouterHolder
+  } else {
+    delete g[ROUTER_KEY]
+  }
 }
 
 if (import.meta.hot) {

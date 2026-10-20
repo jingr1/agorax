@@ -118,7 +118,7 @@ describe('Managed Agent Engine adapter', () => {
     engine.dispose()
   })
 
-  it('ingestManagedUserPromptMessage seeds pending host homologous with Hermes', () => {
+  it('ingestManagedUserPromptMessage seeds only optimistic user (homologous with Hermes)', () => {
     const engine = createManagedAgentEngine({
       workspaceId: 'workspace-1',
       commandPort: { kind: 'typed', effects: unsupportedEffects(), execute: async () => undefined },
@@ -133,17 +133,13 @@ describe('Managed Agent Engine adapter', () => {
     const chat = selectManagedAgentChatState(engine.getSnapshot(), 'session-1', {
       isSubmitting: true,
     })
-    expect(chat.messages.map((m) => m.id)).toEqual([
-      'user:c-m1',
-      'assistant:pending:session-1:c-m1',
-    ])
-    expect(chat.isStreaming).toBe(true)
+    expect(chat.messages.map((m) => m.id)).toEqual(['user:c-m1'])
     expect(chat.turnBusy).toBe(true)
-    expect(chat.streamingMessageId).toBe('assistant:pending:session-1:c-m1')
+    expect(chat.streamingMessageId).toBeNull()
     engine.dispose()
   })
 
-  it('folds daemon turn orphan into the pending host while open', () => {
+  it('binds open turn to durable daemon assistant id (no local pending shell)', () => {
     const engine = createManagedAgentEngine({
       workspaceId: 'workspace-1',
       commandPort: { kind: 'typed', effects: unsupportedEffects(), execute: async () => undefined },
@@ -179,12 +175,12 @@ describe('Managed Agent Engine adapter', () => {
     })
     expect(chat.messages.map((m) => m.id)).toEqual([
       'user:c-fold',
-      'assistant:pending:session-1:c-fold',
+      'daemon-asst-1',
     ])
     expect(chat.messages[1]).toMatchObject({
       content: [{ type: 'text', text: 'pong from daemon' }],
     })
-    expect(chat.streamingMessageId).toBe('assistant:pending:session-1:c-fold')
+    expect(chat.streamingMessageId).toBe('daemon-asst-1')
     engine.dispose()
   })
 
@@ -205,7 +201,10 @@ describe('Managed Agent Engine adapter', () => {
     const emptyGap = selectManagedAgentChatState(engine.getSnapshot(), 'session-1')
     expect(emptyGap.isStreaming).toBe(true)
     expect(emptyGap.turnBusy).toBe(true)
+    // No user / pending in store → chrome must not invent a turnId MessageItem.
+    // Host arrives via daemon/SSE durable id; open-turn face is processing.
     expect(emptyGap.streamingMessageId).toBeNull()
+    expect(emptyGap.messages.some((m) => m.role === 'assistant')).toBe(false)
 
     hydrateManagedAgentEngine(engine, {
       ...detailDefaults,

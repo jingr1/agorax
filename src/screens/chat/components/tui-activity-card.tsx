@@ -56,11 +56,6 @@ type TuiActivityCardProps = {
   thinking?: string | null
   thinkingElapsedSeconds?: number
   isStreaming: boolean
-  /**
-   * agorax host: keep the card mounted while the turn is busy even when
-   * thinking/tools have not arrived yet (no empty-gap handoff).
-   */
-  keepMountedWhileBusy?: boolean
   /** Header label override — Thinking / Working / Activity. */
   statusTitle?: string | null
   expandAll?: boolean
@@ -368,7 +363,6 @@ function TuiActivityCardComponent({
   thinking,
   thinkingElapsedSeconds = 0,
   isStreaming,
-  keepMountedWhileBusy = false,
   statusTitle = null,
   expandAll,
   formatLabel,
@@ -379,7 +373,7 @@ function TuiActivityCardComponent({
   // first mounts after done used to open fully (~100px+) above the bubble and
   // shove the transcript — keep that first paint collapsed to the header.
   const [cardOpen, setCardOpen] = useState(
-    () => Boolean(expandAll) || isStreaming || keepMountedWhileBusy,
+    () => Boolean(expandAll) || isStreaming,
   )
   const hasThinking = !!(thinking && thinking.trim().length > 0)
   const hasTools = toolSections.length > 0
@@ -421,9 +415,7 @@ function TuiActivityCardComponent({
     el.scrollTop = el.scrollHeight
   }, [isStreaming, visibleTools.length, toolSections.length, hasThinking])
 
-  // agorax: busy turns keep the host even with no content yet.
-  // Settled empty rows still hide (nothing to archive).
-  if (!hasThinking && !hasTools && !(keepMountedWhileBusy && isStreaming)) {
+  if (!hasThinking && !hasTools) {
     return null
   }
 

@@ -44,6 +44,7 @@ import {
   buildHermesTmuxTuiCommand,
   resolveTmuxTransportMode,
   shellEscapeSingle,
+  tmuxDismissSharedMetricsConsentIfPresent,
   tmuxPaneLooksLikeHermesTui,
   tmuxPaneLooksLikeShellReady,
   tmuxPasteWithBracketedPaste,
@@ -1022,10 +1023,11 @@ export async function tmuxSessionHasHermesTui(
 async function waitForHermesTuiReady(
   tmuxBin: string,
   sessionName: string,
-  timeoutMs = 20_000,
+  timeoutMs = 25_000,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
+    await tmuxDismissSharedMetricsConsentIfPresent(tmuxBin, sessionName)
     if (await tmuxSessionHasHermesTui(tmuxBin, sessionName)) {
       return true
     }

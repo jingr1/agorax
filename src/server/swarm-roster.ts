@@ -232,6 +232,11 @@ export function listEnsureProfileAgentIds(
     .map((w) => w.id)
 }
 
+/**
+ * @param ids Optional profile ids to synthesize as fallback workers when missing
+ *   from agents.yaml. Pass `[]` on create/update/delete writes so orphan disk
+ *   profiles are not auto-imported into the registry.
+ */
 export function readSwarmRoster(
   ids: Array<string> = [],
   repoRoot: string = SWARM_CANONICAL_REPO,

@@ -38,7 +38,9 @@ import {
   type SwarmInboxItem,
 } from './swarm-reports-view'
 import { HumanGatePanel } from './components/human-gate-panel'
+import { SwarmHealthBar } from './components/swarm-health-bar'
 import { useHumanGate } from './hooks/use-human-gate'
+import { useAgentSnapshot } from '@/hooks/use-agent-snapshot'
 import { SwarmTerminal } from '@/components/swarm/swarm-terminal'
 import { WorkflowHelpModal } from '@/components/workflow-help-modal'
 import { cn } from '@/lib/utils'
@@ -1270,6 +1272,13 @@ export function SwarmScreen() {
     queryFn: fetchHealth,
     refetchInterval: 60_000,
   })
+  const agentsSnapshot = useAgentSnapshot()
+  const rosterAgentCount = useMemo(() => {
+    const orphans = new Set(agentsSnapshot.snapshot?.orphanProfiles ?? [])
+    return agentsSnapshot.agents.filter(
+      (entry) => !orphans.has(entry.agentId),
+    ).length
+  }, [agentsSnapshot.agents, agentsSnapshot.snapshot?.orphanProfiles])
   const rosterQuery = useQuery({
     queryKey: ['swarm', 'roster'],
     queryFn: fetchRoster,
@@ -1960,6 +1969,12 @@ export function SwarmScreen() {
               </button>
             </div>
           }
+        />
+
+        <SwarmHealthBar
+          health={agentsSnapshot.health}
+          checkedAt={agentsSnapshot.checkedAt}
+          agentCount={rosterAgentCount}
         />
 
         {humanGate ? (

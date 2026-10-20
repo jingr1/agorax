@@ -726,11 +726,28 @@ code {
    ═══════════════════════════════════════════════════════════════ */
 
 /*
- * Busy avatar pulse — a real border ring on a ::after that covers the
- * avatar box (same size, no layout shift). Opacity pulse stays readable
- * on dark portraits; inset box-shadow was nearly invisible.
+ * Busy-turn live pulse — avatar ring + "Thinking…" share one parent-driven
+ * opacity so they stay in phase (Tailwind animate-pulse was inverted + cubic).
+ * Parent only animates --thinking-live-o (not its own opacity) so Activity
+ * body under the same group does not pulse.
  */
-@keyframes thinking-avatar-glow-ring {
+@property --thinking-live-o {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 1;
+}
+
+@keyframes thinking-live-pulse-var {
+  0%,
+  100% {
+    --thinking-live-o: 0.35;
+  }
+  50% {
+    --thinking-live-o: 1;
+  }
+}
+
+@keyframes thinking-live-pulse {
   0%,
   100% {
     opacity: 0.35;
@@ -738,6 +755,10 @@ code {
   50% {
     opacity: 1;
   }
+}
+
+.thinking-live-pair {
+  animation: thinking-live-pulse-var 2s ease-in-out infinite;
 }
 
 .thinking-avatar-glow {
@@ -759,7 +780,19 @@ code {
   box-sizing: border-box;
   pointer-events: none;
   z-index: 2;
-  animation: thinking-avatar-glow-ring 2s ease-in-out infinite;
+  animation: thinking-live-pulse 2s ease-in-out infinite;
+}
+
+/* Under a live pair, children inherit the parent's pulse (no second clock). */
+.thinking-live-pair .thinking-avatar-glow::after,
+.thinking-live-pair .thinking-live-label {
+  animation: none;
+  opacity: var(--thinking-live-o);
+}
+
+/* Standalone label (no pair parent) — same period/easing as the ring. */
+.thinking-live-label {
+  animation: thinking-live-pulse 2s ease-in-out infinite;
 }
 
 /* Shimmer sweep across bubble */
@@ -845,8 +878,10 @@ code {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .thinking-live-pair,
   .thinking-avatar-glow,
   .thinking-avatar-glow > [data-avatar-clip],
+  .thinking-live-label,
   .thinking-shimmer-sweep,
   .thinking-dot,
   .thinking-label {
@@ -854,7 +889,9 @@ code {
     opacity: 1;
   }
 
-  .thinking-avatar-glow::after {
+  .thinking-avatar-glow::after,
+  .thinking-live-pair .thinking-avatar-glow::after,
+  .thinking-live-pair .thinking-live-label {
     opacity: 0.7;
   }
 }

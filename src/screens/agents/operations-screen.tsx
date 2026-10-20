@@ -12,7 +12,6 @@ import { formatRelativeTime } from '@/screens/dashboard/lib/formatters'
 import { OperationsAgentCard } from './components/operations-agent-card'
 import { OperationsAgentDetail } from './components/operations-agent-detail'
 import { OperationsNewAgentModal } from './components/operations-new-agent-modal'
-import { AgentBusPanel as SwarmHealthBar } from './components/agent-bus-panel'
 import {
   TeamOverview,
   type TeamOverviewFilter,
@@ -65,12 +64,11 @@ export function OperationsScreen() {
   const [filter, setFilter] = useState<TeamOverviewFilter>('all')
   const {
     agents,
+    orphanProfiles,
     recentActivity,
     configQuery,
     sessionsQuery,
     cronJobsQuery,
-    snapshotQuery,
-    healthSummary,
     enableUsagePolling,
     defaultModel,
     createAgent,
@@ -159,18 +157,6 @@ export function OperationsScreen() {
             />
           </motion.div>
 
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.05, duration: 0.25 }}
-          >
-            <SwarmHealthBar
-              health={healthSummary}
-              checkedAt={snapshotQuery.data?.checkedAt ?? null}
-              agentCount={agents.length}
-            />
-          </motion.div>
-
           <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {filteredAgents.map((agent, index) => (
               <motion.div
@@ -252,10 +238,25 @@ export function OperationsScreen() {
       <OperationsNewAgentModal
         open={newAgentOpen}
         defaultModel={defaultModel}
-        cloneOptions={agents.map((agent) => ({
-          id: agent.id,
-          name: agent.name,
-        }))}
+        existingProfiles={orphanProfiles.filter(
+          (profile) => profile !== 'default',
+        )}
+        cloneAgents={agents
+          .filter((agent) => (agent.runtime || 'hermes') === 'hermes')
+          .map((agent) => ({
+            id: agent.id,
+            name: agent.name,
+            profile: agent.profile || agent.id,
+            role: agent.role,
+            specialty: agent.specialty,
+          }))}
+        seedProfiles={[
+          'default',
+          ...agents
+            .filter((agent) => (agent.runtime || 'hermes') === 'hermes')
+            .map((agent) => agent.profile || agent.id),
+          ...orphanProfiles,
+        ].filter((value, index, all) => all.indexOf(value) === index)}
         onClose={() => setNewAgentOpen(false)}
         onCreate={createAgent}
         isSaving={isCreatingAgent}

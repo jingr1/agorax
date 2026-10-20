@@ -18,10 +18,7 @@ function formatDate(value?: number | null): string {
   }).format(date)
 }
 
-/**
- * Compact Swarm health strip — replaces the full Agent Bus panel.
- * Deep-links to /swarm for ops; keeps KPI glanceable on Agents.
- */
+/** Compact roster health strip for the Swarm ops surface. */
 export function SwarmHealthBar({
   health,
   checkedAt,
@@ -58,8 +55,8 @@ export function SwarmHealthBar({
           </span>
         </div>
         <span className="text-[var(--theme-muted)]">
-          <strong className="text-[var(--theme-text)]">{online}</strong>/{agentCount}{' '}
-          online
+          <strong className="text-[var(--theme-text)]">{online}</strong>/
+          {agentCount} online
         </span>
         {needsHuman > 0 ? (
           <span className="text-amber-700 dark:text-amber-300">
@@ -73,21 +70,11 @@ export function SwarmHealthBar({
         ) : null}
       </div>
       <Link
-        to="/swarm"
+        to="/agents"
         className="inline-flex shrink-0 items-center justify-center rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg)] px-3 py-1.5 text-xs font-medium text-[var(--theme-text)] transition-colors hover:border-[var(--theme-accent)] hover:bg-[var(--theme-accent-soft)]"
       >
-        Open Swarm
+        Open Agents
       </Link>
     </section>
   )
-}
-
-/** @deprecated Use SwarmHealthBar. Kept for any residual imports. */
-export { SwarmHealthBar as AgentBusPanel }
-export type AgentBusData = {
-  crew: Array<unknown>
-  workers: Array<unknown>
-  entries: Array<unknown>
-  healthSummary: Record<string, unknown>
-  lastCheck: number
 }

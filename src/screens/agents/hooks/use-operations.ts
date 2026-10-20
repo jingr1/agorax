@@ -30,6 +30,8 @@ export type GatewayConfigAgent = {
   name: string
   /** Hermes profile or managed runtime id (claude-code, codex, …). */
   runtime: string
+  /** Hermes profile id when runtime is hermes (defaults to agent id). */
+  profile?: string
   model: string
   provider?: string
   workspace?: string
@@ -311,10 +313,14 @@ function normalizeAgentList(input: unknown): GatewayConfigAgent[] {
     const id = normalizeAgentId(readString(row.id) || readString(row.name))
     if (!id) continue
 
+    const runtime = readString(row.runtime) || 'hermes'
     agents.push({
       id,
       name: readString(row.name) || id,
-      runtime: readString(row.runtime) || 'hermes',
+      runtime,
+      profile:
+        readString(row.profile) ||
+        (runtime === 'hermes' ? id : undefined),
       model: readString(row.model),
       provider: readString(row.provider),
       workspace: readString(row.workspace) || undefined,
@@ -386,26 +392,32 @@ async function fetchOperationsConfig(): Promise<
 
   const list = (agentsPayload.agents ?? [])
     .filter((a) => Boolean(a.agentId))
-    .map((a) => ({
-      id: a.agentId,
-      name:
-        a.agentId === 'default'
-          ? 'Workspace'
-          : a.name || a.agentId,
-      runtime: a.runtime || 'hermes',
-      model: '',
-      provider: '',
-      workspace: undefined,
-      agentDir: undefined,
-      description: '',
-      systemPrompt: '',
-      skillCount: 0,
-      mcpCount: 0,
-      role: a.role,
-      specialty: a.specialty,
-      command: a.runtimeConfig?.command,
-      args: a.runtimeConfig?.args,
-    }))
+    .map((a) => {
+      const runtime = a.runtime || 'hermes'
+      return {
+        id: a.agentId,
+        name:
+          a.agentId === 'default'
+            ? 'Workspace'
+            : a.name || a.agentId,
+        runtime,
+        profile:
+          a.runtimeConfig?.profile ||
+          (runtime === 'hermes' ? a.agentId : undefined),
+        model: '',
+        provider: '',
+        workspace: undefined,
+        agentDir: undefined,
+        description: '',
+        systemPrompt: '',
+        skillCount: 0,
+        mcpCount: 0,
+        role: a.role,
+        specialty: a.specialty,
+        command: a.runtimeConfig?.command,
+        args: a.runtimeConfig?.args,
+      }
+    })
 
   return {
     ok: true,
@@ -1307,32 +1319,32 @@ export function useOperations() {
       if (agentId === 'default') {
         throw new Error('Cannot delete the default profile')
       }
-      const agent = (
-        normalizeAgentList(
-          (
-            queryClient.getQueryData(['operations', 'config']) as
-              | (ConfigPayload & { activeProfile?: string })
-              | undefined
-          )?.parsed?.agents?.list,
-        )
-      ).find((entry) => entry.id === agentId)
-      if (agent && agent.runtime !== 'hermes') {
-        const response = await fetch('/api/agent-registry', {
-          method: 'DELETE',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ agentId }),
-        })
-        const payload = (await response.json().catch(() => ({}))) as {
-          ok?: boolean
-          error?: string
+      // Always remove the agents.yaml declaration first. Server also deletes
+      // the Hermes profile for hermes runtimes. (Previously Hermes-only deleted
+      // the profile and left the roster entry — card stayed forever.)
+      const response = await fetch('/api/agent-registry', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agentId }),
+      })
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean
+        error?: string
+      }
+      if (!response.ok || payload.ok === false) {
+        const error =
+          (typeof payload.error === 'string' && payload.error) ||
+          `Failed to remove agent (${response.status})`
+        // Stale UI / orphan profile: declaration already gone — drop profile FS.
+        if (/not found/i.test(error)) {
+          try {
+            await deleteClaudeProfile(agentId)
+          } catch {
+            /* profile may already be gone */
+          }
+        } else {
+          throw new Error(error)
         }
-        if (!response.ok || payload.ok === false) {
-          throw new Error(
-            payload.error || `Failed to remove agent (${response.status})`,
-          )
-        }
-      } else {
-        await deleteClaudeProfile(agentId)
       }
       removeAgentMeta(agentId)
       setMetaVersion((value) => value + 1)
@@ -1344,6 +1356,9 @@ export function useOperations() {
       })
       await queryClient.invalidateQueries({
         queryKey: ['operations', 'sessions'],
+      })
+      await queryClient.invalidateQueries({
+        queryKey: AGENTS_SNAPSHOT_QUERY_KEY,
       })
       toast('Agent deleted', { type: 'success' })
     },
@@ -1519,6 +1534,8 @@ export function useOperations() {
 
   return {
     agents,
+    /** Unbound Hermes profiles (not in agents.yaml) — for New Agent claim. */
+    orphanProfiles: snapshotQuery.data?.orphanProfiles ?? [],
     selectedAgent,
     selectedAgentId,
     setSelectedAgent: setSelectedAgentId,
@@ -1529,7 +1546,6 @@ export function useOperations() {
     snapshotQuery,
     crewUsageQuery,
     enableUsagePolling,
-    healthSummary: snapshotQuery.data?.health ?? null,
     recentActivity,
     settings,
     saveSettings,

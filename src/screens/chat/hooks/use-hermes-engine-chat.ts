@@ -21,6 +21,7 @@ import {
   getHermesChatRuntime,
   selectHermesChatState,
 } from '@/stores/hermes-chat-runtime'
+import { clearRememberedOpenTurn } from '../lib/engine-user-prompt-ingest'
 import type { ManagedAgentInteractionResponseInput } from '../components/managed-agent-interaction-panel'
 import type { ChatMessage } from '../types'
 
@@ -150,6 +151,30 @@ export function useHermesEngineChatState(input: {
     runtime,
     // Re-attempt after settle when a previous call no-op'd on turnBusy.
     chatState.turnBusy,
+  ])
+
+  // Drop open-turn nonce after Engine turn settles (not on !turnBusy flicker).
+  const hadActiveTurnRef = useRef(false)
+  useEffect(() => {
+    const sid = agentSessionId
+    if (!sid) return
+    const active = chatState.activeTurn
+    if (active && active.phase !== 'settled') {
+      hadActiveTurnRef.current = true
+      return
+    }
+    if (
+      hadActiveTurnRef.current &&
+      !active &&
+      chatState.latestTurn?.phase === 'settled'
+    ) {
+      hadActiveTurnRef.current = false
+      clearRememberedOpenTurn(sid)
+    }
+  }, [
+    agentSessionId,
+    chatState.activeTurn,
+    chatState.latestTurn?.phase,
   ])
 
   return {

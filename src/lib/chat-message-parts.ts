@@ -372,6 +372,8 @@ export function mergeAssistantThinkingFromSource<
 export type AssistantHostContentMessage = {
   role?: string
   content?: unknown
+  id?: unknown
+  messageId?: unknown
   __streamingStatus?: string
   __optimisticId?: unknown
   __streamToolCalls?: unknown
@@ -382,16 +384,15 @@ export type AssistantHostContentMessage = {
  * Whether an assistant message should be kept in the transcript lane.
  * Matches managed ACP: text, thinking, or tool calls all count as host surface.
  *
- * Empty `__streamingStatus === 'streaming'` alone is NOT a host — live busy
- * UI mounts from turnBusy / TurnActivityHost, not from an empty stream row.
+ * Empty streaming shells stay visible so the durable assistant row can mount
+ * before the first thinking/text delta. Pre-durable open-turn face is
+ * transcript `processing:…`, not a messageId in the bucket.
  */
 export function assistantHasVisibleHostContent(
   message: AssistantHostContentMessage,
 ): boolean {
   if (message.__optimisticId && !Array.isArray(message.content)) return true
-  // Keep the open-turn durable host in the transcript even before first
-  // thinking/text — Working mounts above this row; filtering it out parked
-  // Working at the list footer so reply text appeared "above then refreshed".
+  // Keep the open-turn durable host even before first thinking/text.
   if (message.__streamingStatus === 'streaming') return true
   if (
     Array.isArray(message.__streamToolCalls) &&

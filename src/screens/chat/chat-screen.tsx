@@ -148,7 +148,6 @@ import {
   pendingSessionModelKey,
   useSessionModelStore,
 } from '@/stores/session-model-store'
-import { useResearchCard } from '@/hooks/use-research-card'
 // MOBILE_TAB_BAR_OFFSET removed — tab bar always hidden in chat
 import { useTapDebug } from '@/hooks/use-tap-debug'
 import { useChatMode } from '@/hooks/use-chat-mode'
@@ -608,7 +607,6 @@ export function ChatScreen({
       error?: string
     }>
   >([])
-  const [researchResetKey, setResearchResetKey] = useState(0)
   // Per-session thinking level — stored in sessionStorage keyed by session
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() => {
     if (typeof window === 'undefined') return 'medium'
@@ -1692,7 +1690,9 @@ export function ChatScreen({
     workspaceId: workspaceProfileName || activeProfileName || 'default',
     agentSessionId: resolvedSessionKey,
     profileName: workspaceProfileName || activeProfileName,
-    isSubmitting: sending,
+    // Keep chrome turnOpen aligned with Stop busy. localIsStreaming alone used
+    // to leave turnBusy/streamingMessageId false/null while Stop still busy.
+    isSubmitting: sending || localIsStreaming,
     historyMessages,
     historyReady: historyQuery.isSuccess || historyMessages.length > 0,
   })
@@ -1731,6 +1731,7 @@ export function ChatScreen({
   // Identity dedupe is owned by reconcile (turn stamp), not UI text collapse.
   const finalDisplayMessages = useMemo(() => {
     if (!isPortableMode) {
+      const openHostId = hermesEngineChat.streamingMessageId
       return hermesEngineChat.messages
         .filter((msg) => {
           if (msg.role === 'user') {
@@ -1739,9 +1740,23 @@ export function ChatScreen({
             return true
           }
           if (msg.role === 'assistant' || msg.role === 'system') {
-            return (
-              msg.role === 'system' || assistantHasVisibleHostContent(msg)
-            )
+            if (msg.role === 'system') return true
+            // Durable open-turn assistant (daemon/SSE id) may still be empty —
+            // keep it. Pre-durable face is transcript `processing:…`, not here.
+            if (
+              hermesTurnBusy &&
+              openHostId &&
+              (() => {
+                const id =
+                  (typeof msg.messageId === 'string' && msg.messageId) ||
+                  (typeof msg.id === 'string' && msg.id) ||
+                  ''
+                return id === openHostId || id.startsWith(`${openHostId}:`)
+              })()
+            ) {
+              return true
+            }
+            return assistantHasVisibleHostContent(msg)
           }
           return false
         })
@@ -1881,6 +1896,8 @@ export function ChatScreen({
     activeToolCalls,
     activeIsRealtimeStreaming,
     hermesEngineChat.messages,
+    hermesEngineChat.streamingMessageId,
+    hermesTurnBusy,
     isPortableMode,
     realtimeMessages,
     realtimeStreamingMessageId,
@@ -2416,7 +2433,6 @@ export function ChatScreen({
       const enrichedBody = body + textBlocks.join('')
 
       let optimisticClientId = existingClientId
-      setResearchResetKey((current) => current + 1)
       if (!skipOptimistic) {
         const { clientId, optimisticMessage } = createOptimisticMessage(
           body,
@@ -4145,12 +4161,6 @@ export function ChatScreen({
         : interactionBusy
           ? 'sending'
           : 'idle'
-  const researchCard = useResearchCard({
-    sessionKey: resolvedSessionKey || activeCanonicalKey,
-    isStreaming: derivedStreamingInfo.isStreaming,
-    resetKey: `${resolvedSessionKey || activeCanonicalKey || 'main'}:${researchResetKey}`,
-  })
-
   // Pull-to-refresh offset removed
 
   const handleOpenAgentDetails = useCallback(() => {
@@ -4456,10 +4466,15 @@ export function ChatScreen({
                   isPortableMode ? realtimeLifecycleEvents : undefined
                 }
                 hideSystemMessages
-                activeToolCalls={isPortableMode ? activeToolCalls : undefined}
+                // Hermes 1:1: Engine owns tools on the open MessageItem host.
+                // Portable keeps chat-store sidecars. Never leave Hermes with
+                // neither — that painted busy Stop with an empty live row.
+                activeToolCalls={
+                  isPortableMode
+                    ? activeToolCalls
+                    : hermesEngineChat.activeToolCalls
+                }
                 liveToolActivity={isPortableMode ? liveToolActivity : undefined}
-                researchCard={researchCard}
-                isCompacting={isCompacting}
               />
             )}
           </AgentChatFrame>

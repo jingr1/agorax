@@ -19,9 +19,11 @@ import {
   createHermesSessionSkeleton,
   hydrateHermesAgentEngine,
   ingestHermesUserPromptMessage,
+  mergeHermesHistoryWhileBusy,
   reconcileHermesHistoryIntoEngine,
   selectHermesChatState,
 } from '@/screens/chat/lib/hermes-agent-engine'
+import { getRememberedOpenTurn } from '@/screens/chat/lib/engine-user-prompt-ingest'
 import type { AgoraxRunMapping } from '@/server/agent-runtime/hermes-native-bridge'
 import type { HermesSseEventName } from '@/lib/hermes-activity-adapter'
 import type { ChatMessage } from '@/screens/chat/types'
@@ -304,9 +306,21 @@ export function getHermesChatRuntime(
       const sid = agentSessionId.trim()
       if (!sid) return 0
       const snap = engine.getSnapshot()
-      if (selectSessionIsSubmitting(snap, sid)) return 0
+      const submitting = selectSessionIsSubmitting(snap, sid)
       const busy = selectHermesChatState(snap, sid).turnBusy
-      if (busy) return 0
+      // Remembered open-turn nonce (not a messageId) until Engine turn_update.
+      // Forces identity-merge path so optimistic user is not duplicated by msg-*.
+      const openTurnRemembered = getRememberedOpenTurn(sid) !== null
+      // Open turn: never raw history replace that forks the optimistic user.
+      // Identity-merge keeps user:<clientSubmitId> and folds gateway echoes.
+      if (submitting || busy || openTurnRemembered) {
+        return mergeHermesHistoryWhileBusy({
+          engine,
+          workspaceId: id,
+          agentSessionId: sid,
+          historyMessages,
+        })
+      }
       const projected =
         coordinator.project(projectSnapshot(snap)).sessionMessagesById[sid] ??
         []

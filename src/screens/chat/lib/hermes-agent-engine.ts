@@ -28,7 +28,6 @@ import {
   type AgentSessionEngineState,
   type EngineTypedCommandPort,
 } from '@agorax/agent-activity-core'
-import { assistantMessageIdForRun } from '@/lib/chat-turn-identity'
 import {
   hermesHistoryMessagesToActivity,
   mergeHermesHistoryWithLiveByTurnIdentity,
@@ -384,18 +383,10 @@ export function createHermesCommandPort(
             hermesRunId: null,
           })
 
-          // Same pending host as ingestHermesUserPromptMessage — started must
-          // not mint a second assistant:<runId> row (duplicate bubbles).
-          const pendingAssistantId = assistantMessageIdForRun(
-            null,
-            agentSessionId,
-            clientSubmitId,
-          )
-          let adapter: HermesActivityAdapterState = {
-            ...createHermesActivityAdapterState(),
-            assistantMessageId: pendingAssistantId,
-            thinkingMessageId: `${pendingAssistantId}:thinking`,
-          }
+          // No local assistant:pending — first durable host is assistant:<runId>
+          // from SSE `started` / first frame with runId (processing owns face until then).
+          let adapter: HermesActivityAdapterState =
+            createHermesActivityAdapterState()
           let hermesRunId: string | null = null
           let streamPhase: 'none' | 'settling' | 'settled' = 'none'
           let settledOutcome: AgentActivityTurn['outcome'] = null
@@ -934,6 +925,81 @@ export type HermesHistoryReconcileCoordinator = {
 }
 
 /**
+ * Mid-turn history reconcile. Identity-stamp live messageIds onto gateway
+ * history (same as idle path), then replace the bucket — never raw
+ * `message/snapshotReceived` merge, which left `user:<clientSubmitId>` beside
+ * `msg-*` echoes (double user + double assistant in the list).
+ */
+export function mergeHermesHistoryWhileBusy(input: {
+  engine: AgentSessionEngine
+  workspaceId: string
+  agentSessionId: string
+  historyMessages: readonly ChatMessage[]
+}): number {
+  const agentSessionId = input.agentSessionId.trim()
+  const workspaceId = input.workspaceId.trim() || 'default'
+  if (!agentSessionId) return 0
+  if (!selectEngineSession(input.engine.getSnapshot(), agentSessionId)) {
+    hydrateHermesAgentEngine(
+      input.engine,
+      createHermesSessionSkeleton({ workspaceId, agentSessionId }),
+    )
+  }
+  const snap = input.engine.getSnapshot()
+  const liveSession = selectEngineSession(snap, agentSessionId)
+  const activeTurn = selectEngineActiveTurn(snap, agentSessionId)
+  const latestTurn = selectEngineLatestTurn(snap, agentSessionId)
+  const session = normalizeAgentActivitySession({
+    ...(liveSession ??
+      createHermesSessionSkeleton({ workspaceId, agentSessionId })),
+    activeTurn: activeTurn ?? liveSession?.activeTurn ?? null,
+    activeTurnId: activeTurn?.turnId ?? liveSession?.activeTurnId ?? null,
+    latestTurn:
+      latestTurn && latestTurn.turnId !== activeTurn?.turnId
+        ? latestTurn
+        : (liveSession?.latestTurn ?? null),
+    latestTurnInteractions: liveSession?.latestTurnInteractions ?? [],
+    pendingInteractions: liveSession?.pendingInteractions ?? [],
+  })
+  const historyMapped =
+    input.historyMessages.length === 0
+      ? []
+      : hermesHistoryMessagesToActivity({
+          workspaceId,
+          agentSessionId,
+          messages: input.historyMessages,
+        })
+  const live = selectSessionMessages(snap, agentSessionId)
+  const messages = mergeHermesHistoryWithLiveByTurnIdentity({
+    workspaceId,
+    agentSessionId,
+    history: historyMapped,
+    live,
+  })
+  const turns = [
+    ...(activeTurn ? [activeTurn] : []),
+    ...(latestTurn && latestTurn.turnId !== activeTurn?.turnId
+      ? [latestTurn]
+      : []),
+  ]
+  const historyRevision = Math.max(
+    1,
+    messages.reduce((max, row) => Math.max(max, row.version), 0),
+  )
+  input.engine.dispatch({
+    type: 'session/historyAuthoritativeSnapshotReceived',
+    workspaceId,
+    agentSessionId,
+    session,
+    childSessions: [],
+    turns,
+    messages,
+    historyRevision,
+  })
+  return messages.length
+}
+
+/**
  * Authoritative history → Engine message bucket + overlay (managed homology).
  * Call when history is idle (not mid-turn) so replace cannot wipe live rows.
  */
@@ -1116,6 +1182,44 @@ export function selectHermesChatState(
     /** Busy for composer / list; Activity chrome lives on MessageItem. */
     turnBusy: chrome.turnBusy,
     streamingMessageId: chrome.streamingMessageId,
+    /**
+     * Live tools for the open MessageItem (Hermes 1:1). Same shape as managed —
+     * ChatMessageList overlays them onto the streaming host row.
+     */
+    activeToolCalls: agentSessionId
+      ? sessionMessages
+          .filter(
+            (message) =>
+              (message.kind === 'tool_call' || message.kind === 'tool') &&
+              message.status !== 'completed' &&
+              message.status !== 'failed' &&
+              message.status !== 'canceled' &&
+              message.status !== 'error',
+          )
+          .map((message) => ({
+            id: message.messageId.replace(/^toolcall:/, ''),
+            name:
+              (typeof message.payload.toolName === 'string' &&
+                message.payload.toolName.trim()) ||
+              (typeof message.payload.name === 'string' &&
+                message.payload.name.trim()) ||
+              'tool',
+            phase:
+              message.status === 'running' || message.status === 'streaming'
+                ? ('running' as const)
+                : ('calling' as const),
+            args:
+              message.payload.input &&
+              typeof message.payload.input === 'object' &&
+              !Array.isArray(message.payload.input)
+                ? message.payload.input
+                : message.payload.arguments &&
+                    typeof message.payload.arguments === 'object' &&
+                    !Array.isArray(message.payload.arguments)
+                  ? message.payload.arguments
+                  : undefined,
+          }))
+      : [],
     error:
       terminalError ??
       (visibleError

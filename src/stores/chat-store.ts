@@ -135,8 +135,8 @@ type ChatState = {
   clearRealtimeBuffer: (sessionKey: string) => void
   clearStreamingSession: (sessionKey: string) => void
   /**
-   * Seed a turn-scoped durable messageId before the first SSE frame so chunks
-   * never fall back to `assistant:pending:<session>` (cross-turn collision).
+   * Bind portable write-through to a durable assistant id (usually
+   * `assistant:<runId>` once SSE started). Do not pass pending ids.
    */
   beginStreamingTurn: (input: {
     sessionKey: string
@@ -165,8 +165,7 @@ type ChatState = {
   /** Check if a session is waiting for a response */
   isSessionWaiting: (sessionKey: string) => boolean
 
-  /** Last activity description from heartbeat SSE — empty-gap TurnActivityHost
-   *  and research/compact ThinkingBubble. */
+  /** Last activity description from heartbeat SSE (open-turn chrome). */
   heartbeatActivity: string | null
   setHeartbeatActivity: (activity: string | null) => void
 }
@@ -184,15 +183,16 @@ function withDurableStreamingIdentity(
   prev: StreamingState,
   sessionKey: string,
   runId?: string,
-  turnKey?: string | null,
+  _turnKey?: string | null,
 ): StreamingState {
   const nextRunId = runId ?? prev.runId
-  // Prefer an already-seeded turn-scoped messageId. Never invent a session-only
-  // pending id when a turnKey is available — that collided across turns and
-  // wrote the new reply into the previous settled bubble.
+  // Prefer an already-seeded id. Allocate only when runId exists — never invent
+  // assistant:pending (open-turn face is transcript processing, not a message).
   const messageId =
     prev.messageId ??
-    assistantMessageIdForRun(nextRunId, sessionKey, turnKey)
+    (nextRunId
+      ? assistantMessageIdForRun(nextRunId, sessionKey)
+      : null)
   return {
     ...prev,
     runId: nextRunId,

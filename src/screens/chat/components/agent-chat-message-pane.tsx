@@ -33,9 +33,9 @@ export function AgentChatMessagePane({
   loading = false,
 }: {
   messages: Array<ChatMessage>
-  /** Busy turn — chrome on the open MessageItem. */
+  /** Busy turn — face on durable assistant MessageItem. */
   turnBusy?: boolean
-  /** Turn-active: message-level live chrome / Stop, not the bottom pill. */
+  /** Turn-active: live chrome / Stop on open-turn rows. */
   isStreaming?: boolean
   streamingMessageId?: string | null
   /** Portable/Hermes legacy sidecar; Engine hosts embed thinking via fold. */
@@ -69,7 +69,6 @@ export function AgentChatMessagePane({
     <ChatMessageList
       messages={messages}
       turnBusy={turnBusy}
-      researchCard={undefined}
       loading={loading}
       empty={empty}
       emptyState={emptyState}

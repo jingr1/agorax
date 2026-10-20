@@ -73,6 +73,8 @@ const HERMES_TUI_MARKERS = [
 export function tmuxPaneLooksLikeHermesTui(paneText: string): boolean {
   const text = paneText.trim()
   if (!text) return false
+  // First-run shared-metrics consent blocks the TUI prompt until answered.
+  if (tmuxPaneLooksLikeSharedMetricsConsent(text)) return false
   const hasTui = HERMES_TUI_MARKERS.some((pattern) => pattern.test(text))
   if (!hasTui) return false
   const tail = text.split('\n').slice(-8).join('\n')
@@ -83,6 +85,45 @@ export function tmuxPaneLooksLikeHermesTui(paneText: string): boolean {
     return false
   }
   return true
+}
+
+/**
+ * Hermes first-run / re-ask shared-metrics consent (curses radiolist).
+ * Default selection is "No thanks" — Enter settles without opting in.
+ */
+export function tmuxPaneLooksLikeSharedMetricsConsent(paneText: string): boolean {
+  const text = paneText.trim()
+  if (!text) return false
+  return (
+    /Help improve Hermes\?/i.test(text) &&
+    /No thanks/i.test(text) &&
+    /Collect (and send to Nous|locally only)/i.test(text)
+  )
+}
+
+/** Press Enter once when the shared-metrics consent screen is visible. */
+export async function tmuxDismissSharedMetricsConsentIfPresent(
+  tmuxBin: string,
+  sessionName: string,
+  paneText?: string,
+): Promise<boolean> {
+  let text = paneText
+  if (text === undefined) {
+    const captured = await execFileAsync(
+      tmuxBin,
+      ['capture-pane', '-p', '-t', tmuxPaneTarget(sessionName), '-S', '-120'],
+      5_000,
+    )
+    if (!captured.ok) return false
+    text = captured.stdout
+  }
+  if (!tmuxPaneLooksLikeSharedMetricsConsent(text)) return false
+  const sent = await execFileAsync(
+    tmuxBin,
+    ['send-keys', '-t', tmuxPaneTarget(sessionName), 'Enter'],
+    5_000,
+  )
+  return sent.ok
 }
 
 const SHELL_COMMANDS = /^(bash|sh|zsh|fish|dash|login)$/i

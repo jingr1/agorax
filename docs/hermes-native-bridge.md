@@ -54,7 +54,7 @@ AgentSessionEngine
 
 | 角色 | id |
 | --- | --- |
-| Assistant 正文 | `assistant:<runId>`（无 runId → `assistant:pending:<sessionOrTurn>`） |
+| Assistant 正文 | `assistant:<runId>`（首条 durable 行由 daemon/SSE 写出；发送时不种本地 pending assistant） |
 | Reasoning | `assistant:<runId>:thinking` |
 | Tool | `toolcall:<toolCallId>` |
 
@@ -66,7 +66,7 @@ AgentSessionEngine
 - **Hermes**：`hermesSseToActivityEvents` 把 `started|chunk|thinking|tool|done` 译成同一套 `message_delta` / `turn_update`。
 - UI **不**直接吃 Hermes SSE 业务语义；Hermes 1:1 列表与 busy 只订 Engine（`selectHermesChatState`）。`chat-store` write-through 仅作 SSE 侧信道 / portable 遗留，**不是**列表真相源；`streamingText` / `streamingThinking` / `activeToolCalls` 等 list sidecar **仅 portable** 传入，Hermes 1:1 不喂。
 - **列表投影同源：** `projectActivityMessagesToChat` + `selectAssistantStreamingMessageId`（`activity-list-projection.ts`）同时服务 `selectHermesChatState` 与 `selectManagedAgentChatState`。禁止一边 fold、一边 1:1 map。
-- **send 种壳同源：** `ingestEngineUserPromptMessage`（Hermes / managed 共用）在 submit 前写入 `user:<clientSubmitId>` + `assistant:pending:<session>:<turn>`；`applyOpenAssistantStreamingChrome` 优先 pending host，并用 `foldOpenTurnIntoLiveHost` 吞掉 daemon/SSE 旁路行。
+- **send 种壳同源：** `ingestEngineUserPromptMessage`（Hermes / managed 共用）在 submit 前只写入乐观 `user:<clientSubmitId>`；开回合 UI 用 transcript `processing:<clientSubmitId>` 脉冲（不进 `messagesBySessionId`）。首条 assistant message 等 daemon/SSE durable id；`applyOpenAssistantStreamingChrome` + `foldOpenTurnIntoLiveHost` 只折那条真实 host。
 
 ### 2.3 Settle（Tutti 对齐：`running → settling → settled`）
 

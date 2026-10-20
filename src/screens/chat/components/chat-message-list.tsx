@@ -1,9 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  ArrowExpand01Icon,
-  ArrowUp01Icon,
-  Robot01Icon,
-} from '@hugeicons/core-free-icons'
+import { Robot01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   getMessageTimestamp,
@@ -11,374 +7,31 @@ import {
   textFromMessage,
 } from '../utils'
 import { collapseRecentDuplicateUserMessages } from '../chat-queries'
-import { MessageItem } from './message-item'
+import { formatToolDisplayLabel, keyArgLabel } from './message-item'
+import { AgentTranscriptItemView } from './agent-transcript-item-view'
+import {
+  isOpenTurnAssistantUnderProcessing,
+  projectChatToTranscriptRows,
+} from '../lib/agent-transcript-vm'
+import { getRememberedOpenTurn } from '../lib/engine-user-prompt-ingest'
 import { normalizeToolCallArgs } from '@/lib/chat-message-parts'
 import { stableChatMessageKey } from '@/lib/chat-turn-identity'
 import { TuiActivityCard } from './tui-activity-card'
 import { ScrollToBottomButton } from './scroll-to-bottom-button'
-import { ResearchCard } from './research-card'
 import { ConversationOutline } from './conversation-outline'
 import type { ChatMessage } from '../types'
-import type { UseResearchCardResult } from '@/hooks/use-research-card'
 import {
   ChatContainerContent,
   ChatContainerRoot,
   ChatContainerScrollAnchor,
 } from '@/components/prompt-kit/chat-container'
-import { AssistantAvatar } from '@/components/avatars'
 import { assistantHasWorkingSurface } from '@/lib/chat-message-parts'
 import { cn } from '@/lib/utils'
 import { hapticTap } from '@/lib/haptics'
 import { CHAT_OPEN_MESSAGE_SEARCH_EVENT } from '@/screens/chat/chat-events'
-import { useChatStore } from '@/stores/chat-store'
 import { useChatSettingsStore } from '@/hooks/use-chat-settings'
 
-const TOOL_EMOJIS: Record<string, string> = {
-  web_search: '🔍',
-  search: '🔍',
-  search_files: '🔍',
-  session_search: '🔍',
-  web_fetch: '🌐',
-  terminal: '💻',
-  exec: '💻',
-  shell: '💻',
-  bash: '💻',
-  Read: '📖',
-  read: '📖',
-  read_file: '📖',
-  file_read: '📖',
-  pdf: '📄',
-  Write: '✏️',
-  write: '✏️',
-  write_file: '✏️',
-  edit: '✏️',
-  Edit: '✏️',
-  memory: '🧠',
-  memory_search: '🧠',
-  memory_get: '🧠',
-  save_memory: '🧠',
-  browser: '🌐',
-  browser_navigate: '🌐',
-  navigate: '🌐',
-  image: '🖼️',
-  vision: '🖼️',
-  skill: '📦',
-  skill_view: '📦',
-  skill_load: '📦',
-  delegate: '🤖',
-  spawn: '🤖',
-  subagents: '🤖',
-  agents_list: '🤖',
-  todo: '✅',
-  cron: '⏰',
-  message: '💬',
-  voice_call: '📞',
-  canvas: '🎨',
-  nodes: '📱',
-  gateway: '⚙️',
-  lcm_grep: '🔍',
-  lcm_expand: '🔍',
-  lcm_describe: '🔍',
-  lcm_expand_query: '🔍',
-  sessions_send: '📤',
-  session_status: '📊',
-  sessions_yield: '⏸️',
-  tts: '🗣️',
-}
-
-function getToolEmoji(name: string): string {
-  if (TOOL_EMOJIS[name]) return TOOL_EMOJIS[name]
-  if (name.includes('search')) return '🔍'
-  if (name.includes('read') || name.includes('Read')) return '📖'
-  if (name.includes('write') || name.includes('Write') || name.includes('edit'))
-    return '✏️'
-  if (name.includes('exec') || name.includes('terminal')) return '💻'
-  if (name.includes('memory')) return '🧠'
-  if (name.includes('browser')) return '🌐'
-  if (name.includes('skill')) return '📦'
-  return '⚡'
-}
-
-function getToolVerb(name: string): string {
-  if (name.includes('search')) return 'Searching'
-  if (name.includes('read') || name.includes('Read')) return 'Reading'
-  if (name.includes('write') || name.includes('Write') || name.includes('edit'))
-    return 'Writing'
-  if (name.includes('exec') || name.includes('terminal')) return 'Executing'
-  if (name.includes('memory')) return 'Remembering'
-  if (name.includes('browser')) return 'Browsing'
-  if (name.includes('skill')) return 'Loading skill'
-  return 'Working'
-}
-
-function ToolCallCard({ name, phase }: { name: string; phase: string }) {
-  const isDone =
-    phase === 'done' || phase === 'complete' || phase === 'completed'
-  const isError = phase === 'error' || phase === 'failed'
-  const isRunning = !isDone && !isError
-
-  const [elapsed, setElapsed] = useState(0)
-  useEffect(() => {
-    if (!isRunning) return
-    setElapsed(0)
-    const id = window.setInterval(() => setElapsed((s) => s + 1), 1000)
-    return () => window.clearInterval(id)
-  }, [isRunning])
-
-  const [dots, setDots] = useState(0)
-  useEffect(() => {
-    if (!isRunning) return
-    const id = window.setInterval(() => setDots((d) => (d + 1) % 4), 400)
-    return () => window.clearInterval(id)
-  }, [isRunning])
-
-  const elapsedLabel =
-    elapsed >= 60
-      ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
-      : `${elapsed}s`
-  const emoji = getToolEmoji(name)
-  const verb = getToolVerb(name)
-  const displayName = name.replace(/_/g, ' ')
-
-  return (
-    <div
-      className="rounded-lg border border-primary-200 bg-primary-50 text-[11px] overflow-hidden"
-      style={{
-        borderLeftWidth: '3px',
-        borderLeftColor: isRunning ? '#6366f1' : isDone ? '#22c55e' : '#ef4444',
-        boxShadow: isRunning ? '0 0 8px rgba(99,102,241,0.12)' : 'none',
-      }}
-    >
-      <div className="flex items-center gap-1.5 px-2.5 py-1.5">
-        <span className="text-sm leading-none">{emoji}</span>
-        <span className="font-mono font-semibold text-ink">{displayName}</span>
-        <span className="flex-1" />
-        {isRunning && (
-          <span className="text-[10px] tabular-nums text-primary-400">
-            {elapsedLabel}
-          </span>
-        )}
-        {isDone && <span className="text-xs text-green-500">✅</span>}
-        {isError && <span className="text-xs text-red-500">❌</span>}
-        {isRunning && (
-          <span className="size-1.5 rounded-full animate-pulse bg-indigo-500" />
-        )}
-      </div>
-      {isRunning && (
-        <div className="px-2.5 pb-1.5 text-[10px] text-primary-400">
-          {verb}
-          {'.'.repeat(dots)}
-        </div>
-      )}
-    </div>
-  )
-}
-
-type ThinkingBubbleProps = {
-  activeToolCalls?: Array<{ id: string; name: string; phase: string; args?: unknown }>
-  liveToolActivity?: Array<{ name: string; timestamp: number }>
-  researchCard?: UseResearchCardResult
-  isCompacting?: boolean
-  /** When true, always show "Thinking…" regardless of activity. Used for the
-   * first 10s before the delayed activity feed appears. */
-  forceSimple?: boolean
-}
-
-/**
- * Shows a thinking indicator with animated dots and a meaningful status
- * label that reflects what's actually happening (tool calls, etc.).
- * When forceSimple is true, suppresses all activity labels — just "Thinking…".
- */
-function ThinkingBubble({
-  activeToolCalls = [],
-  liveToolActivity = [],
-  researchCard,
-  isCompacting = false,
-  forceSimple = false,
-}: ThinkingBubbleProps) {
-  // Fallback activity from heartbeat — shows last known agent activity
-  // when no tool calls are in flight (e.g. during pure reasoning)
-  const heartbeatActivity = useChatStore((s) => s.heartbeatActivity)
-
-  // Build a meaningful status label from live activity
-  const activeToolNames = activeToolCalls
-    .filter(
-      (tc) =>
-        tc.phase !== 'done' &&
-        tc.phase !== 'complete' &&
-        tc.phase !== 'completed',
-    )
-    .map((tc) => tc.name.replace(/_/g, ' '))
-  const liveToolNames = liveToolActivity.map((a) => a.name.replace(/_/g, ' '))
-  const uniqueNames = [...new Set([...activeToolNames, ...liveToolNames])]
-  const activityLabel =
-    uniqueNames.length > 0
-      ? `Using: ${uniqueNames.slice(0, 3).join(', ')}${uniqueNames.length > 3 ? ` +${uniqueNames.length - 3} more` : ''}`
-      : null
-  const statusLabel = isCompacting
-    ? 'Compacting context...'
-    : forceSimple
-      ? 'Thinking…'
-      : activityLabel || heartbeatActivity || 'Thinking…'
-
-  // Elapsed time counter — counts from bubble mount, not from last label change
-  const [elapsed, setElapsed] = useState(0)
-  useEffect(() => {
-    const interval = window.setInterval(() => setElapsed((s) => s + 1), 1000)
-    return () => window.clearInterval(interval)
-  }, [])
-
-  const elapsedLabel =
-    elapsed >= 60
-      ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
-      : `${elapsed}s`
-
-  const isStale = elapsed >= 30
-  const isVeryStale = elapsed >= 60
-  const canExpandResearch = Boolean(
-    researchCard && researchCard.steps.length > 0,
-  )
-  const expandedResearchCard = canExpandResearch ? researchCard : null
-  const completedResearchSteps = researchCard
-    ? researchCard.steps.filter((step) => step.status === 'done').length
-    : 0
-
-  // Track displayed label with a small delay so we fade between changes
-  const [displayedLabel, setDisplayedLabel] = useState(statusLabel)
-  const [visible, setVisible] = useState(true)
-  const prevLabelRef = useRef(statusLabel)
-
-  useEffect(() => {
-    if (statusLabel === prevLabelRef.current) return
-    // Fade out, swap, fade in
-    setVisible(false)
-    const swapTimer = window.setTimeout(() => {
-      setDisplayedLabel(statusLabel)
-      prevLabelRef.current = statusLabel
-      setVisible(true)
-    }, 150)
-    return () => window.clearTimeout(swapTimer)
-  }, [statusLabel])
-
-  // Keep the bottom thinking bubble visible while inline Hermes activity handles tool details.
-
-  return (
-    <div className="flex items-end gap-2">
-      {/* Glow on the avatar box — wrapper size-* drifts from the image. */}
-      <AssistantAvatar size={28} className="thinking-avatar-glow" />
-
-      {/* Chat bubble */}
-      <div className="relative max-w-[36rem] overflow-hidden rounded-2xl rounded-bl-sm border border-primary-200 dark:border-primary-200/20 bg-primary-100 dark:bg-primary-100 thinking-shimmer-bubble">
-        {/* Shimmer overlay */}
-        <div
-          className="thinking-shimmer-sweep pointer-events-none absolute inset-0"
-          aria-hidden="true"
-        />
-
-        <div className="relative flex flex-col gap-2 px-4 py-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                {isCompacting ? (
-                  <span
-                    className="inline-block size-3 rounded-full border border-primary-300 border-t-primary-500 animate-spin"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <>
-                    <span className="thinking-dot thinking-dot-1" />
-                    <span className="thinking-dot thinking-dot-2" />
-                    <span className="thinking-dot thinking-dot-3" />
-                  </>
-                )}
-                <span
-                  className={cn(
-                    'thinking-label ml-1.5 text-xs font-medium transition-opacity duration-300',
-                    isStale
-                      ? 'text-amber-500 dark:text-amber-400'
-                      : 'text-primary-500 dark:text-primary-500',
-                  )}
-                  style={{ opacity: visible ? 1 : 0 }}
-                >
-                  {displayedLabel}{' '}
-                  {elapsed >= 3 ? (
-                    <span className="text-[10px] opacity-60">
-                      {elapsedLabel}
-                    </span>
-                  ) : null}
-                </span>
-              </div>
-              {canExpandResearch ? (
-                <div className="mt-1 flex items-center gap-2 text-[11px] text-primary-500 dark:text-primary-400">
-                  <span>
-                    {completedResearchSteps}/
-                    {expandedResearchCard?.steps.length ?? 0} tools
-                  </span>
-                  <span aria-hidden="true" className="opacity-40">
-                    •
-                  </span>
-                  <span>
-                    {expandedResearchCard?.isActive
-                      ? 'Live timeline'
-                      : 'Timeline ready'}
-                  </span>
-                </div>
-              ) : null}
-            </div>
-            {canExpandResearch ? (
-              <button
-                type="button"
-                onClick={() =>
-                  expandedResearchCard?.setCollapsed(
-                    !expandedResearchCard.collapsed,
-                  )
-                }
-                className="relative z-10 inline-flex size-7 shrink-0 items-center justify-center rounded-full border border-primary-200/80 bg-primary-50/90 text-primary-500 transition-colors hover:bg-primary-100 dark:border-primary-800 dark:bg-primary-900/80 dark:text-primary-300 dark:hover:bg-primary-800"
-                aria-label={
-                  expandedResearchCard?.collapsed
-                    ? 'Expand research timeline'
-                    : 'Collapse research timeline'
-                }
-                title={
-                  expandedResearchCard?.collapsed
-                    ? 'Expand research timeline'
-                    : 'Collapse research timeline'
-                }
-              >
-                <HugeiconsIcon
-                  icon={
-                    expandedResearchCard?.collapsed
-                      ? ArrowExpand01Icon
-                      : ArrowUp01Icon
-                  }
-                  size={14}
-                  strokeWidth={1.8}
-                />
-              </button>
-            ) : null}
-          </div>
-
-          {isStale ? (
-            <span className="text-[11px] text-amber-500 dark:text-amber-400 animate-pulse">
-              {isVeryStale
-                ? 'Still thinking… this is taking a while'
-                : 'Taking longer than usual…'}
-            </span>
-          ) : null}
-        </div>
-
-        {expandedResearchCard && !expandedResearchCard.collapsed ? (
-          <ResearchCard researchCard={expandedResearchCard} />
-        ) : null}
-      </div>
-    </div>
-  )
-}
-
-const VIRTUAL_ROW_HEIGHT = 136
-const VIRTUAL_OVERSCAN = 8
 const NEAR_BOTTOM_THRESHOLD = 200
-// Pull-to-refresh constants removed
 
 const HIDDEN_SYSTEM_USER_PREFIXES = [
   'Pre-compaction memory flush',
@@ -682,7 +335,7 @@ type ChatMessageListProps = {
   emptyState?: React.ReactNode
   notice?: React.ReactNode
   noticePosition?: 'start' | 'end'
-  /** Busy turn — empty-gap chrome lives on the open MessageItem. */
+  /** Busy turn — face on durable assistant MessageItem. */
   turnBusy?: boolean
   sessionKey?: string
   pinToTop: boolean
@@ -703,9 +356,7 @@ type ChatMessageListProps = {
   bottomOffset?: number | string
   activeToolCalls?: Array<{ id: string; name: string; phase: string; args?: unknown }>
   liveToolActivity?: Array<{ name: string; timestamp: number }>
-  researchCard?: UseResearchCardResult
   hideSystemMessages?: boolean
-  isCompacting?: boolean
 }
 
 function ChatMessageListComponent({
@@ -733,9 +384,7 @@ function ChatMessageListComponent({
   bottomOffset = 0,
   activeToolCalls = [],
   liveToolActivity = [],
-  researchCard,
   hideSystemMessages = false,
-  isCompacting = false,
 }: ChatMessageListProps) {
   const activityDisplayMode = useChatSettingsStore(
     (s) => s.settings.chatActivityDisplayMode ?? 'compact',
@@ -760,12 +409,6 @@ function ChatMessageListComponent({
   const [isNearBottom, setIsNearBottom] = useState(true)
   const [unreadCount, setUnreadCount] = useState(0)
   const [expandAllToolSections, setExpandAllToolSections] = useState(false)
-
-  // Research/compact fallback ThinkingBubble stays simple for the first 10s.
-  const THINKING_ACTIVITY_DELAY_S = 10
-  const [thinkingElapsed, setThinkingElapsed] = useState(0)
-  const thinkingStartRef = useRef<number>(0)
-  const thinkingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false)
   const [messageSearchValue, setMessageSearchValue] = useState('')
@@ -1041,18 +684,6 @@ function ChatMessageListComponent({
     target.scrollIntoView({ behavior, block: 'center', inline: 'nearest' })
   }, [])
 
-  const toolResultsByCallId = useMemo(() => {
-    const map = new Map<string, ChatMessage>()
-    for (const message of messages) {
-      if (message.role !== 'toolResult') continue
-      const toolCallId = message.toolCallId
-      if (typeof toolCallId === 'string' && toolCallId.trim().length > 0) {
-        map.set(toolCallId, message)
-      }
-    }
-    return map
-  }, [messages])
-
   const hasUserVisibleTextMessages = useMemo(() => {
     return displayEntries.some(({ message }) => {
       const role = message.role || 'assistant'
@@ -1207,53 +838,6 @@ function ChatMessageListComponent({
     .filter(({ message }) => message.role === 'user')
     .map(({ index }) => index)
     .pop()
-  const showResearchCard = Boolean(
-    researchCard && researchCard.steps.length > 0,
-  )
-
-  // Busy chrome lives on the open-turn MessageItem (avatar glow → Activity →
-  // bubble). No list-footer TurnActivityHost — that was a second Working host.
-  const thinkingAreaVisible =
-    turnBusy || showResearchCard || isCompacting
-
-  // Track how long the thinking area has been visible to gate the delayed
-  // activity feed (10s threshold).
-  useEffect(() => {
-    if (thinkingAreaVisible) {
-      if (thinkingStartRef.current === 0) {
-        thinkingStartRef.current = Date.now()
-        setThinkingElapsed(0)
-      }
-      if (!thinkingTimerRef.current) {
-        thinkingTimerRef.current = setInterval(() => {
-          setThinkingElapsed(
-            Math.floor((Date.now() - thinkingStartRef.current) / 1000),
-          )
-        }, 250)
-      }
-    } else {
-      if (thinkingTimerRef.current) {
-        clearInterval(thinkingTimerRef.current)
-        thinkingTimerRef.current = null
-      }
-      thinkingStartRef.current = 0
-      setThinkingElapsed(0)
-    }
-    return () => {
-      if (thinkingTimerRef.current) {
-        clearInterval(thinkingTimerRef.current)
-        thinkingTimerRef.current = null
-      }
-    }
-  }, [thinkingAreaVisible])
-
-  const showActivityFeed =
-    !hideActivityCards &&
-    (thinkingElapsed >= THINKING_ACTIVITY_DELAY_S ||
-      activeToolCalls.length > 0 ||
-      liveToolActivity.length > 0 ||
-      Boolean(streamingThinking && streamingThinking.trim().length > 0))
-
   const outlineEntries = useMemo(() => {
     const next: Array<{ id: string; excerpt: string }> = []
     messages.forEach((message, index) => {
@@ -1273,11 +857,7 @@ function ChatMessageListComponent({
   }, [messages])
 
   const shouldBottomPin =
-    visibleEntries.length > 0 ||
-    showToolOnlyNotice ||
-    showResearchCard ||
-    turnBusy ||
-    isCompacting
+    visibleEntries.length > 0 || showToolOnlyNotice || turnBusy
 
   const normalizedStreamingToolCalls = useMemo<
     Array<{
@@ -1327,55 +907,47 @@ function ChatMessageListComponent({
     }))
   }, [activeToolCalls, liveToolActivity])
 
-  // Pin the last user+assistant group without adding bottom padding.
-  const groupStartIndex = typeof lastUserIndex === 'number' ? lastUserIndex : -1
-  const hasGroup = pinToTop && groupStartIndex >= 0
-  const shouldVirtualize = false // Disabled — causes scroll glitches
+  const openTurnKey = useMemo(() => {
+    if (!sessionKey?.trim()) return null
+    return getRememberedOpenTurn(sessionKey)?.clientSubmitId ?? null
+  }, [sessionKey, turnBusy, isStreaming, messages.length])
 
-  const virtualRange = useMemo(() => {
-    if (!shouldVirtualize || scrollMetrics.clientHeight <= 0) {
-      return {
-        startIndex: 0,
-        endIndex: visibleEntries.length,
-        topSpacerHeight: 0,
-        bottomSpacerHeight: 0,
-      }
-    }
-
-    const startIndex = Math.max(
-      0,
-      Math.floor(scrollMetrics.scrollTop / VIRTUAL_ROW_HEIGHT) -
-        VIRTUAL_OVERSCAN,
-    )
-    const visibleCount = Math.ceil(
-      scrollMetrics.clientHeight / VIRTUAL_ROW_HEIGHT,
-    )
-    const endIndex = Math.min(
-      visibleEntries.length,
-      startIndex + visibleCount + VIRTUAL_OVERSCAN * 2,
-    )
-
-    return {
-      startIndex,
-      endIndex,
-      topSpacerHeight: startIndex * VIRTUAL_ROW_HEIGHT,
-      bottomSpacerHeight:
-        (visibleEntries.length - endIndex) * VIRTUAL_ROW_HEIGHT,
-    }
-  }, [scrollMetrics, shouldVirtualize, visibleEntries.length])
+  const visibleTranscriptRows = useMemo(
+    () =>
+      projectChatToTranscriptRows(
+        visibleEntries.map((entry) => entry.message),
+        {
+          turnBusy,
+          isStreaming,
+          streamingMessageId,
+          openTurnKey,
+        },
+      ),
+    [
+      visibleEntries,
+      turnBusy,
+      isStreaming,
+      streamingMessageId,
+      openTurnKey,
+    ],
+  )
 
   function isMessageStreaming(message: ChatMessage, index: number) {
-    if (!isStreaming || !streamingMessageId) return false
     const messageId =
       message.__optimisticId ||
       (message as { messageId?: unknown }).messageId ||
       (message as { id?: unknown }).id
-    if (messageId === streamingMessageId) return true
+    const id =
+      typeof messageId === 'string' || typeof messageId === 'number'
+        ? String(messageId)
+        : ''
+    if (!isStreaming || !streamingMessageId) return false
+    if (id && id === streamingMessageId) return true
     // Fallback only while the streaming turn hasn't been assigned an id yet.
     // Once a message has a stable id, it must NOT match by index, otherwise
     // sending a new user message re-streams the previous assistant turn.
     if (
-      !messageId &&
+      !id &&
       message.role === 'assistant' &&
       index === lastAssistantIndex
     ) {
@@ -1384,63 +956,215 @@ function ChatMessageListComponent({
     return false
   }
 
-  function renderMessage(entry: DisplayEntry, entryIndex: number) {
-    const chatMessage = entry.message
-    const realIndex = entry.sourceIndex
+  const transcriptGroupStartIndex = useMemo(() => {
+    if (!pinToTop) return -1
+    let index = -1
+    for (let i = 0; i < visibleTranscriptRows.length; i += 1) {
+      const row = visibleTranscriptRows[i]
+      if (row?.kind === 'message' && row.speaker === 'user') index = i
+    }
+    return index
+  }, [pinToTop, visibleTranscriptRows])
+  const hasTranscriptGroup = pinToTop && transcriptGroupStartIndex >= 0
+
+  function renderOpenTurnAssistantBody(
+    bodyRow: Extract<(typeof visibleTranscriptRows)[number], { kind: 'message' }>,
+    bodyIndex: number,
+  ) {
+    const chatMessage = bodyRow.message
+    const realIndex = bodyRow.sourceIndex
     const messageIsStreaming = isMessageStreaming(chatMessage, realIndex)
-    const stableId = getStableMessageId(chatMessage, realIndex)
-    const signature = streamingState.signatureById.get(stableId)
-    const simulateStreaming =
-      !messageIsStreaming && streamingState.streamingTargets.has(stableId)
-    const spacingClass = cn(
-      getMessageSpacingClass(visibleEntries, entryIndex),
-      getToolGroupClass(visibleEntries, entryIndex),
-    )
+    const stableId = getStableMessageId(bodyRow.message, realIndex)
     const forceActionsVisible =
-      typeof lastAssistantIndex === 'number' && realIndex === lastAssistantIndex
-    const hasToolCalls =
-      chatMessage.role === 'assistant' &&
-      (getToolCallsFromMessage(chatMessage).length > 0 ||
-        entry.attachedToolMessages.length > 0)
+      typeof lastAssistantIndex === 'number' &&
+      realIndex === lastAssistantIndex
+    const searchMatchIndex = messageSearchMatchIndexById.get(stableId)
+    const isSearchMatch = typeof searchMatchIndex === 'number'
+    const isActiveMatch =
+      isSearchMatch && searchMatchIndex === activeSearchMatchIndex
+
+    return (
+      <AgentTranscriptItemView
+        key={bodyRow.key}
+        row={bodyRow}
+        formatLabel={formatToolDisplayLabel}
+        formatArg={keyArgLabel}
+        onRegenerateMessage={
+          forceActionsVisible ? onRegenerateMessage : undefined
+        }
+        forceActionsVisible={forceActionsVisible}
+        isLastAssistant={forceActionsVisible}
+        isStreaming={messageIsStreaming}
+        streamingText={messageIsStreaming ? streamingText : undefined}
+        streamingThinking={
+          messageIsStreaming ? streamingThinking : undefined
+        }
+        lifecycleEvents={messageIsStreaming ? lifecycleEvents : undefined}
+        toolCalls={
+          messageIsStreaming ? normalizedStreamingToolCalls : undefined
+        }
+        expandAllToolSections={expandAllToolSections || streamActivityMode}
+        hideActivityCards={hideActivityCards}
+        assistantFaceColumn="none"
+        wrapperDataMessageId={stableId}
+        bubbleClassName={
+          isActiveMatch
+            ? 'ring-2 ring-amber-400 bg-amber-50/50'
+            : isSearchMatch
+              ? 'bg-amber-50/30'
+              : undefined
+        }
+      />
+    )
+  }
+
+  function renderTranscriptRow(
+    row: (typeof visibleTranscriptRows)[number],
+    entryIndex: number,
+  ) {
+    // Open-turn assistants are folded under the processing face slot above.
+    if (
+      row.kind === 'message' &&
+      row.speaker === 'assistant' &&
+      isOpenTurnAssistantUnderProcessing(visibleTranscriptRows, entryIndex)
+    ) {
+      return null
+    }
+
+    if (row.kind === 'processing') {
+      const bodyIndices: number[] = []
+      for (let i = entryIndex + 1; i < visibleTranscriptRows.length; i += 1) {
+        const next = visibleTranscriptRows[i]
+        if (
+          next?.kind === 'message' &&
+          next.speaker === 'assistant' &&
+          isOpenTurnAssistantUnderProcessing(visibleTranscriptRows, i)
+        ) {
+          bodyIndices.push(i)
+          continue
+        }
+        break
+      }
+      const hasBody = bodyIndices.length > 0
+      const bodyHasSurface = bodyIndices.some((bodyIndex) => {
+        const bodyRow = visibleTranscriptRows[bodyIndex]
+        if (!bodyRow || bodyRow.kind !== 'message') return false
+        const message = bodyRow.message
+        if (textFromMessage(message).trim()) return true
+        if (assistantHasWorkingSurface(message)) return true
+        if (isMessageStreaming(message, bodyRow.sourceIndex)) {
+          if (streamingText?.trim() || streamingThinking?.trim()) return true
+          if (normalizedStreamingToolCalls.length > 0) return true
+        }
+        return false
+      })
+      // Glow ring + Thinking… share one lifecycle; static face stays mounted.
+      const showLivePulse = !bodyHasSurface
+
+      return (
+        <div
+          key={row.key}
+          className={cn(
+            'flex items-start gap-2 md:gap-3',
+            showLivePulse && 'thinking-live-pair',
+          )}
+          data-live-turn-group=""
+          data-transcript-kind="processing"
+          data-transcript-face-slot={row.key}
+        >
+          <AgentTranscriptItemView
+            row={row}
+            formatLabel={formatToolDisplayLabel}
+            formatArg={keyArgLabel}
+            isStreaming
+            processingAvatarOnly
+            processingPulse={showLivePulse}
+            wrapperDataMessageId={row.key}
+          />
+          <div className="flex min-w-0 flex-1 flex-col gap-1 md:gap-1.5">
+            {showLivePulse ? (
+              <span className="thinking-live-label pt-0.5 text-xs text-primary-400">
+                Thinking…
+              </span>
+            ) : null}
+            {hasBody
+              ? bodyIndices.map((bodyIndex) => {
+                  const bodyRow = visibleTranscriptRows[bodyIndex]
+                  if (!bodyRow || bodyRow.kind !== 'message') return null
+                  return renderOpenTurnAssistantBody(bodyRow, bodyIndex)
+                })
+              : null}
+          </div>
+        </div>
+      )
+    }
+
+    const chatMessage = row.message
+    const realIndex = row.sourceIndex
+    const messageIsStreaming = isMessageStreaming(chatMessage, realIndex)
+    const stableId = getStableMessageId(row.message, realIndex)
+    const forceActionsVisible =
+      row.speaker === 'assistant' &&
+      typeof lastAssistantIndex === 'number' &&
+      realIndex === lastAssistantIndex
 
     const searchMatchIndex = messageSearchMatchIndexById.get(stableId)
     const isSearchMatch = typeof searchMatchIndex === 'number'
     const isActiveMatch =
       isSearchMatch && searchMatchIndex === activeSearchMatchIndex
 
-    // If this is a user message and an assistant reply exists after it,
-    // the send obviously succeeded — never show Retry.
     const hasAssistantReply =
-      chatMessage.role === 'user' &&
-      entryIndex + 1 < visibleEntries.length &&
-      visibleEntries[entryIndex + 1]?.message.role === 'assistant'
+      row.speaker === 'user' &&
+      visibleTranscriptRows
+        .slice(entryIndex + 1)
+        .some(
+          (candidate) =>
+            (candidate.kind === 'message' &&
+              candidate.speaker === 'assistant') ||
+            candidate.kind === 'processing',
+        )
     const effectiveOnRetry = hasAssistantReply ? undefined : onRetryMessage
+    const isLastUserRow =
+      row.speaker === 'user' &&
+      !visibleTranscriptRows
+        .slice(entryIndex + 1)
+        .some(
+          (candidate) =>
+            candidate.kind === 'message' && candidate.speaker === 'user',
+        )
 
     return (
       <div
-        key={stableId}
+        key={row.key}
         className="flex flex-col gap-1 md:gap-1.5"
         data-live-turn-group={messageIsStreaming ? '' : undefined}
+        data-transcript-kind={row.kind}
       >
-        <MessageItem
-          message={chatMessage}
-          attachedToolMessages={entry.attachedToolMessages}
+        <AgentTranscriptItemView
+          row={row}
+          formatLabel={formatToolDisplayLabel}
+          formatArg={keyArgLabel}
           onRetryMessage={effectiveOnRetry}
-          onEditMessage={
-            entryIndex === lastUserIndex ? onEditMessage : undefined
-          }
+          onEditMessage={isLastUserRow ? onEditMessage : undefined}
           onRegenerateMessage={
-            entryIndex === lastAssistantIndex
-              ? onRegenerateMessage
-              : undefined
-          }
-          toolResultsByCallId={
-            hasToolCalls ? toolResultsByCallId : undefined
+            forceActionsVisible ? onRegenerateMessage : undefined
           }
           forceActionsVisible={forceActionsVisible}
           isLastAssistant={forceActionsVisible}
-          wrapperClassName={spacingClass}
+          isStreaming={messageIsStreaming}
+          streamingText={messageIsStreaming ? streamingText : undefined}
+          streamingThinking={
+            messageIsStreaming ? streamingThinking : undefined
+          }
+          lifecycleEvents={messageIsStreaming ? lifecycleEvents : undefined}
+          toolCalls={
+            messageIsStreaming ? normalizedStreamingToolCalls : undefined
+          }
+          expandAllToolSections={expandAllToolSections || streamActivityMode}
+          hideActivityCards={hideActivityCards}
           wrapperDataMessageId={stableId}
+          wrapperRef={isLastUserRow ? lastUserRef : undefined}
+          wrapperScrollMarginTop={isLastUserRow ? headerHeight : undefined}
           bubbleClassName={
             isActiveMatch
               ? 'ring-2 ring-amber-400 bg-amber-50/50'
@@ -1448,21 +1172,6 @@ function ChatMessageListComponent({
                 ? 'bg-amber-50/30'
                 : undefined
           }
-          toolCalls={
-            messageIsStreaming ? normalizedStreamingToolCalls : undefined
-          }
-          isStreaming={messageIsStreaming}
-          streamingText={messageIsStreaming ? streamingText : undefined}
-          streamingThinking={
-            messageIsStreaming ? streamingThinking : undefined
-          }
-          lifecycleEvents={
-            messageIsStreaming ? lifecycleEvents : undefined
-          }
-          simulateStreaming={simulateStreaming}
-          streamingKey={signature}
-          expandAllToolSections={expandAllToolSections || streamActivityMode}
-          hideActivityCard={hideActivityCards}
         />
       </div>
     )
@@ -1864,7 +1573,7 @@ function ChatMessageListComponent({
               <div className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-6 text-sm text-primary-600">
                 No messages match “{messageSearchValue.trim()}”.
               </div>
-            ) : hasGroup ? (
+            ) : hasTranscriptGroup ? (
               <>
                 {hiddenEarlierCount > 0 ? (
                   <div className="mb-3 flex justify-center">
@@ -1887,87 +1596,23 @@ function ChatMessageListComponent({
                     </button>
                   </div>
                 ) : null}
-                {visibleEntries.slice(0, groupStartIndex).map(renderMessage)}
-                {/* // Keep the last exchange pinned without extra tail gap. // Account
-              for space-y-6 (24px) when pinning. */}
+                {visibleTranscriptRows
+                  .slice(0, transcriptGroupStartIndex)
+                  .map((row, index) => renderTranscriptRow(row, index))}
                 <div
                   className="my-2 flex flex-col gap-2 md:my-3 md:gap-3"
                   style={{
                     minHeight: `${Math.max(0, pinGroupMinHeight - 12)}px`,
                   }}
                 >
-                  {visibleEntries.slice(groupStartIndex).map((entry, index) => {
-                    const chatMessage = entry.message
-                    const realIndex = entry.sourceIndex
-                    const entryIndex = groupStartIndex + index
-                    const messageIsStreaming = isMessageStreaming(
-                      chatMessage,
-                      realIndex,
-                    )
-                    const stableId = getStableMessageId(chatMessage, realIndex)
-                    const signature = streamingState.signatureById.get(stableId)
-                    const simulateStreaming =
-                      !messageIsStreaming &&
-                      streamingState.streamingTargets.has(stableId)
-                    const forceActionsVisible =
-                      typeof lastAssistantIndex === 'number' &&
-                      realIndex === lastAssistantIndex
-                    const wrapperRef =
-                      entryIndex === lastUserIndex ? lastUserRef : undefined
-                    const wrapperClassName = cn(
-                      getMessageSpacingClass(visibleEntries, entryIndex),
-                      getToolGroupClass(visibleEntries, entryIndex),
-                      entryIndex === lastUserIndex ? 'scroll-mt-0' : '',
-                    )
-                    const wrapperScrollMarginTop =
-                      entryIndex === lastUserIndex ? headerHeight : undefined
-                    const hasToolCalls =
-                      chatMessage.role === 'assistant' &&
-                      (getToolCallsFromMessage(chatMessage).length > 0 ||
-                        entry.attachedToolMessages.length > 0)
-                    return (
-                      <MessageItem
-                        key={stableId}
-                        message={chatMessage}
-                        attachedToolMessages={entry.attachedToolMessages}
-                        onRetryMessage={onRetryMessage}
-                        onEditMessage={
-                          entryIndex === lastUserIndex
-                            ? onEditMessage
-                            : undefined
-                        }
-                        onRegenerateMessage={
-                          entryIndex === lastAssistantIndex
-                            ? onRegenerateMessage
-                            : undefined
-                        }
-                        toolResultsByCallId={
-                          hasToolCalls ? toolResultsByCallId : undefined
-                        }
-                        forceActionsVisible={forceActionsVisible}
-                        wrapperRef={wrapperRef}
-                        wrapperClassName={wrapperClassName}
-                        wrapperScrollMarginTop={wrapperScrollMarginTop}
-                        isStreaming={messageIsStreaming}
-                        streamingText={
-                          messageIsStreaming ? streamingText : undefined
-                        }
-                        streamingThinking={
-                          messageIsStreaming ? streamingThinking : undefined
-                        }
-                        lifecycleEvents={
-                          messageIsStreaming ? lifecycleEvents : undefined
-                        }
-                        simulateStreaming={simulateStreaming}
-                        streamingKey={signature}
-                        expandAllToolSections={
-                          expandAllToolSections || streamActivityMode
-                        }
-                        hideActivityCard={hideActivityCards}
-                        isLastAssistant={forceActionsVisible}
-                      />
-                    )
-                  })}
+                  {visibleTranscriptRows
+                    .slice(transcriptGroupStartIndex)
+                    .map((row, index) =>
+                      renderTranscriptRow(
+                        row,
+                        transcriptGroupStartIndex + index,
+                      ),
+                    )}
                 </div>
               </>
             ) : (
@@ -1993,40 +1638,11 @@ function ChatMessageListComponent({
                     </button>
                   </div>
                 ) : null}
-                {shouldVirtualize && virtualRange.topSpacerHeight > 0 ? (
-                  <div
-                    aria-hidden="true"
-                    style={{ height: `${virtualRange.topSpacerHeight}px` }}
-                  />
-                ) : null}
-                {visibleEntries
-                  .slice(virtualRange.startIndex, virtualRange.endIndex)
-                  .map((entry, index) =>
-                    renderMessage(entry, virtualRange.startIndex + index),
-                  )}
-                {shouldVirtualize && virtualRange.bottomSpacerHeight > 0 ? (
-                  <div
-                    aria-hidden="true"
-                    style={{ height: `${virtualRange.bottomSpacerHeight}px` }}
-                  />
-                ) : null}
+                {visibleTranscriptRows.map((row, index) =>
+                  renderTranscriptRow(row, index),
+                )}
               </>
             )}
-            {!turnBusy && (showResearchCard || isCompacting) ? (
-              <div
-                className="flex flex-col gap-1 py-1.5 px-1 animate-in fade-in duration-300 md:gap-1.5 md:py-2"
-                role="status"
-                aria-live="polite"
-              >
-                <ThinkingBubble
-                  activeToolCalls={activeToolCalls}
-                  liveToolActivity={liveToolActivity}
-                  researchCard={researchCard}
-                  isCompacting={isCompacting}
-                  forceSimple={!showActivityFeed}
-                />
-              </div>
-            ) : null}
             {notice && noticePosition === 'end' ? notice : null}
             <ChatContainerScrollAnchor ref={anchorRef} />
           </ChatContainerContent>
@@ -2090,7 +1706,9 @@ function getToolGroupClass(
 function getStableMessageId(message: ChatMessage, index: number): string {
   // Single chokepoint with chat-turn-identity — prefer durable id over
   // body fingerprint so settle / history stamp does not remount the row.
-  return stableChatMessageKey(message, index, textFromMessage)
+  return stableChatMessageKey(message, index, (candidate) =>
+    textFromMessage(candidate as ChatMessage),
+  )
 }
 
 function areChatMessageListEqual(
@@ -2122,9 +1740,7 @@ function areChatMessageListEqual(
     prev.bottomOffset === next.bottomOffset &&
     prev.activeToolCalls === next.activeToolCalls &&
     prev.liveToolActivity === next.liveToolActivity &&
-    prev.researchCard === next.researchCard &&
-    prev.hideSystemMessages === next.hideSystemMessages &&
-    prev.isCompacting === next.isCompacting
+    prev.hideSystemMessages === next.hideSystemMessages
   )
 }
 

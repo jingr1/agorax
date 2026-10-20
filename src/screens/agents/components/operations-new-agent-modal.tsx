@@ -12,6 +12,7 @@ import {
   CREATE_AGENT_RUNTIMES,
   type CreateAgentInput,
   type CreateAgentRuntime,
+  type HermesProfileSetup,
   normalizeAgentId,
 } from '@/lib/create-agent'
 import { agentRuntimeLabel } from '@/lib/managed-agent-runtime/agent-targets'
@@ -51,6 +52,15 @@ type AvailableModel = {
   id: string
   provider: string
   name: string
+}
+
+export type CloneAgentOption = {
+  id: string
+  name: string
+  /** Hermes profile id (usually same as agent id). */
+  profile: string
+  role?: string
+  specialty?: string
 }
 
 function normalizeModel(
@@ -157,22 +167,52 @@ function ModelSelector({
   )
 }
 
+const SETUP_OPTIONS: Array<{
+  id: HermesProfileSetup
+  label: string
+  hint: string
+}> = [
+  {
+    id: 'new',
+    label: 'New profile',
+    hint: 'Create ~/.hermes/profiles/<id>',
+  },
+  {
+    id: 'existing',
+    label: 'Use existing',
+    hint: 'Claim an unbound profile',
+  },
+  {
+    id: 'clone-agent',
+    label: 'Clone agent',
+    hint: 'Copy profile + roster fields',
+  },
+]
+
 export function OperationsNewAgentModal({
   open,
   defaultModel,
-  cloneOptions = [],
+  /** Unbound Hermes profiles (orphans) for “Use existing”. */
+  existingProfiles = [],
+  /** Registered Hermes agents for “Clone agent”. */
+  cloneAgents = [],
+  /** Optional profile seeds when creating a new profile. */
+  seedProfiles = [],
   onClose,
   onCreate,
   isSaving,
 }: {
   open: boolean
   defaultModel: string
-  cloneOptions?: Array<{ id: string; name: string }>
+  existingProfiles?: Array<string>
+  cloneAgents?: Array<CloneAgentOption>
+  seedProfiles?: Array<string>
   onClose: () => void
   onCreate: (input: CreateAgentInput & { emoji?: string }) => Promise<unknown>
   isSaving: boolean
 }) {
   const [runtime, setRuntime] = useState<CreateAgentRuntime>('hermes')
+  const [hermesSetup, setHermesSetup] = useState<HermesProfileSetup>('new')
   const [presetId, setPresetId] = useState<string>('blank')
   const [presetCapabilities, setPresetCapabilities] =
     useState<AgentPresetCapabilities | null>(null)
@@ -182,6 +222,8 @@ export function OperationsNewAgentModal({
   const [description, setDescription] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [cloneFrom, setCloneFrom] = useState('')
+  const [existingProfile, setExistingProfile] = useState('')
+  const [cloneAgentId, setCloneAgentId] = useState('')
   const [role, setRole] = useState('Worker')
   const [specialty, setSpecialty] = useState('')
   const [command, setCommand] = useState('')
@@ -190,6 +232,7 @@ export function OperationsNewAgentModal({
   useEffect(() => {
     if (!open) return
     setRuntime('hermes')
+    setHermesSetup('new')
     setPresetId('blank')
     setPresetCapabilities(null)
     setName('')
@@ -198,6 +241,8 @@ export function OperationsNewAgentModal({
     setDescription('')
     setSystemPrompt('')
     setCloneFrom('')
+    setExistingProfile('')
+    setCloneAgentId('')
     setRole('Worker')
     setSpecialty('')
     setCommand('')
@@ -218,10 +263,74 @@ export function OperationsNewAgentModal({
     setPresetCapabilities(preset.capabilities ?? null)
   }
 
+  function applyExistingProfile(profileName: string) {
+    setExistingProfile(profileName)
+    if (!profileName) return
+    setName((current) => (current.trim() ? current : profileName))
+  }
+
+  function applyCloneAgent(agentId: string) {
+    setCloneAgentId(agentId)
+    const source = cloneAgents.find((agent) => agent.id === agentId)
+    if (!source) return
+    setRole(source.role?.trim() || 'Worker')
+    setSpecialty(source.specialty ?? '')
+    setName((current) =>
+      current.trim() ? current : `${source.name}-copy`.slice(0, 48),
+    )
+  }
+
   const modelsQuery = useQuery({
     queryKey: ['operations', 'models'],
     queryFn: fetchModels,
+    enabled: open && runtime === 'hermes' && hermesSetup !== 'existing',
+  })
+
+  /** Fresh orphan list when claiming — don't rely on stale snapshot alone. */
+  const orphanProfilesQuery = useQuery({
+    queryKey: ['operations', 'orphan-profiles'],
+    queryFn: async (): Promise<Array<string>> => {
+      const [profilesRes, agentsRes] = await Promise.all([
+        fetch('/api/profiles/list?light=1'),
+        fetch('/api/agents'),
+      ])
+      const profilesPayload = (await profilesRes.json().catch(() => ({}))) as {
+        profiles?: Array<{ name?: string } | string>
+      }
+      const agentsPayload = (await agentsRes.json().catch(() => ({}))) as {
+        agents?: Array<{
+          agentId?: string
+          runtime?: string
+          runtimeConfig?: { profile?: string }
+        }>
+      }
+      if (!profilesRes.ok) {
+        throw new Error(`Failed to list profiles (${profilesRes.status})`)
+      }
+      const liveNames = (profilesPayload.profiles ?? [])
+        .map((entry) =>
+          typeof entry === 'string' ? entry : String(entry.name ?? ''),
+        )
+        .map((name) => name.trim())
+        .filter(Boolean)
+      const bound = new Set(
+        (agentsPayload.agents ?? [])
+          .filter((agent) => (agent.runtime || 'hermes') === 'hermes')
+          .map(
+            (agent) =>
+              agent.runtimeConfig?.profile?.trim() ||
+              agent.agentId?.trim() ||
+              '',
+          )
+          .filter(Boolean),
+      )
+      return liveNames
+        .filter((name) => name !== 'default' && !bound.has(name))
+        .sort((left, right) => left.localeCompare(right))
+    },
     enabled: open && runtime === 'hermes',
+    staleTime: 0,
+    refetchOnMount: 'always',
   })
 
   const models = useMemo(
@@ -232,8 +341,22 @@ export function OperationsNewAgentModal({
     [modelsQuery.data?.models],
   )
 
+  const orphanProfiles = useMemo(() => {
+    const live = orphanProfilesQuery.data
+    if (live && live.length > 0) return live
+    if (live && live.length === 0) return []
+    // While loading / error, fall back to parent snapshot orphans.
+    return existingProfiles.filter((profile) => profile !== 'default')
+  }, [existingProfiles, orphanProfilesQuery.data])
+
   const isHermes = runtime === 'hermes'
   const agentIdPreview = normalizeAgentId(name) || 'agent-id'
+  const canSubmit =
+    Boolean(name.trim()) &&
+    (!isHermes ||
+      hermesSetup === 'new' ||
+      (hermesSetup === 'existing' && Boolean(existingProfile)) ||
+      (hermesSetup === 'clone-agent' && Boolean(cloneAgentId)))
 
   if (!open) return null
 
@@ -256,8 +379,8 @@ export function OperationsNewAgentModal({
                 New Agent
               </h2>
               <p className="mt-1 text-sm text-[var(--theme-muted-2)]">
-                Registers in the agent roster. Hermes also creates a profile via
-                /api/profiles/create.
+                Registers in the agent roster. Hermes can create, claim, or clone
+                a profile.
               </p>
             </div>
           </div>
@@ -302,6 +425,18 @@ export function OperationsNewAgentModal({
             />
             <p className="text-xs text-[var(--theme-muted)]">
               Agent id: <code>{agentIdPreview}</code>
+              {isHermes && hermesSetup === 'existing' && existingProfile ? (
+                <>
+                  {' '}
+                  · profile: <code>{existingProfile}</code>
+                </>
+              ) : null}
+              {isHermes && hermesSetup !== 'existing' ? (
+                <>
+                  {' '}
+                  · profile: <code>{agentIdPreview}</code>
+                </>
+              ) : null}
             </p>
           </label>
 
@@ -338,99 +473,221 @@ export function OperationsNewAgentModal({
               <span className="text-sm font-medium text-[var(--theme-text)]">
                 Hermes profile setup
               </span>
-              <p className="text-xs text-[var(--theme-muted)]">
-                Creates <code>~/.hermes/profiles/{agentIdPreview}</code> through{' '}
-                <code>POST /api/profiles/create</code>, then registers the agent.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {PRESET_OPTIONS.map((preset) => (
+              <div className="grid gap-2 sm:grid-cols-3">
+                {SETUP_OPTIONS.map((option) => (
                   <button
-                    key={preset.id}
+                    key={option.id}
                     type="button"
-                    onClick={() => applyPreset(preset.id)}
+                    onClick={() => setHermesSetup(option.id)}
                     className={cn(
-                      'inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-all',
-                      presetId === preset.id
-                        ? 'border-[var(--theme-accent)] bg-[var(--theme-accent-soft)] text-[var(--theme-text)]'
-                        : 'border-transparent bg-[var(--theme-input)] text-[var(--theme-muted)] hover:bg-[var(--theme-card2)]',
+                      'rounded-2xl border px-3 py-3 text-left transition-all',
+                      hermesSetup === option.id
+                        ? 'border-[var(--theme-accent)] bg-[var(--theme-accent-soft)]'
+                        : 'border-[var(--theme-border)] bg-[var(--theme-bg)] hover:bg-[var(--theme-card2)]',
                     )}
                   >
-                    <span aria-hidden="true">{preset.emoji}</span>
-                    <span>{preset.name}</span>
+                    <div className="text-sm font-medium text-[var(--theme-text)]">
+                      {option.label}
+                    </div>
+                    <div className="mt-1 text-xs text-[var(--theme-muted)]">
+                      {option.hint}
+                    </div>
                   </button>
                 ))}
               </div>
-              {presetCapabilities ? (
-                <div className="rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg)] px-3 py-2.5">
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-[var(--theme-muted)]">
-                    Recommended capabilities
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {presetCapabilities.skills.map((skill) => (
-                      <span
-                        key={skill}
-                        className="inline-flex items-center gap-1 rounded-md bg-[var(--theme-accent-soft)] px-2 py-1 text-[11px] text-[var(--theme-text)]"
-                      >
-                        🧩 {skill}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
             </div>
 
-            {cloneOptions.length > 0 ? (
+            {hermesSetup === 'new' ? (
+              <>
+                <div className="mt-4 space-y-2">
+                  <span className="text-sm font-medium text-[var(--theme-text)]">
+                    Template
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {PRESET_OPTIONS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => applyPreset(preset.id)}
+                        className={cn(
+                          'inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-all',
+                          presetId === preset.id
+                            ? 'border-[var(--theme-accent)] bg-[var(--theme-accent-soft)] text-[var(--theme-text)]'
+                            : 'border-transparent bg-[var(--theme-input)] text-[var(--theme-muted)] hover:bg-[var(--theme-card2)]',
+                        )}
+                      >
+                        <span aria-hidden="true">{preset.emoji}</span>
+                        <span>{preset.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {presetCapabilities ? (
+                    <div className="rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg)] px-3 py-2.5">
+                      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-[var(--theme-muted)]">
+                        Recommended capabilities
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {presetCapabilities.skills.map((skill) => (
+                          <span
+                            key={skill}
+                            className="inline-flex items-center gap-1 rounded-md bg-[var(--theme-accent-soft)] px-2 py-1 text-[11px] text-[var(--theme-text)]"
+                          >
+                            🧩 {skill}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                {seedProfiles.length > 0 ? (
+                  <label className="mt-4 block space-y-2">
+                    <span className="text-sm font-medium text-[var(--theme-text)]">
+                      Seed from profile (optional)
+                    </span>
+                    <select
+                      value={cloneFrom}
+                      onChange={(event) => setCloneFrom(event.target.value)}
+                      className="w-full control-surface rounded-2xl px-4 py-3 text-sm text-[var(--theme-text)] outline-none focus:border-[var(--theme-accent)]"
+                    >
+                      <option value="">None — blank config</option>
+                      {seedProfiles.map((profileName) => (
+                        <option key={profileName} value={profileName}>
+                          {profileName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </>
+            ) : null}
+
+            {hermesSetup === 'existing' ? (
+              <div className="mt-4 space-y-2">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-sm font-medium text-[var(--theme-text)]">
+                    Orphan profiles
+                  </span>
+                  <span className="text-xs text-[var(--theme-muted)]">
+                    {orphanProfilesQuery.isFetching
+                      ? 'Refreshing…'
+                      : `${orphanProfiles.length} available`}
+                  </span>
+                </div>
+                {orphanProfiles.length > 0 ? (
+                  <div className="max-h-56 overflow-y-auto rounded-2xl border border-[var(--theme-border)] bg-[var(--theme-bg)] p-1.5">
+                    <ul className="flex flex-col gap-1" role="listbox">
+                      {orphanProfiles.map((profileName) => {
+                        const selected = existingProfile === profileName
+                        return (
+                          <li key={profileName}>
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={selected}
+                              onClick={() => applyExistingProfile(profileName)}
+                              className={cn(
+                                'flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors',
+                                selected
+                                  ? 'bg-[var(--theme-accent-soft)] text-[var(--theme-text)]'
+                                  : 'text-[var(--theme-text)] hover:bg-[var(--transparency-hover)]',
+                              )}
+                            >
+                              <span className="font-medium">{profileName}</span>
+                              <span className="text-xs text-[var(--theme-muted)]">
+                                ~/.hermes/profiles/{profileName}
+                              </span>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="rounded-2xl border border-dashed border-[var(--theme-border)] px-4 py-3 text-sm text-[var(--theme-muted)]">
+                    {orphanProfilesQuery.isFetching
+                      ? 'Loading unbound profiles…'
+                      : 'No unbound profiles. Create a profile first, or use New profile / Clone agent.'}
+                  </p>
+                )}
+                <p className="text-xs text-[var(--theme-muted)]">
+                  Pick an unbound Hermes profile to claim. Binds without copying;
+                  only agents.yaml is updated.
+                </p>
+              </div>
+            ) : null}
+
+            {hermesSetup === 'clone-agent' ? (
               <label className="mt-4 block space-y-2">
                 <span className="text-sm font-medium text-[var(--theme-text)]">
-                  Clone from existing profile
+                  Clone from agent
                 </span>
-                <select
-                  value={cloneFrom}
-                  onChange={(event) => setCloneFrom(event.target.value)}
-                  className="w-full control-surface rounded-2xl px-4 py-3 text-sm text-[var(--theme-text)] outline-none focus:border-[var(--theme-accent)]"
-                >
-                  <option value="">None — start blank / from template</option>
-                  {cloneOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.name} ({option.id})
-                    </option>
-                  ))}
-                </select>
+                {cloneAgents.length > 0 ? (
+                  <select
+                    value={cloneAgentId}
+                    onChange={(event) => applyCloneAgent(event.target.value)}
+                    className="w-full control-surface rounded-2xl px-4 py-3 text-sm text-[var(--theme-text)] outline-none focus:border-[var(--theme-accent)]"
+                  >
+                    <option value="">Select agent…</option>
+                    {cloneAgents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name} ({agent.id}
+                        {agent.profile !== agent.id
+                          ? ` → ${agent.profile}`
+                          : ''}
+                        )
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="rounded-2xl border border-dashed border-[var(--theme-border)] px-4 py-3 text-sm text-[var(--theme-muted)]">
+                    No Hermes agents available to clone.
+                  </p>
+                )}
+                <p className="text-xs text-[var(--theme-muted)]">
+                  Creates a new profile for this agent id, copies config from the
+                  source profile, and copies roster fields (skills / tools /
+                  role…).
+                </p>
               </label>
             ) : null}
 
-            <label className="mt-4 block space-y-2">
-              <span className="text-sm font-medium text-[var(--theme-text)]">
-                Model
-              </span>
-              <ModelSelector
-                value={model}
-                onChange={setModel}
-                models={models}
-              />
-            </label>
+            {hermesSetup !== 'existing' ? (
+              <>
+                <label className="mt-4 block space-y-2">
+                  <span className="text-sm font-medium text-[var(--theme-text)]">
+                    Model
+                  </span>
+                  <ModelSelector
+                    value={model}
+                    onChange={setModel}
+                    models={models}
+                  />
+                </label>
 
-            <label className="mt-4 block space-y-2">
-              <span className="text-sm font-medium text-[var(--theme-text)]">
-                Description
-              </span>
-              <input
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                className="w-full rounded-2xl field-surface px-4 py-3 text-sm text-[var(--theme-text)] outline-none placeholder:text-[var(--theme-muted)] focus:border-[var(--theme-accent)]"
-              />
-            </label>
+                <label className="mt-4 block space-y-2">
+                  <span className="text-sm font-medium text-[var(--theme-text)]">
+                    Description
+                  </span>
+                  <input
+                    value={description}
+                    onChange={(event) => setDescription(event.target.value)}
+                    className="w-full rounded-2xl field-surface px-4 py-3 text-sm text-[var(--theme-text)] outline-none placeholder:text-[var(--theme-muted)] focus:border-[var(--theme-accent)]"
+                  />
+                </label>
 
-            <label className="mt-4 block space-y-2">
-              <span className="text-sm font-medium text-[var(--theme-text)]">
-                System Prompt
-              </span>
-              <textarea
-                value={systemPrompt}
-                onChange={(event) => setSystemPrompt(event.target.value)}
-                className="min-h-[140px] w-full rounded-2xl field-surface px-4 py-3 text-sm text-[var(--theme-text)] outline-none placeholder:text-[var(--theme-muted)] focus:border-[var(--theme-accent)]"
-              />
-            </label>
+                <label className="mt-4 block space-y-2">
+                  <span className="text-sm font-medium text-[var(--theme-text)]">
+                    System Prompt
+                  </span>
+                  <textarea
+                    value={systemPrompt}
+                    onChange={(event) => setSystemPrompt(event.target.value)}
+                    className="min-h-[140px] w-full rounded-2xl field-surface px-4 py-3 text-sm text-[var(--theme-text)] outline-none placeholder:text-[var(--theme-muted)] focus:border-[var(--theme-accent)]"
+                  />
+                </label>
+              </>
+            ) : null}
           </>
         ) : (
           <>
@@ -480,18 +737,42 @@ export function OperationsNewAgentModal({
                 name,
                 runtime,
                 emoji: isHermes ? emoji : undefined,
-                model: isHermes ? model : undefined,
-                systemPrompt: isHermes ? systemPrompt : undefined,
-                description: isHermes ? description : undefined,
-                cloneFrom: isHermes ? cloneFrom || undefined : undefined,
-                profile: isHermes ? agentIdPreview : undefined,
+                hermesSetup: isHermes ? hermesSetup : undefined,
+                existingProfile:
+                  isHermes && hermesSetup === 'existing'
+                    ? existingProfile || undefined
+                    : undefined,
+                cloneAgentId:
+                  isHermes && hermesSetup === 'clone-agent'
+                    ? cloneAgentId || undefined
+                    : undefined,
+                cloneFrom:
+                  isHermes && hermesSetup === 'new'
+                    ? cloneFrom || undefined
+                    : undefined,
+                model:
+                  isHermes && hermesSetup !== 'existing' ? model : undefined,
+                systemPrompt:
+                  isHermes && hermesSetup !== 'existing'
+                    ? systemPrompt
+                    : undefined,
+                description:
+                  isHermes && hermesSetup !== 'existing'
+                    ? description
+                    : undefined,
+                profile:
+                  isHermes && hermesSetup === 'existing'
+                    ? existingProfile
+                    : isHermes
+                      ? agentIdPreview
+                      : undefined,
                 role,
                 specialty: isHermes ? undefined : specialty,
                 command: isHermes ? undefined : command || undefined,
                 args: isHermes ? undefined : args || undefined,
               }).then(() => onClose())
             }
-            disabled={isSaving || !name.trim()}
+            disabled={isSaving || !canSubmit}
           >
             {isSaving ? 'Creating…' : 'Create Agent'}
           </Button>

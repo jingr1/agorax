@@ -14,16 +14,10 @@ describe('assistantMessageIdForRun', () => {
     expect(assistantMessageIdForRun('run-abc', 'sess')).toBe('assistant:run-abc')
   })
 
-  it('requires turnKey when runId is missing', () => {
-    expect(() => assistantMessageIdForRun(null, 'sess-1')).toThrow(/turnKey/)
-  })
-
-  it('scopes pending ids by turn so turns do not collide', () => {
-    expect(assistantMessageIdForRun(null, 'sess-1', 'turn-a')).toBe(
-      'assistant:pending:sess-1:turn-a',
-    )
-    expect(assistantMessageIdForRun(null, 'sess-1', 'turn-b')).not.toBe(
-      assistantMessageIdForRun(null, 'sess-1', 'turn-a'),
+  it('requires runId — never invents assistant:pending', () => {
+    expect(() => assistantMessageIdForRun(null, 'sess-1')).toThrow(/runId required/)
+    expect(() => assistantMessageIdForRun(null, 'sess-1', 'turn-a')).toThrow(
+      /runId required/,
     )
   })
 })

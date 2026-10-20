@@ -150,7 +150,7 @@ type MessageItemProps = {
   onEditMessage?: (message: ChatMessage) => void
   onRegenerateMessage?: (message: ChatMessage) => void
   forceActionsVisible?: boolean
-  wrapperRef?: React.RefObject<HTMLDivElement | null>
+  wrapperRef?: React.RefObject<HTMLDivElement | null> | React.Ref<HTMLDivElement>
   wrapperClassName?: string
   wrapperDataMessageId?: string
   wrapperScrollMarginTop?: number
@@ -163,6 +163,11 @@ type MessageItemProps = {
   expandAllToolSections?: boolean
   /** When true, skip the WORKING / tool activity card under the bubble */
   hideActivityCard?: boolean
+  /**
+   * Left gutter for assistants. Face mounts here on the stable messageId row
+   * (`avatar`). `spacer` / `none` are for non-face rows only.
+   */
+  assistantFaceColumn?: 'avatar' | 'spacer' | 'none'
   isLastAssistant?: boolean
 }
 
@@ -613,7 +618,7 @@ const TOOL_DISPLAY_LABELS: Record<string, string> = {
   browser_snapshot: '📸 Snapshot',
 }
 
-function formatToolDisplayLabel(
+export function formatToolDisplayLabel(
   name: string,
   args?: Record<string, unknown>,
 ): string {
@@ -886,7 +891,7 @@ function readToolArgs(
 }
 
 /** Extract the most useful single argument to display in a tool pill */
-function keyArgLabel(
+export function keyArgLabel(
   name: string,
   args?: Record<string, unknown>,
 ): string | null {
@@ -2118,6 +2123,7 @@ function MessageItemComponent({
   streamingKey: _streamingKey,
   expandAllToolSections = false,
   hideActivityCard = false,
+  assistantFaceColumn = 'avatar',
   isLastAssistant = false,
 }: MessageItemProps) {
   const [isHovered, setIsHovered] = useState(false)
@@ -2540,70 +2546,26 @@ function MessageItemComponent({
   const hasActivityContent =
     finalToolSections.length > 0 ||
     Boolean(thinking && thinking.trim().length > 0)
-  // Activity (thinking/tools) shares the avatar row: face left, Activity then
-  // reply stacked in the content column — one MessageItem host.
-  // Settled turns rely on TuiActivityCard default-collapsed (!isStreaming).
-  // Avatar must not unmount when `isStreaming` flickers — also honor durable
-  // `__streamingStatus` / pending host id until text arrives.
-  const messageMarkedStreaming =
-    (message as { __streamingStatus?: unknown }).__streamingStatus ===
-    'streaming'
-  const durableHostId =
-    (typeof (message as { messageId?: unknown }).messageId === 'string' &&
-      (message as { messageId: string }).messageId) ||
-    (typeof (message as { id?: unknown }).id === 'string' &&
-      (message as { id: string }).id) ||
-    ''
-  const isPendingHost = durableHostId.includes(':pending:')
-  // Once the host face has appeared, keep it mounted through streaming
-  // flicker / id handoff until reply text arrives.
-  const [assistantAvatarLatched, setAssistantAvatarLatched] = useState(false)
-  useEffect(() => {
-    if (isUser || hasText) return
-    if (
-      effectiveIsStreaming ||
-      messageMarkedStreaming ||
-      isPendingHost ||
-      hasActivityContent
-    ) {
-      setAssistantAvatarLatched(true)
-    }
-  }, [
-    isUser,
-    hasText,
-    effectiveIsStreaming,
-    messageMarkedStreaming,
-    isPendingHost,
-    hasActivityContent,
-  ])
-  const keepAssistantHostChrome =
-    !isUser &&
-    !hasText &&
-    (effectiveIsStreaming ||
-      messageMarkedStreaming ||
-      isPendingHost ||
-      assistantAvatarLatched)
-  const isEmptyStreamingShell =
-    keepAssistantHostChrome &&
-    !hasAttachments &&
-    !hasInlineImages &&
-    !hasSelectionCards
+  // Open-turn face lives on transcript `processing:<turnKey>` — MessageItem
+  // with face=none must not remount a second avatar / Thinking pulse.
   const shouldRenderMessageBubble =
     hasText ||
     hasAttachments ||
     hasInlineImages ||
     hasSelectionCards ||
-    isEmptyStreamingShell ||
     (effectiveIsStreaming && hasRevealedText)
-  // Assistant face stays up for Activity-only / pending / bubble — never gate
-  // solely on the transient isStreaming prop.
-  const shouldRenderAssistantAvatarRow =
+  const shouldRenderAssistantRow =
     !isUser &&
     !(message as { __isNarration?: unknown }).__isNarration &&
     (shouldRenderMessageBubble ||
-      hasActivityContent ||
-      keepAssistantHostChrome ||
-      assistantAvatarLatched)
+      (!hideActivityCard && hasActivityContent) ||
+      assistantFaceColumn === 'avatar')
+  // Historical / settle-only: pulse on this MessageItem when it owns the face.
+  // Open-turn host uses assistantFaceColumn='none' (pulse on processing slot).
+  const showAssistantFacePulse =
+    assistantFaceColumn === 'avatar' &&
+    !shouldRenderMessageBubble &&
+    (effectiveIsStreaming || message.__streamingStatus === 'streaming')
 
   // 'queued' = delivered to server, waiting for response (busy/backlogged)
   // 'sending' = still in flight to the server API (should clear in <1s)
@@ -2893,8 +2855,7 @@ function MessageItemComponent({
         // outside the box — including the busy avatar outline on the left
         // edge. Keep visible while streaming / retry so the ring is not cut.
         contentVisibility:
-          (isUser && (isFailed || isStuckSending)) ||
-          shouldRenderAssistantAvatarRow
+          (isUser && (isFailed || isStuckSending)) || shouldRenderAssistantRow
             ? 'visible'
             : 'auto',
         containIntrinsicSize: 'auto 160px',
@@ -2941,9 +2902,7 @@ function MessageItemComponent({
       )}
       {/* Tool calls now render inline inside the assistant bubble, not above it */}
 
-      {(isUser
-        ? shouldRenderMessageBubble
-        : shouldRenderAssistantAvatarRow) &&
+      {(isUser ? shouldRenderMessageBubble : shouldRenderAssistantRow) &&
         !(message as any).__isNarration && (
         <Message
           className={cn(
@@ -2958,23 +2917,18 @@ function MessageItemComponent({
               src={profileAvatarDataUrl}
               alt={profileDisplayName}
             />
-          ) : (
+          ) : assistantFaceColumn === 'avatar' ? (
             <AssistantAvatar
               size={24}
               className={cn(
                 'mt-0.5 shrink-0',
-                // Glow for empty-gap host — face stays even if isStreaming flickers.
-                isEmptyStreamingShell &&
-                  !hasActivityContent &&
-                  'thinking-avatar-glow',
+                showAssistantFacePulse && 'thinking-avatar-glow',
               )}
-              alt={
-                isEmptyStreamingShell && !hasActivityContent
-                  ? 'Working'
-                  : undefined
-              }
+              alt={showAssistantFacePulse ? 'Thinking' : undefined}
             />
-          )}
+          ) : assistantFaceColumn === 'spacer' ? (
+            <div className="mt-0.5 size-6 shrink-0" aria-hidden />
+          ) : null}
           {!isUser ? (
             <div className="flex min-w-0 max-w-[80%] flex-1 flex-col gap-1">
               {!hideActivityCard && hasActivityContent ? (
@@ -2999,11 +2953,16 @@ function MessageItemComponent({
                   ))}
                 </div>
               ) : null}
-              {isEmptyStreamingShell && !hasActivityContent ? (
-                <div className="min-h-6 min-w-0" aria-hidden />
-              ) : shouldRenderMessageBubble ? (
-                messageBubble
+              {showAssistantFacePulse ? (
+                <div
+                  className="thinking-live-label text-[13px] text-primary-400"
+                  role="status"
+                  aria-live="polite"
+                >
+                  Thinking<span aria-hidden>…</span>
+                </div>
               ) : null}
+              {shouldRenderMessageBubble ? messageBubble : null}
             </div>
           ) : (
             messageBubble
@@ -3048,7 +3007,7 @@ function MessageItemComponent({
         </div>
       ) : null}
 
-      {(!hasToolCalls || hasText) && !isEmptyStreamingShell && (
+      {(!hasToolCalls || hasText) && shouldRenderMessageBubble && (
         <MessageActionsBar
           text={fullText}
           timestamp={timestamp}
@@ -3129,6 +3088,9 @@ function areMessagesEqual(
     return false
   }
   if (prevProps.hideActivityCard !== nextProps.hideActivityCard) {
+    return false
+  }
+  if (prevProps.assistantFaceColumn !== nextProps.assistantFaceColumn) {
     return false
   }
   if (

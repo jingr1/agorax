@@ -465,13 +465,9 @@ describe('hermes-agent-engine', () => {
         },
       ],
     })
-    expect(count).toBe(3)
+    expect(count).toBe(2)
     const chat = selectHermesChatState(engine.getSnapshot(), 'stale-1')
-    expect(chat.messages.map((m) => m.id)).toEqual([
-      'old-u',
-      'user:fresh',
-      'assistant:pending:stale-1:fresh',
-    ])
+    expect(chat.messages.map((m) => m.id)).toEqual(['old-u', 'user:fresh'])
     coordinator.dispose()
   })
 
@@ -908,7 +904,7 @@ describe('hermes-agent-engine', () => {
     expect(content?.some((part) => part.type === 'text')).toBe(true)
   })
 
-  it('pending assistant host survives started→assistant:runId fold', () => {
+  it('durable assistant:runId hosts the open turn after ingest user only', () => {
     const workspaceId = 'ws'
     const commandPort = createHermesCommandPort({
       workspaceId,
@@ -949,16 +945,16 @@ describe('hermes-agent-engine', () => {
     })
     expect(chat.messages.map((m) => m.id)).toEqual([
       'user:c-host',
-      'assistant:pending:host-1:c-host',
+      'assistant:run-live',
     ])
     expect(chat.messages[1]).toMatchObject({
       __streamingStatus: 'streaming',
       content: [{ type: 'text', text: 'pong' }],
     })
-    expect(chat.streamingMessageId).toBe('assistant:pending:host-1:c-host')
+    expect(chat.streamingMessageId).toBe('assistant:run-live')
   })
 
-  it('ingestHermesUserPromptMessage seeds user + empty assistant host', () => {
+  it('ingestHermesUserPromptMessage seeds only optimistic user', () => {
     const workspaceId = 'ws'
     const commandPort = createHermesCommandPort({
       workspaceId,
@@ -983,15 +979,8 @@ describe('hermes-agent-engine', () => {
         role: 'user',
         content: [{ type: 'text', text: 'hello engine' }],
       }),
-      expect.objectContaining({
-        id: 'assistant:pending:send-1:c-99',
-        role: 'assistant',
-        __streamingStatus: 'streaming',
-        content: [],
-      }),
     ])
-    expect(chat.isStreaming).toBe(true)
-    expect(chat.streamingMessageId).toBe('assistant:pending:send-1:c-99')
+    expect(chat.streamingMessageId).toBeNull()
     expect(chat.turnBusy).toBe(true)
   })
 })

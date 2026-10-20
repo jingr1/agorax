@@ -564,23 +564,31 @@ export function useStreamingMessage(options: UseStreamingMessageOptions = {}) {
           if (runId) {
             activeRunIdRef.current = runId
             registerSendStreamRun(runId)
+            const durableId =
+              typeof payload.messageId === 'string' && payload.messageId.trim()
+                ? payload.messageId.trim()
+                : `assistant:${runId}`
             setState((prev) =>
-              prev.streamingRunId === runId
+              prev.streamingRunId === runId &&
+              prev.streamingMessageId === durableId
                 ? prev
                 : {
                     ...prev,
                     streamingRunId: runId,
-                    // Keep the turn-scoped seed id. Switching to assistant:runId
-                    // mid-turn desynced list matching from chat-store write-through
-                    // and could paint text onto the previous settled bubble.
-                    streamingMessageId:
-                      prev.streamingMessageId ||
-                      (typeof payload.messageId === 'string' &&
-                      payload.messageId.trim()
-                        ? payload.messageId.trim()
-                        : `assistant:${runId}`),
+                    streamingMessageId: prev.streamingMessageId || durableId,
                   },
             )
+            // Portable write-through host — only after runId (never pending).
+            const live = useChatStore.getState().getStreamingState(
+              activeSessionKeyRef.current,
+            )
+            if (!live?.messageId) {
+              useChatStore.getState().beginStreamingTurn({
+                sessionKey: activeSessionKeyRef.current,
+                messageId: durableId,
+                runId,
+              })
+            }
           }
           markActivity()
           pushActivity({
@@ -936,27 +944,16 @@ export function useStreamingMessage(options: UseStreamingMessageOptions = {}) {
       const myGeneration = streamGenerationRef.current
       const clientSubmitId = params.idempotencyKey ?? crypto.randomUUID()
 
-      const turnKey = clientSubmitId
-      const messageId = assistantMessageIdForRun(
-        null,
-        params.sessionKey,
-        turnKey,
-      )
-
       setState({
         isStreaming: true,
-        streamingMessageId: messageId,
+        streamingMessageId: null,
         streamingText: '',
         streamingRunId: null,
         error: null,
       })
       useChatStore.getState().setHeartbeatActivity(null)
-      // Seed turn-scoped durable id before SSE — prevents chunk write-through
-      // from upserting into the previous settled `assistant:pending:<session>`.
-      useChatStore.getState().beginStreamingTurn({
-        sessionKey: params.sessionKey,
-        messageId,
-      })
+      // No local assistant:pending seed — durable host arrives with SSE runId
+      // (`assistant:<runId>`). Until then Engine list uses processing pulse.
 
       const workspaceId =
         params.profileName?.trim() ||

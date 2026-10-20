@@ -8,7 +8,6 @@ import {
   upsertSwarmRosterWorker,
   patchSwarmRosterWorker,
 } from '../../server/swarm-roster'
-import { listSwarmWorkerIds } from '../../server/swarm-foundation'
 
 export const Route = createFileRoute('/api/swarm-roster')({
   server: {
@@ -17,12 +16,12 @@ export const Route = createFileRoute('/api/swarm-roster')({
         if (!isAuthenticated(request)) {
           return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
         }
-        const ids = listSwarmWorkerIds().filter((id) => id !== 'workspace')
+        // agents.yaml is the source of truth — do not merge orphan disk profiles.
         return json({
           ok: true,
           path: SWARM_ROSTER_PATH,
           examplePath: SWARM_ROSTER_EXAMPLE_PATH,
-          roster: readSwarmRoster(ids),
+          roster: readSwarmRoster([]),
           fetchedAt: Date.now(),
         })
       },
@@ -40,8 +39,7 @@ export const Route = createFileRoute('/api/swarm-roster')({
           )
         }
         try {
-          const ids = listSwarmWorkerIds().filter((id) => id !== 'workspace')
-          const roster = upsertSwarmRosterWorker(body as never, ids)
+          const roster = upsertSwarmRosterWorker(body as never, [])
           return json({
             ok: true,
             path: SWARM_ROSTER_PATH,
@@ -101,8 +99,7 @@ export const Route = createFileRoute('/api/swarm-roster')({
           )
         }
         try {
-          const ids = listSwarmWorkerIds()
-          const roster = patchSwarmRosterWorker(workerId, patch as never, ids)
+          const roster = patchSwarmRosterWorker(workerId, patch as never, [])
           return json({
             ok: true,
             path: SWARM_ROSTER_PATH,

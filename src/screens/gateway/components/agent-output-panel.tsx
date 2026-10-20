@@ -539,7 +539,7 @@ export function AgentOutputPanel({
                 )}
               >
                 {task.status === 'in_progress'
-                  ? 'Working...'
+                  ? 'Thinking...'
                   : task.status === 'done'
                     ? '✓ Completed'
                     : 'Queued'}
