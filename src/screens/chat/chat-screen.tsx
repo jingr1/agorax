@@ -2747,62 +2747,56 @@ export function ChatScreen({
       try {
         const profile =
           workspaceProfileName || activeProfileName || 'default'
-        const runtime = getHermesChatRuntime(profile, {
-          profileName: profile,
-        })
-        // Engine activateSession → POST /api/sessions + agorax_run_mapping.
         const activationId = `activate-${crypto.randomUUID()}`
         const clientSubmitId = crypto.randomUUID()
         const provisionalId = preferredFriendlyId?.trim() || clientSubmitId
-        const accepted = runtime.engine.activateSession({
-          mode: 'new',
-          activationId,
-          agentSessionId: provisionalId,
-          agentTargetId: 'hermes-native',
-          clientSubmitId,
-          workspaceId: profile,
-          ...(preferredFriendlyId?.trim()
-            ? { title: preferredFriendlyId.trim() }
-            : {}),
-        })
-        if (!accepted) {
-          throw new Error('Hermes Engine rejected activateSession')
-        }
 
-        // Wait briefly for mapping / session to land (effect is async).
-        let sessionKey = ''
-        let friendlyId = preferredFriendlyId?.trim() || ''
-        for (let i = 0; i < 40; i += 1) {
-          const mapping = await runtime.getMapping(provisionalId)
-          if (mapping?.gatewaySessionId) {
-            sessionKey = mapping.gatewaySessionId
-            break
+        // Wait for activateSession's real gateway create (onSessionResolved),
+        // not getMapping — hydrate used to invent gatewaySessionId=provisionalId
+        // and the poll would return early → chat/stream 404.
+        const resolved = await new Promise<{
+          sessionKey: string
+          friendlyId: string
+        }>((resolve, reject) => {
+          const timeout = window.setTimeout(() => {
+            reject(new Error('Hermes create session timed out'))
+          }, 15_000)
+          const runtime = getHermesChatRuntime(profile, {
+            profileName: profile,
+            onSessionResolved: (payload) => {
+              window.clearTimeout(timeout)
+              resolve(payload)
+            },
+          })
+          const accepted = runtime.engine.activateSession({
+            mode: 'new',
+            activationId,
+            agentSessionId: provisionalId,
+            agentTargetId: 'hermes-native',
+            clientSubmitId,
+            workspaceId: profile,
+            ...(preferredFriendlyId?.trim()
+              ? { title: preferredFriendlyId.trim() }
+              : {}),
+          })
+          if (!accepted) {
+            window.clearTimeout(timeout)
+            reject(new Error('Hermes Engine rejected activateSession'))
           }
-          await new Promise((r) => setTimeout(r, 50))
-        }
+        })
+
+        const sessionKey = resolved.sessionKey.trim()
+        const friendlyId =
+          resolved.friendlyId.trim() ||
+          deriveFriendlyIdFromKey(sessionKey) ||
+          sessionKey
         if (!sessionKey) {
-          const snap = runtime.engine.getSnapshot()
-          const sessions = Object.values(
-            snap.sessionLifecycle.sessionsById ?? {},
-          ) as Array<{
-            agentSessionId?: string
-            providerSessionId?: string | null
-          }>
-          const found = sessions.find(
-            (s) => s.agentSessionId === provisionalId || s.providerSessionId,
-          )
-          sessionKey =
-            found?.providerSessionId?.trim() ||
-            found?.agentSessionId?.trim() ||
-            ''
-        }
-        if (!friendlyId) {
-          friendlyId = deriveFriendlyIdFromKey(sessionKey) || sessionKey
-        }
-        if (!sessionKey || !friendlyId) {
           throw new Error('Invalid session response')
         }
 
+        const runtime = getHermesChatRuntime(profile, {
+          profileName: profile,
+        })
         // Re-key mapping to gateway session id for send/cancel lookup.
         await runtime.putMapping({
           agentSessionId: sessionKey,
@@ -3651,10 +3645,21 @@ export function ChatScreen({
             launchSend(created.sessionKey, created.friendlyId)
           })
           .catch((err: unknown) => {
+            // Never send with the provisional UUID — gateway has no such session
+            // (chat/stream → session_not_found 404).
             if (import.meta.env.DEV) {
               console.warn('[chat] failed to register new thread', err)
             }
-            launchSend(threadId, threadId)
+            setPendingGeneration(false, {
+              sessionKey: threadId,
+              friendlyId: threadId,
+            })
+            setSending(false)
+            setWaitingForResponse(false)
+            toast(
+              err instanceof Error ? err.message : 'Failed to create session',
+              { type: 'error' },
+            )
           })
         return
       }

@@ -327,6 +327,14 @@ export function createHermesCommandPort(
         const data = (await res.json()) as {
           sessionKey?: string
           friendlyId?: string
+          persisted?: boolean
+        }
+        // Workspace may return a random UUID with persisted:false when the
+        // gateway sessions capability is off — that id is not chat/streamable.
+        if (data.persisted === false) {
+          throw new Error(
+            'Hermes sessions API unavailable; session was not persisted on the gateway',
+          )
         }
         const gatewaySessionId =
           typeof data.sessionKey === 'string' ? data.sessionKey.trim() : ''

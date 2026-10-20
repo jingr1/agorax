@@ -284,23 +284,19 @@ export function getHermesChatRuntime(
       const sid = agentSessionId.trim()
       if (!sid) return
       if (selectEngineSession(engine.getSnapshot(), sid)) return
+      const knownGateway =
+        mappingCache.get(sid)?.gatewaySessionId?.trim() || null
+      // Local Engine skeleton only. Never invent gatewaySessionId=sid and
+      // persist it — that races New Chat (routeToSession UUID → hydrate →
+      // createSessionForMessage sees a fake mapping and chat/stream 404s).
       hydrateHermesAgentEngine(
         engine,
         createHermesSessionSkeleton({
           workspaceId: id,
           agentSessionId: sid,
-          providerSessionId: mappingCache.get(sid)?.gatewaySessionId ?? sid,
+          providerSessionId: knownGateway ?? sid,
         }),
       )
-      void persistMapping({
-        agentSessionId: sid,
-        turnId: mappingCache.get(sid)?.turnId ?? null,
-        gatewaySessionId: mappingCache.get(sid)?.gatewaySessionId ?? sid,
-        assignmentId: null,
-        hermesRunId: mappingCache.get(sid)?.hermesRunId ?? null,
-        bridgeKind: 'hermes-native',
-        updatedAtUnixMs: Date.now(),
-      })
     },
     reconcileHistory(agentSessionId, historyMessages, historyRevision) {
       const sid = agentSessionId.trim()

@@ -192,9 +192,8 @@ export async function createSession(opts?: {
   }>('/api/sessions', opts || {})
   const session = resp.session ?? resp.data ?? (resp as HermesSession)
   if (!session?.id) {
-    if (opts?.id) {
-      return { id: opts.id, title: opts.title, model: opts.model }
-    }
+    // Do not echo opts.id as a fake success — callers would chat/stream a
+    // session the gateway never created (session_not_found 404).
     throw new Error('Invalid session response')
   }
   return session

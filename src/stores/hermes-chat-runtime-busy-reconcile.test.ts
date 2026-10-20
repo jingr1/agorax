@@ -10,6 +10,19 @@ describe('hermes reconcileHistory while open turn remembered', () => {
     __resetRememberedOpenTurnForTests()
   })
 
+  it('ensureSessionHydrated does not invent a gateway mapping', async () => {
+    const { getHermesChatRuntime, hermesMappingCacheForTests } = await import(
+      './hermes-chat-runtime'
+    )
+    const workspaceId = `ws-hydrate-${Date.now()}`
+    const runtime = getHermesChatRuntime(workspaceId)
+    const provisionalId = `provisional-${crypto.randomUUID()}`
+    runtime.ensureSessionHydrated(provisionalId)
+    expect(hermesMappingCacheForTests.has(provisionalId)).toBe(false)
+    // Memory-only check: getMapping may still hit network; inventing a cache
+    // entry was the New Chat → session_not_found race.
+  })
+
   it('keeps optimistic user across idle history poll; processing owns face', () => {
     const workspaceId = `ws-busy-${Date.now()}`
     const runtime = getHermesChatRuntime(workspaceId)
