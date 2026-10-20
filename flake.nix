@@ -75,6 +75,9 @@
             # Python for pty-helper and build scripts
             python3
 
+            # Swarm persistent worker sessions (hermes chat --tui)
+            tmux
+
             # Nix tooling
             nil           # Nix LSP
             nixfmt-rfc-style
@@ -86,6 +89,7 @@
             echo "     node  $(node --version)"
             echo "     pnpm  $(pnpm --version)"
             echo "     python $(python3 --version)"
+            echo "     tmux  $(tmux -V 2>/dev/null || echo missing)"
             echo ""
             echo "  Quick start:"
             echo "     pnpm install"

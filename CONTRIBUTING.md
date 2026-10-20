@@ -6,6 +6,7 @@ Thanks for your interest in contributing! Here's how to get started.
 
 - Node.js 22+
 - pnpm
+- tmux (Swarm worker sessions; `apt install tmux` / `brew install tmux`)
 - Python ≥ 3.10 (recommended 3.11+) for the LangGraph orchestrator
 - A running [Hermes Agent](https://github.com/NousResearch/hermes-agent) gateway
 
@@ -36,8 +37,7 @@ Thanks for your interest in contributing! Here's how to get started.
    python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
    cd ..
    ```
-7. Configure tmux (required for Swarm/TUI mode):
-   Add to `~/.tmux.conf`:
+7. Confirm tmux is installed, then add to `~/.tmux.conf` (keeps the server alive when the last pane closes):
    ```
    set -g exit-empty off
    set -g exit-unattached off

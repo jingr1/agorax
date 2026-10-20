@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/jingr1/agorax/main/install.sh | bash
 #
 # What it does:
-#   1. Verifies Node 22+, git, pnpm
+#   1. Verifies Node 22+, git, curl, pnpm, tmux (Swarm worker sessions)
 #   2. Installs hermes-agent via Nous's official upstream installer
 #   3. Clones Agorax
 #   4. Sets up .env, enables the Hermes API server, generates matching
@@ -141,6 +141,11 @@ green "  git $(git --version | awk '{print $3}') ✓"
 
 need curl "Install curl (usually: apt install curl / brew install curl)"
 green "  curl ✓"
+
+# Swarm workers run as persistent `hermes chat --tui` panes inside tmux.
+# Installer stays sudo-free — tell the operator how to install the package.
+need tmux "Install tmux (apt install tmux / brew install tmux / dnf install tmux). Required for Swarm dispatch."
+green "  tmux $(tmux -V 2>/dev/null | awk '{print $2}') ✓"
 
 # Do NOT run `corepack enable` here: with system Node it tries to symlink
 # into /usr/bin and fails with EACCES for non-root. Installer must stay

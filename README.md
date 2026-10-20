@@ -71,11 +71,22 @@ Prerequisite: `API_SERVER_ENABLED=true` in `~/.hermes/.env` so the gateway serve
 
 ### One-line install
 
+Install these **before** running the installer. `install.sh` is sudo-free: it only checks for them and exits with install hints if anything is missing.
+
+| Prerequisite | Why | How to install |
+| --- | --- | --- |
+| **Node.js 22+** | Workspace runtime | [nodejs.org](https://nodejs.org/) |
+| **git** | Clone / update the repo | `apt install git` / `brew install git` |
+| **curl** | Download install scripts | `apt install curl` / `brew install curl` |
+| **tmux** | Swarm worker sessions (`hermes chat --tui`) | `apt install tmux` / `brew install tmux` / `dnf install tmux` |
+
+The installer will then install **pnpm** (user-local, if missing) and **hermes-agent** (via the Nous upstream installer, if missing). It does **not** `apt`/`brew` install system packages for you.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jingr1/agorax/main/install.sh | bash
 ```
 
-This clones into `~/agorax`, sets up `.env`, installs dependencies, and ensures `hermes-agent` is present. If Hermes Agent is already installed, the workspace will detect it; if not, the installer sets it up for you. Then:
+This clones into `~/agorax`, sets up `.env`, installs JS dependencies, and ensures `hermes-agent` is present. If Hermes Agent is already installed, the workspace will detect it; if not, the installer sets it up for you. Then:
 
 ```bash
 cd ~/agorax
@@ -140,12 +151,12 @@ Agorax works with any OpenAI-compatible backend. If your backend also exposes He
 
 #### Prerequisites
 
-- **Node.js 22+** — [nodejs.org](https://nodejs.org/)
+Same host packages as the [one-line install](#one-line-install) (`Node.js 22+`, `git`, `curl`, `tmux`), plus:
+
+- **pnpm** — [pnpm.io](https://pnpm.io/installation) (or let Corepack provide it)
 - **An OpenAI-compatible backend** — local, self-hosted, or remote
 - **Optional:** Python 3.11+ if you want to run a Hermes Agent gateway locally
 - **Swarm / LangGraph missions:** Python **≥ 3.10** and a one-time `hermes_langgraph_orchestrator/.venv` (see [orchestrator README](./hermes_langgraph_orchestrator/README.md))
-
-
 
 #### Step 1: Start your backend
 

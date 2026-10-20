@@ -6,6 +6,7 @@
   fetchPnpmDeps,
   pnpmConfigHook,
   python3,
+  tmux,
   makeWrapper,
 }:
 
@@ -49,7 +50,10 @@ stdenv.mkDerivation (finalAttrs: {
     makeWrapper
   ];
 
-  buildInputs = [ python3 ];
+  buildInputs = [
+    python3
+    tmux
+  ];
 
   # Give the build plenty of memory — same as the package.json script
   NODE_OPTIONS = "--max-old-space-size=2048";
@@ -90,7 +94,7 @@ stdenv.mkDerivation (finalAttrs: {
       --add-flags "--max-old-space-size=2048" \
       --add-flags "$appDir/server-entry.js" \
       --set NODE_ENV "production" \
-      --prefix PATH : "${python3}/bin"
+      --prefix PATH : "${python3}/bin:${tmux}/bin"
 
     runHook postInstall
   '';
