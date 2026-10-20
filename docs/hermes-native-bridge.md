@@ -131,7 +131,7 @@ Workspace 侧（或 collab.db）维护稳定映射，避免把 gateway id 直接
 | **1** | gateway 1:1：Create/Send/Cancel/stream → activity 事件 + Engine | ✅ `createHermesCommandPort`：activate→`/api/sessions`；sendInput→`/api/send-stream` SSE→`hermesSseToActivityEvents`→ingest；cancelTurn→`/api/runs/:id/stop` + `phase=settled` `canceled`；映射落库 |
 | **2** | 群聊 Hermes 成员 Turn 投影 + 精确 cancel/resume | 文档预留 |
 | **3** | Swarm assignment ↔ Turn；Human Gate 仍属 Hermes | 文档预留 |
-| **4** | Interaction：gateway `approval.request` → Interaction 投影 + `ManagedAgentInteractionPanel` + `POST /v1/runs/{id}/approval` 回写 | ✅ 1:1 Hermes chat（见 `hermes-approval.ts` / send-stream / hermes-agent-engine） |
+| **4** | Interaction：gateway `approval.request` → Interaction 投影 + `AgentInteractionPanel` + `POST /v1/runs/{id}/approval` 回写 | ✅ 1:1 Hermes chat（见 `hermes-approval.ts` / send-stream / hermes-agent-engine） |
 | **4+** | Goal/Fork 后置 | 文档预留 |
 
 ## 7. 与 Runtimes 页的关系

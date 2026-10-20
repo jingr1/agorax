@@ -23,7 +23,7 @@ import {
   mapManagedAgentActivitySnapshot,
   type ManagedAgentActivityDetail,
 } from './managed-agent-activity-mapper'
-import { projectPendingApprovalsFromToolCallMessages } from './managed-agent-interactions'
+import { projectPendingApprovalsFromToolCallMessages } from './agent-interactions'
 import {
   managedAgentActivateResponseFromJson,
   managedAgentCancelResponseFromJson,

@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentActivityInteraction } from '@agorax/agent-activity-core'
+import type {
+  AgentActivityInteraction,
+  AgentActivityMessage,
+} from '@agorax/agent-activity-core'
 import {
-  normalizeManagedAgentQuestions,
-  projectManagedAgentInteraction,
+  formatApprovalPresentation,
+  getApprovalToolDetails,
+  normalizeAgentQuestions,
+  projectAgentInteraction,
   projectPendingApprovalsFromToolCallMessages,
-  settleManagedAgentInteraction,
-} from './managed-agent-interactions'
-import type { AgentActivityMessage } from '@agorax/agent-activity-core'
+  settleAgentInteraction,
+} from './agent-interactions'
 
 function interaction(
   overrides: Partial<AgentActivityInteraction> &
@@ -23,9 +27,9 @@ function interaction(
   }
 }
 
-describe('projectManagedAgentInteraction — approval', () => {
-  it('projects canonical daemon approval fields (toolCall title/input + metadata.actions)', () => {
-    const card = projectManagedAgentInteraction(
+describe('projectAgentInteraction — approval', () => {
+  it('projects canonical daemon approval fields into presentation', () => {
+    const card = projectAgentInteraction(
       interaction({
         kind: 'approval',
         toolName: 'shell',
@@ -33,7 +37,7 @@ describe('projectManagedAgentInteraction — approval', () => {
           requestId: 'request-1',
           toolCall: {
             title: 'Run command?',
-            input: { command: 'npm test', path: 'ignored-second-key' },
+            input: { command: 'npm test', path: '/repo' },
           },
           options: [{ optionId: 'allow-once', name: 'Allow', kind: 'allowOnce' }],
         },
@@ -46,14 +50,13 @@ describe('projectManagedAgentInteraction — approval', () => {
         },
       }),
     )
-    expect(card).toEqual({
+    expect(card).toMatchObject({
       agentSessionId: 'session-1',
       turnId: 'turn-1',
       requestId: 'request-1',
       kind: 'approval',
       status: 'pending',
       title: 'Run command?',
-      detail: 'npm test',
       actions: [
         { id: 'allow-once', label: 'Allow', semantic: 'approve' },
         { id: 'deny-and-stop', label: 'Deny and stop', semantic: 'deny_and_stop' },
@@ -62,10 +65,41 @@ describe('projectManagedAgentInteraction — approval', () => {
       plan: null,
       supportsResponse: true,
     })
+    expect(card?.presentation).toEqual({
+      lead: '需要批准',
+      leadDetails: null,
+      fields: [
+        { label: 'Command', value: 'npm test', kind: 'command' },
+        { label: 'Path', value: '/repo', kind: 'text' },
+      ],
+    })
+    expect(card).not.toHaveProperty('detail')
+  })
+
+  it('merges root input fields when nested toolCall.input omits them', () => {
+    const card = projectAgentInteraction(
+      interaction({
+        kind: 'approval',
+        input: {
+          description: 'Install deps',
+          url: 'https://example.com',
+          toolCall: {
+            title: 'Fetch',
+            input: { command: 'curl https://example.com' },
+          },
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allowOnce' }],
+        },
+      }),
+    )
+    expect(card?.presentation?.fields).toEqual([
+      { label: 'Command', value: 'curl https://example.com', kind: 'command' },
+      { label: 'Summary', value: 'Install deps', kind: 'text' },
+      { label: 'URL', value: 'https://example.com', kind: 'text' },
+    ])
   })
 
   it('falls back to canonical input.options when metadata.actions is absent', () => {
-    const card = projectManagedAgentInteraction(
+    const card = projectAgentInteraction(
       interaction({
         kind: 'approval',
         toolName: 'shell',
@@ -85,15 +119,69 @@ describe('projectManagedAgentInteraction — approval', () => {
   })
 
   it('fails closed when no canonical actions exist', () => {
-    expect(
-      projectManagedAgentInteraction(interaction({ kind: 'approval' })),
-    ).toBeNull()
+    expect(projectAgentInteraction(interaction({ kind: 'approval' }))).toBeNull()
+  })
+
+  it('clamps long commands into a command presentation field (full value retained)', () => {
+    const longCommand = Array.from({ length: 40 }, (_, i) => `echo line-${i}`).join(
+      '\n',
+    )
+    const card = projectAgentInteraction(
+      interaction({
+        kind: 'approval',
+        input: {
+          toolCall: {
+            title: 'Long script',
+            input: {
+              command: longCommand,
+              path: '/tmp/work',
+              reason: 'bootstrap',
+            },
+          },
+          options: [{ optionId: 'once', name: 'Allow once', kind: 'allowOnce' }],
+        },
+      }),
+    )
+    const commandField = card?.presentation?.fields.find(
+      (field) => field.kind === 'command',
+    )
+    expect(commandField?.value).toBe(longCommand)
+    expect(commandField?.value.split('\n').length).toBeGreaterThan(4)
+    expect(card?.presentation?.fields.map((field) => field.label)).toEqual([
+      'Command',
+      'Path',
+      'Summary',
+    ])
   })
 })
 
-describe('projectManagedAgentInteraction — question', () => {
+describe('getApprovalToolDetails / formatApprovalPresentation', () => {
+  it('reads cmd/filePath/uri/pattern aliases', () => {
+    const details = getApprovalToolDetails({
+      cmd: 'ls',
+      filePath: './a',
+      uri: 'https://x.test',
+      pattern: 'foo*',
+    })
+    expect(details).toEqual({
+      command: 'ls',
+      path: './a',
+      summary: null,
+      url: 'https://x.test',
+      query: 'foo*',
+    })
+    expect(formatApprovalPresentation(details).fields.map((f) => f.label)).toEqual([
+      'Command',
+      'Path',
+      'URL',
+      'Query',
+    ])
+  })
+})
+
+describe('projectAgentInteraction — question', () => {
   it('normalizes input.questions and keeps deterministic ids for missing ones', () => {
-    const card = projectManagedAgentInteraction(
+    const card = projectAgentInteraction(
       interaction({
         kind: 'question',
         toolName: 'AskUserQuestion',
@@ -120,6 +208,7 @@ describe('projectManagedAgentInteraction — question', () => {
     )
     expect(card?.kind).toBe('question')
     expect(card?.supportsResponse).toBe(true)
+    expect(card?.presentation).toBeNull()
     expect(card?.questions).toHaveLength(2)
     const [first, second] = card!.questions
     expect(first?.header).toBe('Scope')
@@ -133,16 +222,14 @@ describe('projectManagedAgentInteraction — question', () => {
 
   it('fails closed when input.questions is missing or empty', () => {
     expect(
-      projectManagedAgentInteraction(
-        interaction({ kind: 'question', input: {} }),
-      ),
+      projectAgentInteraction(interaction({ kind: 'question', input: {} })),
     ).toBeNull()
   })
 })
 
-describe('projectManagedAgentInteraction — plan', () => {
+describe('projectAgentInteraction — plan', () => {
   it('projects a respondable plan info card (supportsResponse = true)', () => {
-    const card = projectManagedAgentInteraction(
+    const card = projectAgentInteraction(
       interaction({
         kind: 'plan',
         toolName: 'ExitPlanMode',
@@ -160,19 +247,20 @@ describe('projectManagedAgentInteraction — plan', () => {
       plan: { content: '1. Do the thing', filePath: '/tmp/plan.md' },
       supportsResponse: true,
       actions: [],
+      presentation: null,
     })
   })
 
   it('returns null when the plan card has nothing to show', () => {
     expect(
-      projectManagedAgentInteraction(interaction({ kind: 'plan', input: {} })),
+      projectAgentInteraction(interaction({ kind: 'plan', input: {} })),
     ).toBeNull()
   })
 })
 
-describe('normalizeManagedAgentQuestions', () => {
+describe('normalizeAgentQuestions', () => {
   it('dedupes question ids and drops options without labels', () => {
-    const questions = normalizeManagedAgentQuestions([
+    const questions = normalizeAgentQuestions([
       { id: 'q', question: 'One', options: [{ label: 'A' }, { description: 'no label' }] },
       { id: 'q', question: 'Duplicate' },
       'garbage',
@@ -182,35 +270,41 @@ describe('normalizeManagedAgentQuestions', () => {
   })
 })
 
-describe('settleManagedAgentInteraction', () => {
+describe('settleAgentInteraction', () => {
   const pending = interaction({ kind: 'approval' })
 
   it('canonical status wins for answered/superseded', () => {
     expect(
-      settleManagedAgentInteraction(
+      settleAgentInteraction(
         { ...pending, status: 'answered' },
         { status: 'responding', errorMessage: null },
       ),
     ).toEqual({ state: 'answered' })
     expect(
-      settleManagedAgentInteraction({ ...pending, status: 'superseded' }, null),
+      settleAgentInteraction({ ...pending, status: 'superseded' }, null),
     ).toEqual({ state: 'superseded' })
   })
 
   it('maps engine response states onto pending interactions', () => {
     expect(
-      settleManagedAgentInteraction(pending, { status: 'responding', errorMessage: null }),
+      settleAgentInteraction(pending, {
+        status: 'responding',
+        errorMessage: null,
+      }),
     ).toEqual({ state: 'responding' })
     expect(
-      settleManagedAgentInteraction(pending, { status: 'unknown', errorMessage: null }),
+      settleAgentInteraction(pending, { status: 'unknown', errorMessage: null }),
     ).toEqual({ state: 'responding' })
     expect(
-      settleManagedAgentInteraction(pending, {
+      settleAgentInteraction(pending, {
         status: 'failed',
         errorMessage: '  Managed Agent request failed: 409 ',
       }),
-    ).toEqual({ state: 'failed', errorMessage: 'Managed Agent request failed: 409' })
-    expect(settleManagedAgentInteraction(pending, null)).toEqual({ state: 'pending' })
+    ).toEqual({
+      state: 'failed',
+      errorMessage: 'Managed Agent request failed: 409',
+    })
+    expect(settleAgentInteraction(pending, null)).toEqual({ state: 'pending' })
   })
 })
 
@@ -262,8 +356,10 @@ describe('projectPendingApprovalsFromToolCallMessages', () => {
         },
       },
     })
-    const card = projectManagedAgentInteraction(projected[0]!)
-    expect(card?.detail).toBe('pwd')
+    const card = projectAgentInteraction(projected[0]!)
+    expect(
+      card?.presentation?.fields.find((field) => field.kind === 'command')?.value,
+    ).toBe('pwd')
     expect(card?.actions.map((action) => action.id)).toEqual([
       'approve_once',
       'reject',

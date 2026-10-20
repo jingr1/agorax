@@ -11,51 +11,64 @@ import type {
  * (agorax-agent-daemon interactive_projection.go → daemon-adapter
  * agentActivityInteractionFromDaemonInteraction):
  *
- * - approval: `input.toolCall.title` carries the display title,
- *   `input.toolCall.input` (or the merged root input) carries the preview
- *   detail (command/description/reason/path/url/...), and the action list
- *   comes from `metadata.actions` (`{id, label, semantic}`) with
- *   `input.options` (`{optionId|id, name|label, kind}`) as the canonical
- *   fallback. `semantic` classifies approve / approve_always / deny /
- *   deny_and_stop.
- * - question: `input.questions` is the AskUserQuestion tool input shape
- *   (`{id?, header, question, multiSelect?, allowFreeText?, options:
- *   [{id?, label, description}]}`), matching normalizeAskUserQuestions
- *   contract.
- * - plan: info card with optional implement writeback when the daemon
- *   plan-decision endpoint is available (`supportsResponse = true`). Host
- *   only admits Codex `implement_prompt` strategy; other providers fail closed
- *   at the API rather than faking success.
+ * - approval: `input.toolCall.title` carries the display title;
+ *   nested `toolCall.input` merged with root input supplies preview fields
+ *   (command/path/summary/url/query); actions from `metadata.actions` with
+ *   `input.options` fallback.
+ * - question: `input.questions` AskUserQuestion shape.
+ * - plan: info card with optional implement writeback.
  */
 
-export type ManagedAgentInteractionActionSemantic =
+export type AgentInteractionActionSemantic =
   | 'approve'
   | 'approve_always'
   | 'deny'
   | 'deny_and_stop'
 
-export type ManagedAgentInteractionAction = {
+export type AgentInteractionAction = {
   id: string
   label: string
-  semantic: ManagedAgentInteractionActionSemantic | null
+  semantic: AgentInteractionActionSemantic | null
 }
 
-export type ManagedAgentInteractionQuestionOption = {
+export type AgentInteractionQuestionOption = {
   id: string
   label: string
   description: string
 }
 
-export type ManagedAgentInteractionQuestion = {
+export type AgentInteractionQuestion = {
   id: string
   header: string
   question: string
-  options: Array<ManagedAgentInteractionQuestionOption>
+  options: Array<AgentInteractionQuestionOption>
   multiSelect: boolean
   allowFreeText: boolean
 }
 
-export type ManagedAgentInteractionCard = {
+export type ApprovalToolDetails = {
+  command: string | null
+  path: string | null
+  summary: string | null
+  url: string | null
+  query: string | null
+}
+
+export type ApprovalPresentationFieldKind = 'command' | 'text'
+
+export type ApprovalPresentationField = {
+  label: string
+  value: string
+  kind: ApprovalPresentationFieldKind
+}
+
+export type ApprovalPresentation = {
+  lead: string
+  leadDetails: string | null
+  fields: Array<ApprovalPresentationField>
+}
+
+export type AgentInteractionCard = {
   agentSessionId: string
   turnId: string
   requestId: string
@@ -64,20 +77,21 @@ export type ManagedAgentInteractionCard = {
    *  read-only; only a pending card is actionable. */
   status: AgentActivityInteraction['status']
   title: string
-  detail: string
+  /** approval only; structured fields for ApprovalPromptCard */
+  presentation: ApprovalPresentation | null
   /** approval only; empty for other kinds */
-  actions: Array<ManagedAgentInteractionAction>
+  actions: Array<AgentInteractionAction>
   /** question only; empty for other kinds */
-  questions: Array<ManagedAgentInteractionQuestion>
+  questions: Array<AgentInteractionQuestion>
   /** plan only; null for other kinds */
   plan: { content: string; filePath: string | null } | null
   /** false when the card cannot write back (answered/superseded still render). */
   supportsResponse: boolean
 }
 
-export function projectManagedAgentInteraction(
+export function projectAgentInteraction(
   interaction: AgentActivityInteraction,
-): ManagedAgentInteractionCard | null {
+): AgentInteractionCard | null {
   const base = {
     agentSessionId: interaction.agentSessionId,
     turnId: interaction.turnId,
@@ -98,14 +112,14 @@ export function projectManagedAgentInteraction(
 }
 
 type CardBase = Pick<
-  ManagedAgentInteractionCard,
+  AgentInteractionCard,
   'agentSessionId' | 'turnId' | 'requestId' | 'kind' | 'status'
 >
 
 function projectApproval(
   interaction: AgentActivityInteraction,
   base: CardBase,
-): ManagedAgentInteractionCard | null {
+): AgentInteractionCard | null {
   const input = record(interaction.input)
   const toolCall = record(input?.toolCall)
   const title =
@@ -113,8 +127,9 @@ function projectApproval(
     text(toolCall?.name) ||
     text(interaction.toolName) ||
     'Approval'
-  const displayInput = record(toolCall?.input) ?? input
-  const detail = approvalDetail(displayInput)
+  const displayInput = mergeApprovalDisplayInput(input, toolCall)
+  const details = getApprovalToolDetails(displayInput)
+  const presentation = formatApprovalPresentation(details)
 
   const actions = approvalActions(interaction)
   if (actions.length === 0) return null
@@ -122,7 +137,7 @@ function projectApproval(
   return {
     ...base,
     title,
-    detail,
+    presentation,
     actions,
     questions: [],
     plan: null,
@@ -130,35 +145,85 @@ function projectApproval(
   }
 }
 
-/** Preview fields the daemon normalizes into the approval display input. */
-const APPROVAL_DETAIL_KEYS = [
-  'command',
-  'description',
-  'reason',
-  'path',
-  'file_path',
-  'filePath',
-  'url',
-  'uri',
-  'prompt',
-  'instruction',
-  'query',
-  'pattern',
-  'cwd',
-] as const
+/** Merge root input + nested toolCall.input (nested wins on key clash). */
+function mergeApprovalDisplayInput(
+  input: Record<string, unknown> | null,
+  toolCall: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const root = input ? { ...input } : null
+  const nested = record(toolCall?.input)
+  if (!root && !nested) return null
+  if (!root) return { ...nested! }
+  if (!nested) return root
+  return { ...root, ...nested }
+}
 
-function approvalDetail(displayInput: Record<string, unknown> | null): string {
-  if (!displayInput) return ''
-  for (const key of APPROVAL_DETAIL_KEYS) {
-    const value = text(displayInput[key])
+/**
+ * Extract labeled approval preview fields from merged display input.
+ * Prefers first non-empty among each key group.
+ */
+export function getApprovalToolDetails(
+  displayInput: Record<string, unknown> | null,
+): ApprovalToolDetails {
+  if (!displayInput) {
+    return {
+      command: null,
+      path: null,
+      summary: null,
+      url: null,
+      query: null,
+    }
+  }
+  return {
+    command: firstText(displayInput, ['command', 'cmd']),
+    path: firstText(displayInput, ['path', 'file_path', 'filePath']),
+    summary: firstText(displayInput, ['reason', 'description']),
+    url: firstText(displayInput, ['url', 'uri']),
+    query: firstText(displayInput, ['query', 'pattern']),
+  }
+}
+
+export function formatApprovalPresentation(
+  details: ApprovalToolDetails,
+  options?: { lead?: string; leadDetails?: string | null },
+): ApprovalPresentation {
+  const fields: Array<ApprovalPresentationField> = []
+  if (details.command) {
+    fields.push({ label: 'Command', value: details.command, kind: 'command' })
+  }
+  if (details.path) {
+    fields.push({ label: 'Path', value: details.path, kind: 'text' })
+  }
+  if (details.summary) {
+    fields.push({ label: 'Summary', value: details.summary, kind: 'text' })
+  }
+  if (details.url) {
+    fields.push({ label: 'URL', value: details.url, kind: 'text' })
+  }
+  if (details.query) {
+    fields.push({ label: 'Query', value: details.query, kind: 'text' })
+  }
+  return {
+    lead: options?.lead?.trim() || '需要批准',
+    leadDetails: options?.leadDetails?.trim() || null,
+    fields,
+  }
+}
+
+function firstText(
+  recordValue: Record<string, unknown>,
+  keys: readonly string[],
+): string | null {
+  for (const key of keys) {
+    const value = text(recordValue[key])
     if (value) return value
   }
-  return ''
+  return null
 }
 
 function approvalActions(
   interaction: AgentActivityInteraction,
-): Array<ManagedAgentInteractionAction> {
+): Array<AgentInteractionAction> {
   const fromMetadata = recordArray(record(interaction.metadata)?.actions)
     .map((action) => {
       const id = text(action.id)
@@ -171,12 +236,9 @@ function approvalActions(
           actionSemantic(action.semantic) ?? actionSemantic(action.kind),
       }
     })
-    .filter(
-      (action): action is ManagedAgentInteractionAction => action !== null,
-    )
+    .filter((action): action is AgentInteractionAction => action !== null)
   if (fromMetadata.length > 0) return fromMetadata
 
-  // Canonical fallback: normalized approval options on the interaction input.
   return recordArray(record(interaction.input)?.options)
     .map((option) => {
       const id = text(option.optionId) || text(option.id) || text(option.name)
@@ -188,9 +250,7 @@ function approvalActions(
         semantic: actionSemantic(option.kind),
       }
     })
-    .filter(
-      (action): action is ManagedAgentInteractionAction => action !== null,
-    )
+    .filter((action): action is AgentInteractionAction => action !== null)
 }
 
 /**
@@ -201,7 +261,7 @@ function approvalActions(
  */
 function actionSemantic(
   value: unknown,
-): ManagedAgentInteractionActionSemantic | null {
+): AgentInteractionActionSemantic | null {
   const token = text(value)
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '')
@@ -226,15 +286,15 @@ function actionSemantic(
 function projectQuestion(
   interaction: AgentActivityInteraction,
   base: CardBase,
-): ManagedAgentInteractionCard | null {
-  const questions = normalizeManagedAgentQuestions(
+): AgentInteractionCard | null {
+  const questions = normalizeAgentQuestions(
     record(interaction.input)?.questions,
   )
   if (questions.length === 0) return null
   return {
     ...base,
     title: text(interaction.toolName) || 'Question',
-    detail: '',
+    presentation: null,
     actions: [],
     questions,
     plan: null,
@@ -247,11 +307,10 @@ function projectQuestion(
  * view-model shape. Provider payloads (codex / ACP) may omit UI-facing
  * question or option ids, so deterministic contract identities are minted at
  * this boundary — renderers and automation never fall back to array position.
- * Shared ask-user question normalizer.
  */
-export function normalizeManagedAgentQuestions(
+export function normalizeAgentQuestions(
   rawQuestions: unknown,
-): Array<ManagedAgentInteractionQuestion> {
+): Array<AgentInteractionQuestion> {
   const seenQuestionIds = new Set<string>()
   return recordArray(rawQuestions).flatMap((question, index) => {
     const questionId =
@@ -313,7 +372,7 @@ function askUserContractId(
 function projectPlan(
   interaction: AgentActivityInteraction,
   base: CardBase,
-): ManagedAgentInteractionCard | null {
+): AgentInteractionCard | null {
   const input = record(interaction.input)
   const toolCall = record(input?.toolCall)
   const title = text(toolCall?.title) || text(interaction.toolName) || 'Plan'
@@ -323,12 +382,10 @@ function projectPlan(
   return {
     ...base,
     title,
-    detail: '',
+    presentation: null,
     actions: [],
     questions: [],
     plan: { content, filePath },
-    // Host plan-decision is available; Codex implement_prompt succeeds, other
-    // providers fail closed at the daemon with an honest error.
     supportsResponse: true,
   }
 }
@@ -354,8 +411,7 @@ export function projectPendingApprovalsFromToolCallMessages(
     if (message.kind !== 'tool_call' && message.kind !== 'tool') continue
     const payload = record(message.payload)
     if (!payload) continue
-    const status =
-      text(message.status) || text(payload.status)
+    const status = text(message.status) || text(payload.status)
     if (status !== 'waiting_approval' && status !== 'awaiting_approval') {
       continue
     }
@@ -423,7 +479,7 @@ function mergeApprovalPreviewFromOutput(
 
 // ── Per-interaction settlement ────────────────────────────────────────────
 
-export type ManagedAgentInteractionSettlement =
+export type AgentInteractionSettlement =
   | { state: 'pending' }
   | { state: 'responding' }
   | { state: 'failed'; errorMessage: string }
@@ -437,10 +493,10 @@ export type ManagedAgentInteractionSettlement =
  * renders as `responding` and a failed one as `failed` (retry allowed — the
  * engine accepts an explicit resubmit of the exact same response).
  */
-export function settleManagedAgentInteraction(
+export function settleAgentInteraction(
   interaction: AgentActivityInteraction,
   response: Pick<InteractionResponseState, 'status' | 'errorMessage'> | null,
-): ManagedAgentInteractionSettlement {
+): AgentInteractionSettlement {
   if (interaction.status === 'answered') return { state: 'answered' }
   if (interaction.status === 'superseded') return { state: 'superseded' }
   if (response?.status === 'failed') {

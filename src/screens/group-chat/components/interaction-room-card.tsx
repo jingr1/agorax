@@ -1,5 +1,5 @@
 /**
- * In-conversation renderer for group-chat managed interaction cards.
+ * In-conversation renderer for group-chat interaction cards.
  *
  * The card payload is the canonical daemon interaction (decoded from the room
  * message); its status always comes from the canonical source — the daemon
@@ -12,9 +12,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { AgentActivityInteraction } from '@agorax/agent-activity-core'
 import {
-  projectManagedAgentInteraction,
-  type ManagedAgentInteractionQuestion,
-} from '@/screens/chat/lib/managed-agent-interactions'
+  projectAgentInteraction,
+  type AgentInteractionQuestion,
+} from '@/screens/chat/lib/agent-interactions'
+import { ApprovalPromptCard } from '@/screens/chat/components/approval-prompt-card'
 import {
   buildAskUserAnswerPayload,
   readOwnAnswer,
@@ -26,7 +27,7 @@ import {
 } from '@/lib/group-chat-interaction-card'
 import { respondToManagedInteraction } from '@/lib/group-chat-api'
 
-export function ManagedInteractionRoomCard({
+export function InteractionRoomCard({
   roomId,
   messageId,
   content,
@@ -40,7 +41,7 @@ export function ManagedInteractionRoomCard({
     return <p className="whitespace-pre-wrap text-sm">{content}</p>
   }
   return (
-    <ManagedInteractionCardBody
+    <InteractionCardBody
       roomId={roomId}
       messageId={messageId}
       payload={payload}
@@ -48,7 +49,7 @@ export function ManagedInteractionRoomCard({
   )
 }
 
-function ManagedInteractionCardBody({
+function InteractionCardBody({
   roomId,
   messageId,
   payload,
@@ -58,6 +59,7 @@ function ManagedInteractionCardBody({
   payload: ManagedInteractionCardPayload
 }) {
   const [submitting, setSubmitting] = useState(false)
+  const [activeActionId, setActiveActionId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const interaction: AgentActivityInteraction = useMemo(
@@ -76,7 +78,7 @@ function ManagedInteractionCardBody({
     }),
     [payload],
   )
-  const card = projectManagedAgentInteraction(interaction)
+  const card = projectAgentInteraction(interaction)
 
   const pending = payload.status === 'pending'
   const actionable = pending && card?.supportsResponse === true
@@ -87,6 +89,7 @@ function ManagedInteractionCardBody({
     payload?: Record<string, unknown>
   }) {
     setSubmitting(true)
+    setActiveActionId(input.optionId ?? null)
     setError(null)
     try {
       const result = await respondToManagedInteraction(roomId, messageId, input)
@@ -94,11 +97,10 @@ function ManagedInteractionCardBody({
         setError(result.error ?? 'Interaction response failed')
       }
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : String(reason),
-      )
+      setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       setSubmitting(false)
+      setActiveActionId(null)
     }
   }
 
@@ -107,6 +109,37 @@ function ManagedInteractionCardBody({
       <p className="whitespace-pre-wrap text-sm italic opacity-80">
         [Interaction {payload.kind} · {payload.status}]
       </p>
+    )
+  }
+
+  const errorNode = error ? (
+    <p className="text-xs text-red-500">{error}</p>
+  ) : null
+
+  if (card.kind === 'approval' && card.presentation) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Badge variant="warning">{payload.kind}</Badge>
+          {!pending ? (
+            <Badge variant="secondary">
+              {payload.status === 'answered' ? 'answered' : 'superseded'}
+            </Badge>
+          ) : null}
+        </div>
+        <ApprovalPromptCard
+          lead={card.presentation.lead}
+          title={card.title}
+          leadDetails={card.presentation.leadDetails}
+          fields={card.presentation.fields}
+          actions={card.actions}
+          disabled={!actionable}
+          submitting={submitting}
+          activeActionId={activeActionId}
+          onAction={(actionId) => void respond({ optionId: actionId })}
+          footer={errorNode}
+        />
+      </div>
     )
   }
 
@@ -123,29 +156,6 @@ function ManagedInteractionCardBody({
         ) : null}
       </div>
       <div className="text-sm font-medium">{card.title}</div>
-      {card.detail ? (
-        <p className="whitespace-pre-wrap break-all text-xs opacity-80">
-          {card.detail}
-        </p>
-      ) : null}
-
-      {card.kind === 'approval' ? (
-        <div className="flex flex-wrap gap-2">
-          {card.actions.map((action) => (
-            <Button
-              key={action.id}
-              size="sm"
-              variant={action.semantic === 'deny' || action.semantic === 'deny_and_stop' ? 'ghost' : 'secondary'}
-              disabled={!actionable || submitting}
-              onClick={() =>
-                void respond({ optionId: action.id })
-              }
-            >
-              {action.label}
-            </Button>
-          ))}
-        </div>
-      ) : null}
 
       {card.kind === 'question' ? (
         <QuestionCardForm
@@ -173,7 +183,7 @@ function ManagedInteractionCardBody({
         </div>
       ) : null}
 
-      {error ? <p className="text-xs text-red-500">{error}</p> : null}
+      {errorNode}
     </div>
   )
 }
@@ -183,7 +193,7 @@ function QuestionCardForm({
   disabled,
   onSubmit,
 }: {
-  questions: Array<ManagedAgentInteractionQuestion>
+  questions: Array<AgentInteractionQuestion>
   disabled: boolean
   onSubmit: (payload: Record<string, unknown>) => void
 }) {
@@ -217,16 +227,10 @@ function QuestionCardForm({
   const allAnswered =
     questions.length > 0 &&
     questions.every((question) =>
-      Object.prototype.hasOwnProperty.call(
-        answersByQuestionId,
-        question.id,
-      ),
+      Object.prototype.hasOwnProperty.call(answersByQuestionId, question.id),
     )
 
-  function toggleOption(
-    question: ManagedAgentInteractionQuestion,
-    label: string,
-  ) {
+  function toggleOption(question: AgentInteractionQuestion, label: string) {
     if (disabled) return
     setSelectedByQuestionId((current) => {
       const existing = readOwnAnswer(current, question.id, [])
@@ -243,10 +247,7 @@ function QuestionCardForm({
     })
   }
 
-  function setFreeText(
-    question: ManagedAgentInteractionQuestion,
-    value: string,
-  ) {
+  function setFreeText(question: AgentInteractionQuestion, value: string) {
     if (disabled) return
     setFreeTextByQuestionId((current) => {
       const updated = { ...current }
@@ -281,7 +282,7 @@ function QuestionCardForm({
                       aria-pressed={active}
                       title={option.description || undefined}
                       onClick={() => toggleOption(question, option.label)}
-                      className="rounded border border-current/30 px-2 py-0.5 text-xs disabled:opacity-50 aria-pressed:bg-blue-500/15 aria-pressed:border-blue-500"
+                      className="rounded border border-current/30 px-2 py-0.5 text-xs disabled:opacity-50 aria-pressed:border-blue-500 aria-pressed:bg-blue-500/15"
                     >
                       {option.label}
                     </button>

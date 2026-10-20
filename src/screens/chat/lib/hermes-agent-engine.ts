@@ -1227,7 +1227,7 @@ export function selectHermesChatState(
         : providerNotice && terminalTurn?.phase === 'settled'
           ? systemNoticeText(providerNotice.payload)
           : null),
-    /** Pending Hermes gateway approvals for ManagedAgentInteractionPanel. */
+    /** Pending Hermes gateway approvals for AgentInteractionPanel. */
     interactions,
   }
 }

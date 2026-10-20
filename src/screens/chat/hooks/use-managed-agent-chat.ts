@@ -84,7 +84,7 @@ export type ManagedAgentComposerState = {
   capabilities: AgentActivitySession['capabilities']
 }
 
-export type ManagedAgentInteractionResponseInput = {
+export type AgentInteractionResponseInput = {
   turnId: string
   requestId: string
   action?: string
@@ -119,7 +119,7 @@ export type ManagedAgentChat = {
   abort: () => void
   clearMessages: () => void
   startNewSession: () => void
-  respondToInteraction: (input: ManagedAgentInteractionResponseInput) => Promise<void>
+  respondToInteraction: (input: AgentInteractionResponseInput) => Promise<void>
 }
 
 interface ManagedAgentChatRuntime {
@@ -706,7 +706,7 @@ export function useManagedAgentChat({
     if (agentSessionId) runtimeRef.current?.engine.stopSession({ agentSessionId })
   }, [])
 
-  const respondToInteraction = useCallback(async (input: ManagedAgentInteractionResponseInput) => {
+  const respondToInteraction = useCallback(async (input: AgentInteractionResponseInput) => {
     const agentSessionId = canonicalSessionIdRef.current
     const runtime = runtimeRef.current
     if (!runtime || !agentSessionId) {

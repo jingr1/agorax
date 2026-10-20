@@ -7,18 +7,19 @@ import type {
 } from '@agorax/agent-activity-core'
 import { canonicalInteractionKey } from '@agorax/agent-activity-core'
 import {
-  projectManagedAgentInteraction,
-  settleManagedAgentInteraction,
-  type ManagedAgentInteractionCard,
-  type ManagedAgentInteractionQuestion,
-} from '../lib/managed-agent-interactions'
+  projectAgentInteraction,
+  settleAgentInteraction,
+  type AgentInteractionCard,
+  type AgentInteractionQuestion,
+} from '../lib/agent-interactions'
 import {
   buildAskUserAnswerPayload,
   readOwnAnswer,
   writeOwnAnswer,
 } from '@/lib/managed-agent-runtime/interactive-answer-payload'
+import { ApprovalPromptCard } from './approval-prompt-card'
 
-export type ManagedAgentInteractionResponseInput = {
+export type AgentInteractionResponseInput = {
   turnId: string
   requestId: string
   action?: string
@@ -31,7 +32,7 @@ type InteractionResponseTracking = Pick<
   'status' | 'errorMessage'
 >
 
-export function ManagedAgentInteractionPanel({
+export function AgentInteractionPanel({
   interactions,
   responses = {},
   onRespond,
@@ -40,15 +41,15 @@ export function ManagedAgentInteractionPanel({
   /** Engine response-tracking state per interaction
    *  (keyed by canonicalInteractionKey). Drives submitting/failed settlement. */
   responses?: Record<string, InteractionResponseTracking | undefined>
-  onRespond: (input: ManagedAgentInteractionResponseInput) => Promise<void>
+  onRespond: (input: AgentInteractionResponseInput) => Promise<void>
 }) {
   const cards = interactions
     .map((interaction) => {
-      const card = projectManagedAgentInteraction(interaction)
+      const card = projectAgentInteraction(interaction)
       if (!card) return null
       return {
         card,
-        settlement: settleManagedAgentInteraction(
+        settlement: settleAgentInteraction(
           interaction,
           responses[
             canonicalInteractionKey(
@@ -67,7 +68,7 @@ export function ManagedAgentInteractionPanel({
   return (
     <div className="mx-4 my-2 space-y-2">
       {cards.map(({ card, settlement, output }) => (
-        <ManagedAgentInteractionCardView
+        <AgentInteractionCardView
           key={canonicalInteractionKey(
             card.agentSessionId,
             card.turnId,
@@ -83,19 +84,19 @@ export function ManagedAgentInteractionPanel({
   )
 }
 
-function ManagedAgentInteractionCardView({
+function AgentInteractionCardView({
   card,
   settlement,
   output,
   onRespond,
 }: {
-  card: ManagedAgentInteractionCard
-  settlement: ReturnType<typeof settleManagedAgentInteraction>
+  card: AgentInteractionCard
+  settlement: ReturnType<typeof settleAgentInteraction>
   output: Record<string, unknown> | null
-  onRespond: (input: ManagedAgentInteractionResponseInput) => Promise<void>
+  onRespond: (input: AgentInteractionResponseInput) => Promise<void>
 }) {
   const [lastInput, setLastInput] =
-    useState<ManagedAgentInteractionResponseInput | null>(null)
+    useState<AgentInteractionResponseInput | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
 
   const actionable =
@@ -103,7 +104,7 @@ function ManagedAgentInteractionCardView({
     card.status === 'pending' &&
     settlement.state !== 'responding'
 
-  async function respond(input: ManagedAgentInteractionResponseInput) {
+  async function respond(input: AgentInteractionResponseInput) {
     setLastInput(input)
     setLocalError(null)
     try {
@@ -118,30 +119,58 @@ function ManagedAgentInteractionCardView({
       ? friendlyInteractionError(new Error(settlement.errorMessage))
       : localError
 
+  const errorFooter =
+    errorMessage ? (
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs text-red-600 dark:text-red-400">{errorMessage}</p>
+        {lastInput && card.status === 'pending' ? (
+          <button
+            type="button"
+            disabled={settlement.state === 'responding'}
+            onClick={() => void respond(lastInput)}
+            className="border border-[var(--theme-border)] bg-[var(--theme-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--theme-text)] hover:bg-[var(--theme-card2)] disabled:opacity-50"
+          >
+            {settlement.state === 'responding' ? 'Sending...' : 'Retry'}
+          </button>
+        ) : null}
+      </div>
+    ) : null
+
+  if (card.kind === 'approval' && card.presentation) {
+    return (
+      <ApprovalPromptCard
+        lead={card.presentation.lead}
+        title={card.title}
+        leadDetails={card.presentation.leadDetails}
+        settlementNote={
+          <SettlementNote settlement={settlement} output={output} />
+        }
+        fields={card.presentation.fields}
+        actions={card.actions}
+        disabled={!actionable}
+        submitting={settlement.state === 'responding'}
+        activeActionId={lastInput?.optionId ?? null}
+        onAction={(actionId) =>
+          void respond({
+            turnId: card.turnId,
+            requestId: card.requestId,
+            optionId: actionId,
+          })
+        }
+        footer={errorFooter}
+      />
+    )
+  }
+
   return (
-    <section className="border border-[var(--theme-border)] bg-[var(--theme-card)] p-3">
+    <section className="rounded-xl border border-[var(--theme-border)] bg-[var(--theme-card)] px-4 pb-4 pt-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-semibold uppercase text-[var(--theme-muted)]">
-          {card.kind}
-        </div>
+        <div className="text-[13px] text-[var(--theme-muted)]">{card.kind}</div>
         <SettlementNote settlement={settlement} output={output} />
       </div>
-      <div className="mt-1 text-sm font-medium text-[var(--theme-text)]">
+      <div className="mt-1 text-[15px] font-medium leading-snug text-[var(--theme-text)]">
         {card.title}
       </div>
-      {card.detail ? (
-        <p className="mt-1 whitespace-pre-wrap break-all text-xs text-[var(--theme-muted)]">
-          {card.detail}
-        </p>
-      ) : null}
-
-      {card.kind === 'approval' ? (
-        <ApprovalActions
-          card={card}
-          disabled={!actionable}
-          onRespond={respond}
-        />
-      ) : null}
 
       {card.kind === 'question' && card.status === 'pending' ? (
         <QuestionForm
@@ -177,7 +206,6 @@ function ManagedAgentInteractionCardView({
               onClick={() =>
                 void respond({
                   turnId: card.turnId,
-                  // Host SubmitPlanDecision requires requestId === turnId.
                   requestId: card.turnId,
                   action: 'implement',
                 })
@@ -194,23 +222,7 @@ function ManagedAgentInteractionCardView({
         </div>
       ) : null}
 
-      {errorMessage ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <p className="text-xs text-red-600 dark:text-red-400">
-            {errorMessage}
-          </p>
-          {lastInput && card.status === 'pending' ? (
-            <button
-              type="button"
-              disabled={settlement.state === 'responding'}
-              onClick={() => void respond(lastInput)}
-              className="border border-[var(--theme-border)] bg-[var(--theme-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--theme-text)] hover:bg-[var(--theme-card2)] disabled:opacity-50"
-            >
-              {settlement.state === 'responding' ? 'Sending...' : 'Retry'}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      {errorFooter ? <div className="mt-2">{errorFooter}</div> : null}
     </section>
   )
 }
@@ -219,17 +231,17 @@ function SettlementNote({
   settlement,
   output,
 }: {
-  settlement: ReturnType<typeof settleManagedAgentInteraction>
+  settlement: ReturnType<typeof settleAgentInteraction>
   output: Record<string, unknown> | null
 }) {
   if (settlement.state === 'responding') {
     return (
-      <span className="text-[11px] text-[var(--theme-muted)]">Sending…</span>
+      <span className="text-[13px] text-[var(--theme-muted)]">Sending…</span>
     )
   }
   if (settlement.state === 'failed') {
     return (
-      <span className="text-[11px] text-red-600 dark:text-red-400">Failed</span>
+      <span className="text-[13px] text-red-600 dark:text-red-400">Failed</span>
     )
   }
   if (settlement.state === 'answered') {
@@ -240,63 +252,17 @@ function SettlementNote({
         )
       : []
     return (
-      <span className="text-[11px] text-emerald-600 dark:text-emerald-400">
+      <span className="text-[13px] text-emerald-600 dark:text-emerald-400">
         {answers.length > 0 ? `已回答 · ${answers.join('；')}` : '已回答'}
       </span>
     )
   }
   if (settlement.state === 'superseded') {
     return (
-      <span className="text-[11px] text-[var(--theme-muted)]">已被取代</span>
+      <span className="text-[13px] text-[var(--theme-muted)]">已被取代</span>
     )
   }
   return null
-}
-
-function ApprovalActions({
-  card,
-  disabled,
-  onRespond,
-}: {
-  card: ManagedAgentInteractionCard
-  disabled: boolean
-  onRespond: (input: ManagedAgentInteractionResponseInput) => void
-}) {
-  const ordered = useMemo(() => {
-    const rank = (semantic: string | null) =>
-      semantic === 'approve' || semantic === 'approve_always'
-        ? 0
-        : semantic === 'deny'
-          ? 1
-          : semantic === 'deny_and_stop'
-            ? 2
-            : 3
-    return [...card.actions].sort(
-      (left, right) => rank(left.semantic) - rank(right.semantic),
-    )
-  }, [card.actions])
-
-  return (
-    <div className="mt-3 flex flex-wrap gap-2">
-      {ordered.map((action) => (
-        <button
-          key={action.id}
-          type="button"
-          disabled={disabled}
-          onClick={() =>
-            onRespond({
-              turnId: card.turnId,
-              requestId: card.requestId,
-              optionId: action.id,
-            })
-          }
-          className="border border-[var(--theme-border)] bg-[var(--theme-bg)] px-3 py-1.5 text-xs font-medium text-[var(--theme-text)] hover:bg-[var(--theme-card2)] disabled:opacity-50"
-        >
-          {action.label}
-        </button>
-      ))}
-    </div>
-  )
 }
 
 function QuestionForm({
@@ -304,7 +270,7 @@ function QuestionForm({
   disabled,
   onSubmit,
 }: {
-  questions: Array<ManagedAgentInteractionQuestion>
+  questions: Array<AgentInteractionQuestion>
   disabled: boolean
   onSubmit: (payload: Record<string, unknown>) => void
 }) {
@@ -338,16 +304,10 @@ function QuestionForm({
   const allAnswered =
     questions.length > 0 &&
     questions.every((question) =>
-      Object.prototype.hasOwnProperty.call(
-        answersByQuestionId,
-        question.id,
-      ),
+      Object.prototype.hasOwnProperty.call(answersByQuestionId, question.id),
     )
 
-  function toggleOption(
-    question: ManagedAgentInteractionQuestion,
-    label: string,
-  ) {
+  function toggleOption(question: AgentInteractionQuestion, label: string) {
     if (disabled) return
     setSelectedByQuestionId((current) => {
       const existing = readOwnAnswer(current, question.id, [])
@@ -364,10 +324,7 @@ function QuestionForm({
     })
   }
 
-  function setFreeText(
-    question: ManagedAgentInteractionQuestion,
-    value: string,
-  ) {
+  function setFreeText(question: AgentInteractionQuestion, value: string) {
     if (disabled) return
     setFreeTextByQuestionId((current) => {
       const updated = { ...current }
@@ -434,7 +391,9 @@ function QuestionForm({
       <button
         type="button"
         disabled={disabled || !allAnswered}
-        onClick={() => onSubmit({ ...buildAskUserAnswerPayload(answersByQuestionId) })}
+        onClick={() =>
+          onSubmit({ ...buildAskUserAnswerPayload(answersByQuestionId) })
+        }
         className="border border-[var(--theme-border)] bg-[var(--theme-bg)] px-3 py-1.5 text-xs font-medium text-[var(--theme-text)] hover:bg-[var(--theme-card2)] disabled:opacity-50"
       >
         Submit answers

@@ -5,7 +5,7 @@ import { toast } from '@/components/ui/toast'
 import { ChatScreen } from '../chat-screen'
 import { AgentChatFrame } from './agent-chat-frame'
 import { AgentChatMessagePane } from './agent-chat-message-pane'
-import { ManagedAgentInteractionPanel } from './managed-agent-interaction-panel'
+import { AgentInteractionPanel } from './agent-interaction-panel'
 import { ChatEmptyState } from './chat-empty-state'
 import { chatBrandForRuntime } from '../agent-chat-brands'
 import { createClaudeCodeSlashRuntime } from '../slash-commands/claude-code'
@@ -324,7 +324,7 @@ export function ManagedAgentChatView({
             // Tutti docks interactive prompts above the composer
             // (composerFloatingPrompt / bottom dock), not above the transcript.
             aboveComposer={
-              <ManagedAgentInteractionPanel
+              <AgentInteractionPanel
                 interactions={chat.interactions.filter(
                   (interaction) => interaction.status === 'pending',
                 )}

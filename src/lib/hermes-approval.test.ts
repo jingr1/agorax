@@ -5,7 +5,7 @@ import {
   normalizeHermesApprovalPayload,
   resolveHermesApprovalChoice,
 } from './hermes-approval'
-import { projectManagedAgentInteraction } from '@/screens/chat/lib/managed-agent-interactions'
+import { projectAgentInteraction } from '@/screens/chat/lib/agent-interactions'
 
 describe('hermes-approval', () => {
   it('normalizes gateway approval.request payloads', () => {
@@ -27,7 +27,7 @@ describe('hermes-approval', () => {
     })
   })
 
-  it('projects to a ManagedAgentInteractionPanel approval card', () => {
+  it('projects to an AgentInteractionPanel approval card', () => {
     const normalized = normalizeHermesApprovalPayload({
       approval_id: 'appr-2',
       run_id: 'run-2',
@@ -43,13 +43,15 @@ describe('hermes-approval', () => {
       approval: normalized!,
       nowUnixMs: 1,
     })
-    const card = projectManagedAgentInteraction(interaction)
+    const card = projectAgentInteraction(interaction)
     expect(card).toMatchObject({
       kind: 'approval',
       status: 'pending',
       requestId: 'appr-2',
-      detail: 'killall scene_server',
     })
+    expect(
+      card?.presentation?.fields.find((field) => field.kind === 'command')?.value,
+    ).toBe('killall scene_server')
     expect(card?.actions.map((action) => action.id)).toEqual(['once', 'deny'])
   })
 

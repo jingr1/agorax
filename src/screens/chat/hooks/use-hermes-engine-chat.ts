@@ -22,7 +22,7 @@ import {
   selectHermesChatState,
 } from '@/stores/hermes-chat-runtime'
 import { clearRememberedOpenTurn } from '../lib/engine-user-prompt-ingest'
-import type { ManagedAgentInteractionResponseInput } from '../components/managed-agent-interaction-panel'
+import type { AgentInteractionResponseInput } from '../components/agent-interaction-panel'
 import type { ChatMessage } from '../types'
 
 export function useHermesEngineChatState(input: {
@@ -115,7 +115,7 @@ export function useHermesEngineChatState(input: {
   }, [engineSnapshot, agentSessionId])
 
   const respondToInteraction = useCallback(
-    async (input: ManagedAgentInteractionResponseInput) => {
+    async (input: AgentInteractionResponseInput) => {
       const sid = agentSessionIdRef.current
       if (!sid) {
         throw new Error('Interaction response was not accepted')

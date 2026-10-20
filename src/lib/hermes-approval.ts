@@ -199,7 +199,7 @@ export function normalizeHermesApprovalPayload(
   }
 }
 
-/** Build a pending Interaction that ManagedAgentInteractionPanel can project. */
+/** Build a pending Interaction that AgentInteractionPanel can project. */
 export function hermesApprovalToInteraction(input: {
   workspaceId: string
   agentSessionId: string

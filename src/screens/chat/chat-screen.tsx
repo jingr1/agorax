@@ -34,7 +34,7 @@ import {
   shouldSettleWaitingFromActiveRun,
 } from './chat-screen-utils'
 import { useHermesEngineChatState } from './hooks/use-hermes-engine-chat'
-import { ManagedAgentInteractionPanel } from './components/managed-agent-interaction-panel'
+import { AgentInteractionPanel } from './components/agent-interaction-panel'
 import { getHermesChatRuntime } from '@/stores/hermes-chat-runtime'
 import {
   findLastUserMessage,
@@ -4347,7 +4347,7 @@ export function ChatScreen({
               showComposer ? (
                 <>
                   {hermesChrome && hermesPendingInteractions.length > 0 ? (
-                    <ManagedAgentInteractionPanel
+                    <AgentInteractionPanel
                       interactions={hermesPendingInteractions}
                       responses={hermesInteractionResponses}
                       onRespond={respondHermesInteraction}

@@ -5,7 +5,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { MemberAvatar } from './components/member-avatar'
 import { MentionPicker } from './components/mention-picker'
 import { PendingTurnCard } from './components/pending-turn-card'
-import { ManagedInteractionRoomCard } from './components/managed-interaction-card'
+import { InteractionRoomCard } from './components/interaction-room-card'
 import {
   countRoomAgentProviderSiblings,
   getMemberColor,
@@ -525,7 +525,7 @@ function MessageBubbleView({
           }
         >
           {isInteractionCard ? (
-            <ManagedInteractionRoomCard
+            <InteractionRoomCard
               roomId={roomId}
               messageId={message.id}
               content={message.content}

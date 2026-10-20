@@ -77,3 +77,9 @@ Then open Settings → Language and switch to the target language.
 ## Current limitation
 
 Not every UI string has been migrated to the translation map yet. If text remains in English after switching languages, it likely means that component still has hardcoded text and needs to be wired to `t(...)` first.
+
+## Follow-up plan
+
+Full Chinese/English UI coverage (phased rollout, no framework rewrite) is tracked in:
+
+[`docs/plans/i18n-zh-en-coverage-plan.md`](plans/i18n-zh-en-coverage-plan.md)
