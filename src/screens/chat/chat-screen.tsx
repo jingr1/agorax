@@ -26,6 +26,7 @@ import {
   buildChatNavKey,
   createOptimisticMessage,
   createResponseWaitSnapshot,
+  deriveHermesListStreamingChrome,
   isRetryableUserMessage,
   hasFinalAssistantWriteThrough,
   shouldCancelStreamOnSessionNav,
@@ -1926,16 +1927,15 @@ export function ChatScreen({
     streamingRunId,
   ])
 
-  // Hermes 1:1: Engine streamingMessageId. Portable: local Abort buffer.
+  // Hermes 1:1: Engine streamingMessageId only (no chat-store fallback).
+  // Portable: local Abort buffer.
   const derivedStreamingInfo = useMemo(() => {
     if (!isPortableMode) {
-      return {
-        isStreaming: hermesEngineChat.isStreaming || localIsStreaming,
-        streamingMessageId:
-          hermesEngineChat.streamingMessageId ||
-          realtimeStreamingMessageId ||
-          null,
-      }
+      return deriveHermesListStreamingChrome({
+        engineIsStreaming: hermesEngineChat.isStreaming,
+        engineStreamingMessageId: hermesEngineChat.streamingMessageId,
+        localIsStreaming,
+      })
     }
     if (!activeIsRealtimeStreaming) {
       return { isStreaming: false, streamingMessageId: null as string | null }
@@ -1951,7 +1951,6 @@ export function ChatScreen({
     isPortableMode,
     localIsStreaming,
     localStreamingMessageId,
-    realtimeStreamingMessageId,
   ])
 
   const responseWaitSnapshotRef = useRef<ResponseWaitSnapshot | null>(null)
@@ -2484,19 +2483,24 @@ export function ChatScreen({
           normalizedAttachments,
         )
         optimisticClientId = clientId
-        appendHistoryMessage(
-          queryClient,
-          friendlyId,
-          sessionKey,
-          optimisticMessage,
-        )
-        updateSessionLastMessage(
-          queryClient,
-          activeProfileName,
-          sessionKey,
-          friendlyId,
-          optimisticMessage,
-        )
+        // Hermes 1:1 list is Engine-only. Writing the user into RQ *before*
+        // ingest lets busy reconcile admit a follow-up past the hard gate.
+        // Portable still needs the RQ optimistic row as its list source.
+        if (isPortableMode) {
+          appendHistoryMessage(
+            queryClient,
+            friendlyId,
+            sessionKey,
+            optimisticMessage,
+          )
+          updateSessionLastMessage(
+            queryClient,
+            activeProfileName,
+            sessionKey,
+            friendlyId,
+            optimisticMessage,
+          )
+        }
       }
 
       setPendingGeneration(true, { sessionKey, friendlyId })
@@ -2591,6 +2595,7 @@ export function ChatScreen({
       finalDisplayMessages,
       hermesEngineChat.activeTurn?.phase,
       hermesTurnBusy,
+      isPortableMode,
       queryClient,
       sending,
       setLocalActivity,

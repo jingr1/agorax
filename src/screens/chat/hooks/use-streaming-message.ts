@@ -992,12 +992,27 @@ export function useStreamingMessage(options: UseStreamingMessageOptions = {}) {
       try {
         runtime.ensureSessionHydrated(params.sessionKey)
         // Engine-primary list: user bubble must exist before SSE (Hermes does
-        // not echo user prompts on the stream).
-        runtime.ingestUserPrompt({
+        // not echo user prompts on the stream). Hard-refuse if a prior turn is
+        // still open — UI queue is the only legal follow-up path.
+        const ingested = runtime.ingestUserPrompt({
           agentSessionId: params.sessionKey,
           clientSubmitId,
           text: params.message,
         })
+        if (!ingested) {
+          eventSourceRef.current = null
+          setState((prev) => ({
+            ...prev,
+            isStreaming: false,
+            streamingMessageId: null,
+            streamingText: '',
+            streamingRunId: null,
+            error: null,
+          }))
+          throw new Error(
+            'Previous turn is still open — follow-up was not accepted into the transcript',
+          )
+        }
         runtime.setPendingSendOptions(clientSubmitId, {
           friendlyId: params.friendlyId,
           history: params.history,

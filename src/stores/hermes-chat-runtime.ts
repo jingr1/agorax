@@ -55,7 +55,7 @@ export type HermesChatRuntime = {
     agentSessionId: string
     clientSubmitId: string
     text: string
-  }) => void
+  }) => boolean
   setPendingSendOptions: (
     clientSubmitId: string,
     options: HermesPendingSendOptions,
@@ -331,7 +331,7 @@ export function getHermesChatRuntime(
       })
     },
     ingestUserPrompt(input) {
-      ingestHermesUserPromptMessage({
+      return ingestHermesUserPromptMessage({
         engine,
         workspaceId: id,
         agentSessionId: input.agentSessionId,

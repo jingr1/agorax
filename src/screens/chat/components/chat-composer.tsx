@@ -1938,8 +1938,13 @@ function ChatComposerComponent({
   )
 
   const handleSubmit = useCallback(() => {
-    if (disabled) return
-    if (submittingRef.current) return
+    // Match hardDisabled: while a turn is live, allow Queue/Steer/Interrupt
+    // even if the shell briefly sets `disabled` (redirect flicker).
+    if (disabled && !isLoading && !isCompacting) return
+    // Busy follow-up must not be blocked by the prior send's submittingRef
+    // window — that left Queue looking armed while Enter/click no-op'd.
+    const busyForFollowUp = isLoading || isCompacting
+    if (submittingRef.current && !busyForFollowUp) return
     if (attachmentProcessingCount > 0) {
       // Queue a submit to fire once all attachments finish processing
       pendingSubmitAfterAttachmentsRef.current = true

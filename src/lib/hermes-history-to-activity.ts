@@ -301,6 +301,38 @@ function turnsTemporallyCompatible(
   return histMax + 120_000 >= liveMin
 }
 
+/**
+ * Ordinal suffix pairing must not graft a prior history assistant onto a
+ * live open turn that only has the new user yet — that relocates the old
+ * reply under the follow-up user (the flash/reorder bug).
+ */
+function canOrdinalPairTurns(
+  historyTurn: HermesActivityTurn,
+  liveTurn: HermesActivityTurn,
+): boolean {
+  if (!turnsTemporallyCompatible(historyTurn, liveTurn)) return false
+  const liveSubmit = readString(liveTurn.user?.payload.clientSubmitId).trim()
+  const histSubmit = readString(historyTurn.user?.payload.clientSubmitId).trim()
+  if (liveSubmit && histSubmit && liveSubmit !== histSubmit) return false
+  const liveText = readString(liveTurn.user?.payload.text).trim()
+  const histText = readString(historyTurn.user?.payload.text).trim()
+  const sameOpenUser =
+    (Boolean(liveSubmit) && Boolean(histSubmit) && liveSubmit === histSubmit) ||
+    (Boolean(liveText) && liveText === histText)
+  const liveHasAssistantRest = liveTurn.rest.some(
+    (row) => row.role === 'assistant',
+  )
+  const histHasAssistantRest = historyTurn.rest.some(
+    (row) => row.role === 'assistant',
+  )
+  // Refuse grafting a *different* turn's assistant under a new live user.
+  // Same-prompt gateway echoes (msg-* + body) may still pair onto the open user.
+  if (histHasAssistantRest && !liveHasAssistantRest && !sameOpenUser) {
+    return false
+  }
+  return true
+}
+
 function flattenTurn(turn: HermesActivityTurn): AgentActivityDurableMessage[] {
   return [...(turn.user ? [turn.user] : []), ...turn.rest]
 }
@@ -348,15 +380,15 @@ export function mergeHermesHistoryWithLiveByTurnIdentity(input: {
     }
   }
 
-  // Ordinal suffix among leftovers. Skip pairs that are temporally impossible
-  // (stale history turn vs a newer live-only turn when history lags).
+  // Ordinal suffix among leftovers. Refuse pairs that would relocate a prior
+  // history assistant under a newer live user-only (open) turn.
   let hi = historyTurns.length - 1
   let li = liveTurns.length - 1
   while (hi >= 0 && li >= 0) {
     while (hi >= 0 && histMatched[hi]) hi -= 1
     while (li >= 0 && liveMatched[li]) li -= 1
     if (hi < 0 || li < 0) break
-    if (!turnsTemporallyCompatible(historyTurns[hi]!, liveTurns[li]!)) {
+    if (!canOrdinalPairTurns(historyTurns[hi]!, liveTurns[li]!)) {
       break
     }
     stampByLiveIndex.set(li, stampTurn(historyTurns[hi]!, liveTurns[li]!))
@@ -369,6 +401,9 @@ export function mergeHermesHistoryWithLiveByTurnIdentity(input: {
   const out: AgentActivityDurableMessage[] = []
   for (let i = 0; i < historyTurns.length; i += 1) {
     if (histMatched[i]) continue
+    // Unmatched history user-only turns that echo a live user (msg-* beside
+    // user:<clientSubmitId>) used to prepend a duplicate bubble on Enter.
+    if (isUserOnlyEchoOfLiveTurn(historyTurns[i]!, liveTurns)) continue
     out.push(...flattenTurn(historyTurns[i]!))
   }
   for (let i = 0; i < liveTurns.length; i += 1) {
@@ -378,6 +413,33 @@ export function mergeHermesHistoryWithLiveByTurnIdentity(input: {
   }
 
   return renumber(out)
+}
+
+/** Gateway/RQ user echo of a live optimistic user — not a new turn. */
+function isUserOnlyEchoOfLiveTurn(
+  historyTurn: HermesActivityTurn,
+  liveTurns: readonly HermesActivityTurn[],
+): boolean {
+  if (!historyTurn.user || historyTurn.rest.length > 0) return false
+  const histUser = historyTurn.user
+  const histText = readString(histUser.payload.text).trim()
+  const histSubmit = readString(histUser.payload.clientSubmitId).trim()
+  for (const liveTurn of liveTurns) {
+    const liveUser = liveTurn.user
+    if (!liveUser) continue
+    if (liveUser.messageId === histUser.messageId) return true
+    const liveSubmit = readString(liveUser.payload.clientSubmitId).trim()
+    if (histSubmit && liveSubmit && histSubmit === liveSubmit) return true
+    if (
+      histText &&
+      histText === readString(liveUser.payload.text).trim() &&
+      (isWeakHermesGatewayMessageId(histUser.messageId) ||
+        histUser.messageId.startsWith('user:history:'))
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 function renumber(

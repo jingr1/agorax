@@ -31,7 +31,8 @@
     "electron:build:mac": "pnpm build && pnpm electron:bundle-server && electron-builder --mac --publish never --config electron-builder.config.cjs",
     "electron:build:win": "pnpm build && pnpm electron:bundle-server && electron-builder --win --publish never --config electron-builder.config.cjs",
     "electron:build:linux": "pnpm build && pnpm electron:bundle-server && electron-builder --linux --publish never --config electron-builder.config.cjs",
-    "electron:bundle-server": "esbuild dist/server/server.js --bundle --platform=node --format=cjs --outfile=electron/server-bundle.cjs"
+    "electron:bundle-server": "esbuild dist/server/server.js --bundle --platform=node --format=cjs --outfile=electron/server-bundle.cjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@agorax/agent-activity-core": "workspace:*",
@@ -112,6 +113,7 @@
     "typescript": "^5.7.2",
     "vite": "^7.3.5",
     "vitest": "^3.2.6",
-    "web-vitals": "^5.1.0"
+    "web-vitals": "^5.1.0",
+    "@playwright/test": "1.58.2"
   }
 }

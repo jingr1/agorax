@@ -4,9 +4,15 @@
  * Seeds only `user:<clientSubmitId>` into the Engine message bucket.
  * Open-turn UI uses transcript `processing:<clientSubmitId>` (not a message
  * row) until daemon/SSE writes the first durable assistant messageId.
+ *
+ * Hard gate: while a prior open turn is remembered (or Engine still has an
+ * unsettled activeTurn), refuse a *different* clientSubmitId. UI queue/drain
+ * must not be the only door — ingest is the last line that keeps prior-turn
+ * hosts from sharing the list with a premature follow-up user.
  */
 
 import {
+  selectEngineActiveTurn,
   selectEngineSession,
   type AgentActivityDurableMessage,
   type AgentSessionEngine,
@@ -62,15 +68,33 @@ export function ingestEngineUserPromptMessage(input: {
     workspaceId: string
     agentSessionId: string
   }) => void
-}): void {
+}): boolean {
   const agentSessionId = input.agentSessionId?.trim() ?? ''
   const clientSubmitId = input.clientSubmitId?.trim() ?? ''
   const text = input.text?.trim() ?? ''
-  if (!agentSessionId || !clientSubmitId || !text) return
+  if (!agentSessionId || !clientSubmitId || !text) return false
   const workspaceId = input.workspaceId?.trim() || 'default'
   if (!selectEngineSession(input.engine.getSnapshot(), agentSessionId)) {
     input.ensureSession?.({ workspaceId, agentSessionId })
   }
+
+  const remembered = getRememberedOpenTurn(agentSessionId)
+  if (remembered && remembered.clientSubmitId !== clientSubmitId) {
+    return false
+  }
+  const activeTurn = selectEngineActiveTurn(
+    input.engine.getSnapshot(),
+    agentSessionId,
+  )
+  if (
+    activeTurn &&
+    activeTurn.phase !== 'settled' &&
+    remembered?.clientSubmitId !== clientSubmitId
+  ) {
+    // Open Engine turn from a prior submit — do not seed a sibling user row.
+    return false
+  }
+
   const occurredAtUnixMs = input.occurredAtUnixMs ?? Date.now()
   const turnId = `turn-${clientSubmitId}`
   const userMessage: AgentActivityDurableMessage = {
@@ -91,4 +115,5 @@ export function ingestEngineUserPromptMessage(input: {
     type: 'message/snapshotReceived',
     messages: [userMessage],
   })
+  return true
 }

@@ -189,6 +189,48 @@ describe('foldOpenTurnIntoLiveHost', () => {
     expect(leftoverText).toBe('上一轮回复')
   })
 
+  it('does not yank a prior run host when liveMessageId still points at it', () => {
+    // Enter on a new turn while chrome still held assistant:old as streaming id
+    // used to pull "上一轮回复" out of place (flash away → relocate under new user).
+    const prior = projectLiveAssistantMessage({
+      messageId: 'assistant:old',
+      runId: 'old',
+      text: '上一轮回复',
+      thinking: '',
+      toolCalls: [],
+      streaming: true,
+      timestamp: 1,
+    })
+    const folded = foldOpenTurnIntoLiveHost(
+      [
+        {
+          role: 'user',
+          id: 'u0',
+          content: [{ type: 'text', text: '旧问题' }],
+        },
+        prior,
+        {
+          role: 'user',
+          id: 'u1',
+          content: [{ type: 'text', text: '新问题' }],
+        },
+      ],
+      {
+        liveMessageId: 'assistant:old',
+        isStreaming: true,
+        streamingText: '上一轮回复',
+        runId: 'old',
+      },
+    )
+
+    expect(folded.map((m) => readDurableMessageId(m) || m.id)).toEqual([
+      'u0',
+      'assistant:old',
+      'u1',
+    ])
+    expect(folded.filter((m) => m.role === 'assistant')).toHaveLength(1)
+  })
+
   it('relocates a live host that landed before the latest user prompt', () => {
     const live = projectLiveAssistantMessage({
       messageId: 'assistant:pending:s:t1',

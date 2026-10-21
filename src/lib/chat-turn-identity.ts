@@ -354,17 +354,36 @@ export function foldOpenTurnIntoLiveHost<T extends FoldableAssistant>(
     }
   }
 
-  // Pull a misplaced live host out of the pre-user head. Otherwise an early
-  // write-through row stays above the prompt and fold appends a second copy.
-  // Match by durable liveId only — leftover __streamingStatus on a prior
-  // turn's reply must not yank settled history into the open turn.
+  // Stale chrome still pointing at a prior *run* host above the latest user:
+  // leave the list alone (do not invent a second copy under the new prompt).
+  // Pending write-through shells may still relocate below (legacy path).
+  if (lastUserIndex > 0 && !liveId.includes(':pending:')) {
+    for (let i = 0; i < lastUserIndex; i += 1) {
+      const row = messages[i]
+      if (
+        row?.role === 'assistant' &&
+        readDurableMessageId(row) === liveId
+      ) {
+        return messages
+      }
+    }
+  }
+
+  // Only relocate a *pending* write-through shell that landed above the latest
+  // user. Never yank `assistant:<runId>` from prior turns — that made the
+  // previous reply flash away on Enter, then reappear after settle.
   const head: Array<T> = []
   const pulledFromHead: Array<T> = []
   const headEnd = lastUserIndex >= 0 ? lastUserIndex + 1 : 0
+  const mayPullPendingShell = liveId.includes(':pending:')
   for (let i = 0; i < headEnd; i += 1) {
     const message = messages[i]!
     const id = readDurableMessageId(message)
-    if (id === liveId && message.role === 'assistant') {
+    if (
+      mayPullPendingShell &&
+      id === liveId &&
+      message.role === 'assistant'
+    ) {
       pulledFromHead.push(message)
       continue
     }

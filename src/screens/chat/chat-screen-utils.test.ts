@@ -4,6 +4,7 @@ import {
   advanceStickyStreamingText,
   buildChatNavKey,
   createResponseWaitSnapshot,
+  deriveHermesListStreamingChrome,
   hasFinalAssistantWriteThrough,
   isRetryableUserMessage,
   isTerminalActiveRunStatus,
@@ -13,6 +14,36 @@ import {
   shouldHandoffStreamOnProfileNav,
   shouldSettleWaitingFromActiveRun,
 } from './chat-screen-utils'
+
+describe('deriveHermesListStreamingChrome', () => {
+  it('does not fall back to a stale store id when Engine has no open host', () => {
+    // New user + Thinking: Engine streamingMessageId is null; chat-store may
+    // still hold the previous assistant:<runId>. List must not re-light that caret.
+    expect(
+      deriveHermesListStreamingChrome({
+        engineIsStreaming: true,
+        engineStreamingMessageId: null,
+        localIsStreaming: true,
+      }),
+    ).toEqual({
+      isStreaming: true,
+      streamingMessageId: null,
+    })
+  })
+
+  it('uses Engine durable host id when present', () => {
+    expect(
+      deriveHermesListStreamingChrome({
+        engineIsStreaming: true,
+        engineStreamingMessageId: 'assistant:run-2',
+        localIsStreaming: false,
+      }),
+    ).toEqual({
+      isStreaming: true,
+      streamingMessageId: 'assistant:run-2',
+    })
+  })
+})
 
 describe('advanceStickyStreamingText', () => {
   it('preserves the last non-empty streaming text when a tool phase temporarily reports empty text', () => {

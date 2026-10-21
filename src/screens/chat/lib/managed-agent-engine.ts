@@ -429,8 +429,8 @@ export function ingestManagedUserPromptMessage(input: {
   text: string
   occurredAtUnixMs?: number
   agentTargetId?: string
-}): void {
-  ingestEngineUserPromptMessage({
+}): boolean {
+  return ingestEngineUserPromptMessage({
     engine: input.engine,
     workspaceId: input.workspaceId,
     agentSessionId: input.agentSessionId,

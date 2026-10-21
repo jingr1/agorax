@@ -833,10 +833,9 @@ function ChatMessageListComponent({
     .filter(({ message }) => message.role === 'assistant')
     .map(({ sourceIndex }) => sourceIndex)
     .pop()
-  const lastUserIndex = visibleEntries
-    .map(({ message, sourceIndex }, index) => ({ message, sourceIndex, index }))
+  const lastUserSourceIndex = visibleEntries
     .filter(({ message }) => message.role === 'user')
-    .map(({ index }) => index)
+    .map(({ sourceIndex }) => sourceIndex)
     .pop()
   const outlineEntries = useMemo(() => {
     const next: Array<{ id: string; excerpt: string }> = []
@@ -942,6 +941,15 @@ function ChatMessageListComponent({
         ? String(messageId)
         : ''
     if (!isStreaming || !streamingMessageId) return false
+    // A host above the latest user belongs to a prior turn — never light its
+    // caret just because a stale streamingMessageId still matches.
+    if (
+      typeof lastUserSourceIndex === 'number' &&
+      index < lastUserSourceIndex &&
+      message.role === 'assistant'
+    ) {
+      return false
+    }
     if (id && id === streamingMessageId) return true
     // Fallback only while the streaming turn hasn't been assigned an id yet.
     // Once a message has a stable id, it must NOT match by index, otherwise

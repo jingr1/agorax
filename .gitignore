@@ -167,3 +167,4 @@ logs/*
 memory/*
 wmpc/*
 output/*
+test-results/*

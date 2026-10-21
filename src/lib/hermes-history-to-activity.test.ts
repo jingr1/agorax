@@ -417,4 +417,143 @@ describe('mergeHermesHistoryWithLiveByTurnIdentity', () => {
       'user:fresh',
     ])
   })
+
+  it('does not prepend a msg-* user echo beside live user:<clientSubmitId>', () => {
+    const history: AgentActivityDurableMessage[] = [
+      {
+        ...base,
+        messageId: 'hist-u0',
+        turnId: 'turn-old',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '旧问题' },
+        occurredAtUnixMs: 1,
+      },
+      {
+        ...base,
+        messageId: 'assistant:run-old',
+        turnId: 'turn-old',
+        role: 'assistant',
+        kind: 'text',
+        sequence: 2,
+        version: 2,
+        payload: { text: '旧回复' },
+        occurredAtUnixMs: 2,
+      },
+      {
+        ...base,
+        messageId: 'msg-echo',
+        turnId: 'turn-msg',
+        role: 'user',
+        kind: 'text',
+        sequence: 3,
+        version: 3,
+        payload: { text: '开始新一轮' },
+        occurredAtUnixMs: 3,
+      },
+    ]
+    const live: AgentActivityDurableMessage[] = [
+      {
+        ...base,
+        messageId: 'hist-u0',
+        turnId: 'turn-old',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '旧问题' },
+        occurredAtUnixMs: 1,
+      },
+      {
+        ...base,
+        messageId: 'assistant:run-old',
+        turnId: 'turn-old',
+        role: 'assistant',
+        kind: 'text',
+        sequence: 2,
+        version: 2,
+        payload: { text: '旧回复' },
+        occurredAtUnixMs: 2,
+      },
+      {
+        ...base,
+        messageId: 'user:c-new',
+        turnId: 'turn-c-new',
+        role: 'user',
+        kind: 'text',
+        sequence: 3,
+        version: 3,
+        payload: { text: '开始新一轮', clientSubmitId: 'c-new' },
+        occurredAtUnixMs: 3,
+      },
+    ]
+    const merged = mergeHermesHistoryWithLiveByTurnIdentity({
+      workspaceId: 'ws',
+      agentSessionId: 's',
+      history,
+      live,
+    })
+    const users = merged.filter((row) => row.role === 'user')
+    expect(users.map((row) => row.messageId)).toEqual([
+      'hist-u0',
+      'user:c-new',
+    ])
+    expect(users.filter((row) => row.payload.text === '开始新一轮')).toHaveLength(
+      1,
+    )
+  })
+
+  it('does not relocate a prior history assistant under a new open user', () => {
+    const history: AgentActivityDurableMessage[] = [
+      {
+        ...base,
+        messageId: 'hist-u1',
+        turnId: 'turn-old',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '旧问题' },
+        occurredAtUnixMs: 1_000,
+      },
+      {
+        ...base,
+        messageId: 'assistant:run-old',
+        turnId: 'turn-old',
+        role: 'assistant',
+        kind: 'text',
+        sequence: 2,
+        version: 2,
+        payload: { text: '旧回复：官方 Skill 是上游最小起点' },
+        occurredAtUnixMs: 1_100,
+      },
+    ]
+    const live: AgentActivityDurableMessage[] = [
+      {
+        ...base,
+        messageId: 'user:c-new',
+        turnId: 'turn-c-new',
+        role: 'user',
+        kind: 'text',
+        payload: {
+          text: '开始新一轮长回复',
+          clientSubmitId: 'c-new',
+        },
+        occurredAtUnixMs: 2_000,
+      },
+    ]
+    const merged = mergeHermesHistoryWithLiveByTurnIdentity({
+      workspaceId: 'ws',
+      agentSessionId: 's',
+      history,
+      live,
+    })
+    expect(merged.map((row) => row.messageId)).toEqual([
+      'hist-u1',
+      'assistant:run-old',
+      'user:c-new',
+    ])
+    // Prior assistant must stay above the new user — not grafted under it.
+    const newUserIndex = merged.findIndex((row) => row.messageId === 'user:c-new')
+    const oldAsstIndex = merged.findIndex(
+      (row) => row.messageId === 'assistant:run-old',
+    )
+    expect(oldAsstIndex).toBeLessThan(newUserIndex)
+  })
 })

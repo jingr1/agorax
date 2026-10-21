@@ -1105,8 +1105,8 @@ export function ingestHermesUserPromptMessage(input: {
   clientSubmitId: string
   text: string
   occurredAtUnixMs?: number
-}): void {
-  ingestEngineUserPromptMessage({
+}): boolean {
+  return ingestEngineUserPromptMessage({
     ...input,
     ensureSession: ({ workspaceId, agentSessionId }) => {
       hydrateHermesAgentEngine(

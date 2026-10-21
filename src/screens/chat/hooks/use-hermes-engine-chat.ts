@@ -21,7 +21,10 @@ import {
   getHermesChatRuntime,
   selectHermesChatState,
 } from '@/stores/hermes-chat-runtime'
-import { clearRememberedOpenTurn } from '../lib/engine-user-prompt-ingest'
+import {
+  clearRememberedOpenTurn,
+  getRememberedOpenTurn,
+} from '../lib/engine-user-prompt-ingest'
 import type { AgentInteractionResponseInput } from '../components/agent-interaction-panel'
 import type { ChatMessage } from '../types'
 
@@ -153,28 +156,30 @@ export function useHermesEngineChatState(input: {
     chatState.turnBusy,
   ])
 
-  // Drop open-turn nonce after Engine turn settles (not on !turnBusy flicker).
-  const hadActiveTurnRef = useRef(false)
+  // Drop open-turn nonce only when *this* remembered turn settles.
+  // Clearing on any settled latestTurn races the gap after ingest (remembered
+  // set, activeTurn not yet created) while a prior settled latestTurn still
+  // sits on the session — that opened the composer gate mid-stream.
   useEffect(() => {
     const sid = agentSessionId
     if (!sid) return
+    const remembered = getRememberedOpenTurn(sid)
+    if (!remembered) return
     const active = chatState.activeTurn
-    if (active && active.phase !== 'settled') {
-      hadActiveTurnRef.current = true
-      return
-    }
+    if (active && active.phase !== 'settled') return
+    const settled = chatState.latestTurn
     if (
-      hadActiveTurnRef.current &&
       !active &&
-      chatState.latestTurn?.phase === 'settled'
+      settled?.phase === 'settled' &&
+      settled.turnId === remembered.turnId
     ) {
-      hadActiveTurnRef.current = false
       clearRememberedOpenTurn(sid)
     }
   }, [
     agentSessionId,
     chatState.activeTurn,
     chatState.latestTurn?.phase,
+    chatState.latestTurn?.turnId,
   ])
 
   return {

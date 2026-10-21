@@ -30,14 +30,16 @@ describe('ingestEngineUserPromptMessage', () => {
         agentSessionId: 'sess-1',
       }),
     )
-    ingestEngineUserPromptMessage({
-      engine,
-      workspaceId,
-      agentSessionId: 'sess-1',
-      clientSubmitId: 'c-continue',
-      text: '继续',
-      occurredAtUnixMs: 1_700_000_000_000,
-    })
+    expect(
+      ingestEngineUserPromptMessage({
+        engine,
+        workspaceId,
+        agentSessionId: 'sess-1',
+        clientSubmitId: 'c-continue',
+        text: '继续',
+        occurredAtUnixMs: 1_700_000_000_000,
+      }),
+    ).toBe(true)
 
     expect(
       selectSessionMessages(engine.getSnapshot(), 'sess-1').map(

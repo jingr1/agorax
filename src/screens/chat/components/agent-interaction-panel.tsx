@@ -43,21 +43,26 @@ export function AgentInteractionPanel({
   responses?: Record<string, InteractionResponseTracking | undefined>
   onRespond: (input: AgentInteractionResponseInput) => Promise<void>
 }) {
+  const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
+
   const cards = interactions
     .map((interaction) => {
       const card = projectAgentInteraction(interaction)
       if (!card) return null
+      const key = canonicalInteractionKey(
+        interaction.agentSessionId,
+        interaction.turnId,
+        interaction.requestId,
+      )
+      if (dismissedKeys.has(key)) return null
       return {
+        key,
         card,
         settlement: settleAgentInteraction(
           interaction,
-          responses[
-            canonicalInteractionKey(
-              interaction.agentSessionId,
-              interaction.turnId,
-              interaction.requestId,
-            )
-          ] ?? null,
+          responses[key] ?? null,
         ),
         output: interaction.output ?? null,
       }
@@ -67,17 +72,20 @@ export function AgentInteractionPanel({
 
   return (
     <div className="mx-4 my-2 space-y-2">
-      {cards.map(({ card, settlement, output }) => (
+      {cards.map(({ key, card, settlement, output }) => (
         <AgentInteractionCardView
-          key={canonicalInteractionKey(
-            card.agentSessionId,
-            card.turnId,
-            card.requestId,
-          )}
+          key={key}
           card={card}
           settlement={settlement}
           output={output}
           onRespond={onRespond}
+          onDismiss={() =>
+            setDismissedKeys((prev) => {
+              const next = new Set(prev)
+              next.add(key)
+              return next
+            })
+          }
         />
       ))}
     </div>
@@ -89,11 +97,13 @@ function AgentInteractionCardView({
   settlement,
   output,
   onRespond,
+  onDismiss,
 }: {
   card: AgentInteractionCard
   settlement: ReturnType<typeof settleAgentInteraction>
   output: Record<string, unknown> | null
   onRespond: (input: AgentInteractionResponseInput) => Promise<void>
+  onDismiss: () => void
 }) {
   const [lastInput, setLastInput] =
     useState<AgentInteractionResponseInput | null>(null)
@@ -114,16 +124,28 @@ function AgentInteractionCardView({
     }
   }
 
-  const errorMessage =
+  // Prefer the freshest local failure (e.g. Retry admitted=false) over a
+  // stale settlement error — otherwise Retry looks like a no-op.
+  const settlementError =
     settlement.state === 'failed'
       ? friendlyInteractionError(new Error(settlement.errorMessage))
-      : localError
+      : null
+  const errorMessage = localError ?? settlementError
+  const terminalConflict = isTerminalConflictError(errorMessage)
 
   const errorFooter =
     errorMessage ? (
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-xs text-red-600 dark:text-red-400">{errorMessage}</p>
-        {lastInput && card.status === 'pending' ? (
+        {terminalConflict && card.status === 'pending' ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="border border-[var(--theme-border)] bg-[var(--theme-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--theme-text)] hover:bg-[var(--theme-card2)]"
+          >
+            关闭
+          </button>
+        ) : lastInput && card.status === 'pending' ? (
           <button
             type="button"
             disabled={settlement.state === 'responding'}
@@ -147,7 +169,7 @@ function AgentInteractionCardView({
         }
         fields={card.presentation.fields}
         actions={card.actions}
-        disabled={!actionable}
+        disabled={!actionable || terminalConflict}
         submitting={settlement.state === 'responding'}
         activeActionId={lastInput?.optionId ?? null}
         onAction={(actionId) =>
@@ -415,4 +437,13 @@ function friendlyInteractionError(reason: unknown): string {
     return '请求过于频繁，请稍后重试。'
   }
   return message
+}
+
+/** 409 / admit-rejected: Retry cannot succeed; offer dismiss instead. */
+function isTerminalConflictError(message: string | null): boolean {
+  if (!message) return false
+  return (
+    /409|conflict/i.test(message) ||
+    /已被其他人处理|已过期|已失效（冲突）/.test(message)
+  )
 }

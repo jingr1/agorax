@@ -302,3 +302,31 @@ export function shouldHandoffStreamOnProfileNav(
   if (!prevProfile || !nextProfile) return false
   return prevProfile !== nextProfile
 }
+
+/**
+ * Hermes 1:1 list streaming chrome (caret / host bind).
+ *
+ * Contract §2.2: list truth is Engine only. chat-store realtime write-through
+ * is a portable/SSE sidecar — must not supply streamingMessageId here, or a
+ * new turn (Engine id null + processing face) re-lights the previous
+ * assistant's caret via the stale store id.
+ */
+export function deriveHermesListStreamingChrome(input: {
+  engineIsStreaming: boolean
+  engineStreamingMessageId: string | null | undefined
+  /** AbortController / send-stream local busy — Stop only, not list host id. */
+  localIsStreaming?: boolean
+}): {
+  isStreaming: boolean
+  streamingMessageId: string | null
+} {
+  const engineId =
+    typeof input.engineStreamingMessageId === 'string' &&
+    input.engineStreamingMessageId.trim()
+      ? input.engineStreamingMessageId.trim()
+      : null
+  return {
+    isStreaming: input.engineIsStreaming || input.localIsStreaming === true,
+    streamingMessageId: engineId,
+  }
+}
