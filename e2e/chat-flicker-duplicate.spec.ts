@@ -8,7 +8,7 @@ test.describe('Chat UI flicker #441', () => {
     await page.goto('/chat')
     await page.waitForLoadState('load')
 
-    // Dismiss the "Hermes updated" modal if present
+    // Dismiss the "Agorax updated" modal if present
     const continueBtn = page.getByRole('button', { name: 'Continue' })
     if (await continueBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
       await continueBtn.click()

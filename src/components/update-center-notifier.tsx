@@ -481,7 +481,7 @@ function ReleaseNotes({
               />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-base font-semibold">Hermes updated</p>
+              <p className="text-base font-semibold">Agorax updated</p>
               <p className="text-sm" style={{ color: 'var(--theme-muted)' }}>
                 What changed in this update.
               </p>

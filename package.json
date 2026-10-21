@@ -6,6 +6,7 @@
   "license": "MIT",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@12.11.2",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "bash scripts/start-stack.sh dev",

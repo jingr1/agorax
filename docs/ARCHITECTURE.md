@@ -93,7 +93,7 @@ Agorax 是 AI agent 的**公共广场 / 多智能体协作控制面**：把聊�
 | 数据库     | **SQLite**：better-sqlite3 → node:sqlite → sqlite3 CLI 三级 fallback（`src/server/sqlite-helper.ts`），无 ORM        | schema 为各模块内联 `CREATE TABLE` / 迁移文件                  |
 | 桌面      | Electron 40 + electron-updater + electron-builder                                                             | `electron/` 四件套（见 §7）                                |
 | 编排器     | Python ≥3.10 venv：langgraph 1.x + langgraph-checkpoint-sqlite + langchain-openai（DeepSeek 分类）+ httpx + pyyaml | `hermes_langgraph_orchestrator/`                     |
-| 工具链     | Node ≥22、pnpm 10.5.2、Vite 7、TypeScript 5.7（strict）、vitest 3 + jsdom、Playwright、eslint 10、pytest               | `.npmrc` `legacy-peer-deps=true`                     |
+| 工具链     | Node ≥22、pnpm 12.11.2、Vite 7、TypeScript 5.7（strict）、vitest 3 + jsdom、Playwright、eslint 10、pytest              | `.npmrc` `legacy-peer-deps=true`；`pnpm-workspace.yaml` `allowBuilds` |
 
 
 ---
@@ -347,7 +347,7 @@ legacy `POST /api/agents/:id/chat`（SSE spawn 路径）仍保留供兼容，前
 | Electron | `electron/main.cjs` `preload.cjs` `prod-server.cjs` `server-bundle.cjs` | 单实例锁；内嵌后端 :3847 + gateway :8642 健康检查；electron-updater 自动更新状态机经 IPC 广播；Hermes 缺失时一键安装（`window.hermesDesktop`）                                                                                                                                                              |
 | 开发容器     | `.devcontainer/`                                                        | 基于仓库 docker-compose（service `agorax`），转发 6734/8642                                                                                                                                                                                                                        |
 | 用户级服务    | `scripts/install-dashboard-service.sh` `macos/*.plist.template`         | macOS launchd / Linux systemd --user 跑 `server-entry.js`                                                                                                                                                                                                                  |
-| CI       | `.github/workflows/`                                                    | `ci.yml`（build+lint，Node 22/pnpm 10）；`docker-publish.yml`（GHCR 双名推送，tag `v*` 发版本）；`security.yml`（secrets 扫描）                                                                                                                                                              |
+| CI       | `.github/workflows/`                                                    | `ci.yml`（build+lint，Node 22/pnpm 12.11.2）；`docker-publish.yml`（GHCR 双名推送，tag `v*` 发版本）；`security.yml`（secrets 扫描）                                                                                                                                                        |
 
 
 **端口/环境注意**：Windows 需 Gateway（:8642）+ Agorax（:6734）双服务，两套/三套 `.env`（Gateway 读 `%LOCALAPPDATA%\hermes\.env`，CLI 读 `~/.hermes\.env`，Agorax 读仓库 `.env`）；Windows 需自带 sqlite3 CLI。

@@ -151,28 +151,36 @@ green "  tmux $(tmux -V 2>/dev/null | awk '{print $2}') ✓"
 # into /usr/bin and fails with EACCES for non-root. Installer must stay
 # sudo-free. Prefer a real `pnpm` on PATH via a user-writable npm prefix;
 # fall back to `corepack pnpm` (see pnpm_cmd).
+# Pin matches package.json#packageManager (pnpm 12 + allowBuilds).
+PNPM_PIN=12.11.2
 if ! command -v pnpm &>/dev/null; then
-  yellow "  pnpm not found — installing (user-local, no sudo)…"
+  yellow "  pnpm not found — installing pnpm@${PNPM_PIN} (user-local, no sudo)…"
   if command -v corepack &>/dev/null; then
-    corepack prepare pnpm@latest --activate >/dev/null 2>&1 || true
+    corepack prepare "pnpm@${PNPM_PIN}" --activate >/dev/null 2>&1 || true
   fi
   if ! command -v pnpm &>/dev/null; then
     node_bindir="$(dirname "$(command -v node)")"
     if [[ -w "$node_bindir" ]]; then
-      npm install -g pnpm
+      npm install -g "pnpm@${PNPM_PIN}"
     else
       mkdir -p "$HOME/.local/bin"
-      npm install -g --prefix "$HOME/.local" pnpm
+      npm install -g --prefix "$HOME/.local" "pnpm@${PNPM_PIN}"
       ensure_path "$HOME/.local/bin"
     fi
   fi
   if ! command -v pnpm &>/dev/null && ! (command -v corepack &>/dev/null && corepack pnpm --version &>/dev/null); then
     red "Could not install pnpm without sudo."
-    red "Install manually: https://pnpm.io/installation"
+    red "Install manually: npm install -g pnpm@${PNPM_PIN}"
     exit 1
   fi
 fi
-green "  pnpm $(pnpm_cmd --version) ✓"
+_pnpm_ver="$(pnpm_cmd --version 2>/dev/null || echo unknown)"
+_pnpm_maj="${_pnpm_ver%%.*}"
+if [[ "$_pnpm_maj" != "12" ]]; then
+  yellow "  pnpm ${_pnpm_ver} on PATH — Agorax expects 12.x (${PNPM_PIN})."
+  yellow "  Upgrade manually: npm install -g pnpm@${PNPM_PIN} && hash -r"
+fi
+green "  pnpm ${_pnpm_ver} ✓"
 
 # ─── install hermes-agent (delegate to Nous upstream installer) ──────────
 # hermes-agent is NOT on PyPI. It installs from source via Nous's own

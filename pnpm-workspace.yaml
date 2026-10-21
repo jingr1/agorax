@@ -1,6 +1,8 @@
 packages:
   - 'packages/*'
 
+# pnpm 12: packages allowed to run lifecycle scripts (native addons).
+# Sole allowlist — do not duplicate in package.json.
 allowBuilds:
   better-sqlite3: true
   electron: true

@@ -29,7 +29,7 @@ WORKDIR /app
 
 # Install deps (cache-friendly: copy only manifests first)
 # NOTE: pnpm-workspace.yaml carries the allowBuilds approvals (electron/esbuild/…);
-# it must be present or pnpm 10+/11 fatally errors on ignored build scripts.
+# it must be present or pnpm 12 fatally errors on ignored build scripts.
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
 RUN pnpm install --frozen-lockfile
 

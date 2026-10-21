@@ -80,7 +80,7 @@ Install these **before** running the installer. `install.sh` is sudo-free: it on
 | **curl** | Download install scripts | `apt install curl` / `brew install curl` |
 | **tmux** | Swarm worker sessions (`hermes chat --tui`) | `apt install tmux` / `brew install tmux` / `dnf install tmux` |
 
-The installer will then install **pnpm** (user-local, if missing) and **hermes-agent** (via the Nous upstream installer, if missing). It does **not** `apt`/`brew` install system packages for you.
+The installer will then install **pnpm 12.11.x** (user-local, if missing; pinned to match `packageManager`) and **hermes-agent** (via the Nous upstream installer, if missing). It does **not** `apt`/`brew` install system packages for you.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jingr1/agorax/main/install.sh | bash
@@ -112,10 +112,24 @@ pnpm build && pnpm start
 
 `pnpm start` starts Hermes gateway (skips if already running), Managed Agent daemon on `:8788`, and the production UI. For UI-only (e.g. systemd/launchd workspace service), use `pnpm start:ui`. Dev equivalent of the full stack: `pnpm dev` (Vite UI).
 
-`node_modules` is not shared across git worktrees — after updating `release/*` (or any separate checkout), run `pnpm install` there before `pnpm build`. If start fails with `Could not locate the bindings file` for `better-sqlite3`, compile it with the same Node major you use to run (`node -v`):
+`node_modules` is not shared across git worktrees — after updating `release/*` (or any separate checkout), run `pnpm install` there before `pnpm build`.
+
+**pnpm:** use **12.11.x** (see `packageManager` in `package.json`). Native deps (`better-sqlite3`, `esbuild`, `electron`, …) are allowlisted in `pnpm-workspace.yaml` → `allowBuilds` so `pnpm install` compiles them. If start still fails with `Could not locate the bindings file` for `better-sqlite3`, rebuild with the same Node major you run (`node -v`):
 
 ```bash
+pnpm rebuild better-sqlite3
+# or:
 npm run install --prefix "$(node -p "require('path').dirname(require.resolve('better-sqlite3/package.json'))")"
+```
+
+If you are still on **pnpm 10/11**, upgrade to the pinned 12.11.x:
+
+```bash
+npm install -g --prefix "$HOME/.local" pnpm@12.11.2
+export PATH="$HOME/.local/bin:$PATH"
+hash -r
+pnpm --version   # expect 12.11.2
+cd ~/agorax && rm -rf node_modules && pnpm install
 ```
 
 ---
@@ -153,7 +167,7 @@ Agorax works with any OpenAI-compatible backend. If your backend also exposes He
 
 Same host packages as the [one-line install](#one-line-install) (`Node.js 22+`, `git`, `curl`, `tmux`), plus:
 
-- **pnpm** — [pnpm.io](https://pnpm.io/installation) (or let Corepack provide it)
+- **pnpm 12.11.x** — [pnpm.io](https://pnpm.io/installation) (or `corepack prepare pnpm@12.11.2 --activate`; matches `package.json#packageManager`)
 - **An OpenAI-compatible backend** — local, self-hosted, or remote
 - **Optional:** Python 3.11+ if you want to run a Hermes Agent gateway locally
 - **Swarm / LangGraph missions:** Python **≥ 3.10** and a one-time `hermes_langgraph_orchestrator/.venv` (see [orchestrator README](./hermes_langgraph_orchestrator/README.md))
