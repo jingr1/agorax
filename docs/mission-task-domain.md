@@ -36,7 +36,7 @@
 - **Goal launch (UI):** Create Mission → Goal → assignee `orchestrator` + auto-dispatch; orchestrator must `POST /api/swarm-dispatch` with the same `missionId` to spawn specialist Tasks (replaces Conductor)
 - **pipeline**: instantiate stages → Tasks; **auto-dispatch**; do **not** auto-create a room
 - **assignee + agent**: single Task, auto-dispatch
-- **assignee + chat_group**: bind existing room; no auto-decompose
+- **assignee + chat_group**: bind existing room, or create a new room when `id` is empty; no auto-decompose
 - Room: created only via manual «Create room» (`ensureRoomForMission` → writes `roomId`)
 - Optional `projectId` — 详见 project 合同
 - Primary key: `mission.id`（API / UI 一律用 `missionId`）

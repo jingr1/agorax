@@ -7,8 +7,9 @@
  *   - assignee+orchestrator: goal container; orchestrator decomposes and
  *     re-dispatches specialists via POST /api/swarm-dispatch with the same
  *     missionId (replaces the removed Conductor launch path)
- *   - assignee+chat_group: bind roomId; no auto-decompose
- *   - room: only via manual ensureRoomForMission later
+ *   - assignee+chat_group: bind existing roomId, or create a room when id empty;
+ *     no auto-decompose
+ *   - room: also via manual ensureRoomForMission later (pipeline / agent assignee)
  */
 import {
   appendMissionContinuation,
@@ -29,7 +30,7 @@ import {
   dispatchReadyAssignments,
   type DispatchedAssignmentSummary,
 } from './dispatch-ready'
-import { getRoom } from '../group-chat/room-store'
+import { createRoom, getRoom, updateRoom } from '../group-chat/room-store'
 import type { PipelineTemplate } from './pipeline-templates'
 import type { SwarmMission } from '../swarm-missions'
 import type { KanbanLane } from './lane-sync'
@@ -161,8 +162,15 @@ export function buildAssigneeTaskInstruction(input: {
 
 function normalizeCreateInput(input: CreateTaskInput): CreateMissionInput {
   if (input.executionMode === 'assignee') {
-    if (!input.assignee?.id?.trim() || !input.assignee?.type) {
-      throw new Error('assignee mode requires assignee.type and assignee.id')
+    if (!input.assignee?.type) {
+      throw new Error('assignee mode requires assignee.type')
+    }
+    // chat_group may omit id → createMission creates a new room
+    if (
+      input.assignee.type !== 'chat_group' &&
+      !input.assignee.id?.trim()
+    ) {
+      throw new Error('assignee mode requires assignee.id')
     }
     if (input.pipelineId) {
       throw new Error('pipelineId and assignee are mutually exclusive')
@@ -176,7 +184,10 @@ function normalizeCreateInput(input: CreateTaskInput): CreateMissionInput {
       priority: input.priority,
       labels: input.labels,
       executionMode: 'assignee',
-      assignee: input.assignee,
+      assignee: {
+        type: input.assignee.type,
+        id: input.assignee.id?.trim() ?? '',
+      },
     }
   }
   if (input.executionMode === 'pipeline' || input.pipelineId) {
@@ -341,9 +352,18 @@ export async function createMission(
   } else {
     assignee = input.assignee
     if (assignee.type === 'chat_group') {
-      const room = getRoom(assignee.id)
-      if (!room) throw new Error(`Unknown chat group room: ${assignee.id}`)
+      const requestedId = assignee.id?.trim() ?? ''
+      let room = requestedId ? getRoom(requestedId) : null
+      if (requestedId && !room) {
+        throw new Error(`Unknown chat group room: ${requestedId}`)
+      }
+      if (!room) {
+        room = createRoom({
+          title: input.title.trim() || 'Mission group',
+        })
+      }
       roomId = room.id
+      assignee = { type: 'chat_group', id: roomId }
       mission = createOrUpdateMission({
         title: input.title,
         spec: input.spec,
@@ -359,6 +379,12 @@ export async function createMission(
         assignments: [],
       })
       mission = getSwarmMission(mission.id) ?? mission
+      // Stamp mission_id so ensureRoomForMission reuses this room.
+      updateRoom(roomId, {
+        missionId: mission.id,
+        taskId: mission.id,
+        updatedAt: Date.now(),
+      })
     } else {
       const missionId = newMissionId()
       const instruction = buildAssigneeTaskInstruction({

@@ -13,6 +13,7 @@ import {
   addParticipant,
   createRoom,
   findRoomByMissionId,
+  getRoom,
   listParticipants,
   updateRoom,
 } from './room-store'
@@ -121,7 +122,20 @@ export async function ensureRoomForMission(input: {
   }
 
   const workspacePath = await resolveMissionWorkspacePath(missionId)
-  const existing = findRoomByMissionId(missionId, { dbPath: input.dbPath })
+
+  // Prefer an already-bound room: chat_group assignee id, then mission.roomId.
+  // findRoomByMissionId alone misses ad-hoc groups that were never stamped with
+  // mission_id, which used to create a second room and desync assignee vs Room.
+  const preferredRoomId =
+    mission.assignee?.type === 'chat_group' && mission.assignee.id?.trim()
+      ? mission.assignee.id.trim()
+      : mission.roomId?.trim() || null
+
+  const existing =
+    (preferredRoomId
+      ? getRoom(preferredRoomId, { dbPath: input.dbPath })
+      : null) ?? findRoomByMissionId(missionId, { dbPath: input.dbPath })
+
   if (existing) {
     const room =
       updateRoom(
@@ -129,13 +143,14 @@ export async function ensureRoomForMission(input: {
         {
           workspacePath,
           taskId: missionId,
+          missionId,
           updatedAt: Date.now(),
         },
         { dbPath: input.dbPath },
       ) ?? existing
     inviteMissionAgents(room.id, missionId, { dbPath: input.dbPath })
-  updateMissionRoomId({ missionId, roomId: room.id })
-  return { room, created: false }
+    updateMissionRoomId({ missionId, roomId: room.id })
+    return { room, created: false }
   }
 
   const title = mission.title?.trim() || `Mission ${missionId}`

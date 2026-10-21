@@ -48,8 +48,14 @@ vi.mock('../../agent-runtime/router', () => ({
 import { getSwarmMission } from '../../swarm-missions'
 import { getProject } from '../../task-pipeline/projects'
 import { ensureMissionWorktree } from '../../git-ops'
+import { updateMissionRoomId } from '../../swarm-missions'
 import { ensureRoomForMission } from '../ensure-room-for-mission'
-import { findRoomByMissionId, listParticipants } from '../room-store'
+import {
+  createRoom,
+  findRoomByMissionId,
+  getRoom,
+  listParticipants,
+} from '../room-store'
 
 describe('ensureRoomForMission', () => {
   let dbPath: string
@@ -145,5 +151,38 @@ describe('ensureRoomForMission', () => {
     await expect(
       ensureRoomForMission({ missionId: 'nope', dbPath }),
     ).rejects.toThrow(/not found/i)
+  })
+
+  it('reuses chat_group assignee room instead of creating a second one', async () => {
+    const group = createRoom({ title: 'Existing group', dbPath })
+    vi.mocked(getSwarmMission).mockReturnValue({
+      id: 'mission-1',
+      title: 'Ship feature',
+      state: 'running',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      assignments: [],
+      events: [],
+      projectId: null,
+      workspaceMode: 'canonical',
+      executionMode: 'assignee',
+      assignee: { type: 'chat_group', id: group.id },
+      // Stale roomId from a previous buggy ensure that created a duplicate.
+      roomId: 'room_stale_other',
+    } as any)
+
+    const result = await ensureRoomForMission({
+      missionId: 'mission-1',
+      dbPath,
+    })
+
+    expect(result.created).toBe(false)
+    expect(result.room.id).toBe(group.id)
+    expect(getRoom(group.id, { dbPath })?.missionId).toBe('mission-1')
+    expect(updateMissionRoomId).toHaveBeenCalledWith({
+      missionId: 'mission-1',
+      roomId: group.id,
+    })
+    expect(findRoomByMissionId('mission-1', { dbPath })?.id).toBe(group.id)
   })
 })

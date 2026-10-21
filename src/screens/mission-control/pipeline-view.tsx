@@ -507,7 +507,12 @@ export function PipelineView({
     },
   })
 
-  const roomId = detail?.mission.roomId ?? activeMission?.roomId
+  // chat_group assignee id is the bound room; prefer it over a stale mission.roomId
+  // left by older ensureRoomForMission that created a second room.
+  const roomId =
+    missionView?.assignee?.type === 'chat_group' && missionView.assignee.id
+      ? missionView.assignee.id
+      : (detail?.mission.roomId ?? activeMission?.roomId)
   const missionIdForRoom = detail?.mission.missionId ?? activeMission?.missionId
   const nowWorker =
     missionView?.currentAssignee ?? (currentStage ? currentStage.agent : null)

@@ -143,12 +143,18 @@ export function CreateMissionButton({
           projectId: project,
         })
       }
-      if (!assigneeId) throw new Error('Select an assignee')
+      if (assigneeKind === 'agent' && !assigneeId) {
+        throw new Error('Select an assignee')
+      }
       return createMission({
         title,
         spec,
         executionMode: 'assignee',
-        assignee: { type: assigneeKind, id: assigneeId },
+        assignee: {
+          type: assigneeKind,
+          // empty chat_group id → server creates a new room
+          id: assigneeId,
+        },
         acceptanceCriteria,
         autoDispatch: assigneeKind === 'agent' ? autoDispatch : false,
         projectId: project,
@@ -306,7 +312,7 @@ export function CreateMissionButton({
                         key={k}
                         type="button"
                         size="sm"
-                        variant={assigneeKind === k ? 'secondary' : 'ghost'}
+                        variant={assigneeKind === k ? 'default' : 'ghost'}
                         onClick={() => {
                           setAssigneeKind(k)
                           setAssigneeId('')
@@ -324,7 +330,11 @@ export function CreateMissionButton({
                       onChange={(e) => setAssigneeId(e.target.value)}
                       className="mt-1 w-full control-surface rounded-md px-2 py-1.5 text-sm"
                     >
-                      <option value="">Select…</option>
+                      {assigneeKind === 'agent' ? (
+                        <option value="">Select…</option>
+                      ) : (
+                        <option value="">New group</option>
+                      )}
                       {assigneeKind === 'agent'
                         ? agentOptions.map((id) => (
                             <option key={id} value={id}>
@@ -338,6 +348,12 @@ export function CreateMissionButton({
                           ))}
                     </select>
                   </label>
+                  {assigneeKind === 'chat_group' && !assigneeId ? (
+                    <p className="text-[11px] text-[var(--theme-muted)]">
+                      No group selected — a new chat group will be created for
+                      this mission.
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
 

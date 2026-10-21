@@ -158,6 +158,8 @@ agents:
     }))
     vi.doMock('../group-chat/room-store', () => ({
       getRoom: vi.fn(() => ({ id: 'room-abc', title: 'Collab' })),
+      createRoom: vi.fn(),
+      updateRoom: vi.fn((id: string) => ({ id, title: 'Collab' })),
     }))
 
     const { createMission } = await import('./task-service')
@@ -169,6 +171,45 @@ agents:
     })
 
     expect(created.roomId).toBe('room-abc')
+    expect(created.firstAssignmentIds).toEqual([])
+  })
+
+  it('assignee chat_group with empty id creates a new room', async () => {
+    const createRoom = vi.fn(() => ({
+      id: 'room-new',
+      title: 'Fresh group mission',
+    }))
+    vi.doMock('../swarm-environment', () => ({
+      SWARM_CANONICAL_REPO: tmp,
+      SWARM_MISSIONS_PATH: join(tmp, '.runtime', 'swarm-missions.json'),
+      SWARM_MEMORY_HANDOFFS: join(tmp, 'memory'),
+      SWARM_LEGACY_OUTPUT_ROOT: join(tmp, 'output'),
+    }))
+    vi.doMock('./dispatch-ready', () => ({
+      dispatchReadyAssignments: vi.fn(async () => ({
+        ok: true,
+        dispatched: [],
+      })),
+    }))
+    vi.doMock('../group-chat/room-store', () => ({
+      getRoom: vi.fn(() => null),
+      createRoom,
+      updateRoom: vi.fn((id: string) => ({ id, title: 'Fresh group mission' })),
+    }))
+
+    const { createMission } = await import('./task-service')
+    const created = await createMission({
+      title: 'Fresh group mission',
+      spec: 'Kick off',
+      executionMode: 'assignee',
+      assignee: { type: 'chat_group', id: '' },
+    })
+
+    expect(createRoom).toHaveBeenCalledWith({
+      title: 'Fresh group mission',
+    })
+    expect(created.roomId).toBe('room-new')
+    expect(created.assignee).toEqual({ type: 'chat_group', id: 'room-new' })
     expect(created.firstAssignmentIds).toEqual([])
   })
 })

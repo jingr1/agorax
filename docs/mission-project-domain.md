@@ -70,7 +70,7 @@ Pipeline 模板级二选一（`pipeline-templates.ts` 加载期校验）：
 
 1. 可选 `projectId` → `getProject` 校验。
 2. **pipeline**：读 template → 设 `mission.workspaceMode = template.workspaceMode`；若 `worktree && project` → `ensureMissionWorktree`，首 assignment 写 `baseRef` / `workspacePath`。
-3. **assignee**（agent 或 chat_group）：`workspaceMode` 恒 `canonical`；chat_group 只绑 room，不自动 worktree。
+3. **assignee**（agent 或 chat_group）：`workspaceMode` 恒 `canonical`；chat_group 绑已有 room，或 `id` 为空时新建 room；不自动 worktree。
 4. 返回 payload 含 `projectId`, `workspaceMode`, `worktreePath`（若有）。
 
 

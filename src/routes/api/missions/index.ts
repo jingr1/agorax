@@ -47,7 +47,10 @@ export const Route = createFileRoute('/api/missions/')({
           return json({ error: 'Missing title' }, { status: 400 })
 
         const hasPipeline = Boolean(body.pipelineId)
-        const hasAssignee = Boolean(body.assignee?.id)
+        // chat_group may omit id → server creates a new room
+        const hasAssignee =
+          body.assignee?.type === 'chat_group' ||
+          Boolean(body.assignee?.id?.trim())
         if (hasPipeline && hasAssignee) {
           return json(
             { error: 'pipelineId and assignee are mutually exclusive' },
@@ -62,6 +65,15 @@ export const Route = createFileRoute('/api/missions/')({
             )
           }
         }
+        if (
+          body.assignee?.type === 'agent' &&
+          !body.assignee.id?.trim()
+        ) {
+          return json(
+            { error: 'assignee agent requires id' },
+            { status: 400 },
+          )
+        }
 
         try {
           const created = await createMission({
@@ -75,7 +87,10 @@ export const Route = createFileRoute('/api/missions/')({
             ...(hasAssignee || body.executionMode === 'assignee'
               ? {
                   executionMode: 'assignee' as const,
-                  assignee: body.assignee!,
+                  assignee: {
+                    type: body.assignee!.type,
+                    id: body.assignee!.id?.trim() ?? '',
+                  },
                 }
               : {
                   executionMode: 'pipeline' as const,
