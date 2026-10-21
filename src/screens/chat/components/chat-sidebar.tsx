@@ -2,22 +2,10 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
-  BrainIcon,
-  Clock01Icon,
-  ComputerTerminal01Icon,
-  DashboardSquare01Icon,
-  File01Icon,
-  McpServerIcon,
-  MessageMultiple01Icon,
-  MessageMultiple02Icon,
   Moon02Icon,
-  PuzzleIcon,
   Search01Icon,
   Settings01Icon,
   Sun02Icon,
-  Target02Icon,
-  UserGroupIcon,
-  UserMultipleIcon,
 } from '@hugeicons/core-free-icons'
 import { AnimatePresence, motion } from 'motion/react'
 import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react'
@@ -59,6 +47,7 @@ import {
 import { StatusDot } from '@/components/status-indicator'
 import { applyTheme, useSettingsStore } from '@/hooks/use-settings'
 import { setTheme, type ThemeId } from '@/lib/theme'
+import { NAV_ITEMS } from '@/lib/nav-registry'
 
 /** Tutti-adjacent nav chrome: slightly heavier stroke than Hugeicons default. */
 const NAV_ICON_STROKE = 2
@@ -408,24 +397,6 @@ function ChatSidebarComponent({
     [],
   )
 
-  // Route active states
-  const isChatActive =
-    pathname === '/' || pathname === '/new' || pathname.startsWith('/chat')
-  const _isSettingsActive = pathname === '/settings'
-  const isSkillsActive = pathname === '/skills'
-  const isMcpActive = pathname === '/mcp'
-  const isFilesActive = pathname === '/files'
-  const isTerminalActive = pathname === '/terminal'
-  const isJobsActive = pathname === '/jobs'
-  const isMemoryActive = pathname === '/memory'
-  const isMissionControlActive =
-    pathname.startsWith('/missions') || pathname.startsWith('/mission-control')
-  const isGroupChatActive = pathname.startsWith('/group-chat')
-  const isAgentsActive =
-    pathname.startsWith('/agents') ||
-    pathname.startsWith('/operations') ||
-    pathname.startsWith('/profiles')
-  const isSwarmActive = pathname === '/swarm' || pathname === '/swarm2'
   const echoStudioEnabled = useSettingsStore(
     (state) => state.settings.experimentalEchoStudio,
   )
@@ -540,106 +511,27 @@ function ChatSidebarComponent({
     onClick: openSearchModal,
   }
 
-  const isDashboardActive = pathname === '/dashboard'
+  function i18nKeyForNav(id: string): string {
+    const key = id === 'echo-studio' ? 'echoStudio' : id
+    return `nav.${key}`
+  }
 
-  const navItems: Array<NavItemDef> = [
-    {
-      kind: 'link',
-      to: '/dashboard',
-      icon: DashboardSquare01Icon,
-      label: t('nav.dashboard'),
-      active: isDashboardActive,
-    },
-    {
-      kind: 'link',
-      to: '/chat',
-      icon: MessageMultiple01Icon,
-      label: t('nav.chat'),
-      active: isChatActive,
-    },
-    {
-      kind: 'link',
-      to: '/files',
-      icon: File01Icon,
-      label: t('nav.files'),
-      active: isFilesActive,
-    },
-    {
-      kind: 'link',
-      to: '/terminal',
-      icon: ComputerTerminal01Icon,
-      label: t('nav.terminal'),
-      active: isTerminalActive,
-    },
-    {
-      kind: 'link',
-      to: '/jobs',
-      icon: Clock01Icon,
-      label: t('nav.jobs'),
-      active: isJobsActive,
-    },
-    {
-      kind: 'link',
-      to: '/missions',
-      icon: Target02Icon,
-      label: t('nav.missions'),
-      active: isMissionControlActive,
-    },
-    {
-      kind: 'link',
-      to: '/group-chat',
-      icon: MessageMultiple02Icon,
-      label: t('nav.groups'),
-      active: isGroupChatActive,
-    },
-    {
-      kind: 'link',
-      to: '/agents',
-      icon: UserMultipleIcon,
-      label: t('nav.agents'),
-      active: isAgentsActive,
-    },
-    {
-      kind: 'link',
-      to: '/swarm',
-      icon: UserGroupIcon,
-      label: t('nav.swarm'),
-      active: isSwarmActive,
-    },
-    ...(echoStudioEnabled
-      ? [
-          {
-            kind: 'link' as const,
-            to: '/echo-studio',
-            icon: DashboardSquare01Icon,
-            label: t('nav.echoStudio'),
-            active: pathname.startsWith('/echo-studio'),
-          },
-        ]
-      : []),
-    {
-      kind: 'link',
-      to: '/memory',
-      icon: BrainIcon,
-      label: t('nav.memory'),
-      active: isMemoryActive,
-    },
-    {
-      kind: 'link',
-      to: '/skills',
-      icon: PuzzleIcon,
-      label: t('nav.skills'),
-      active: isSkillsActive,
-      dataTour: 'skills',
-    },
-    {
-      kind: 'link',
-      to: '/mcp',
-      icon: McpServerIcon,
-      label: t('nav.mcp'),
-      active: isMcpActive,
-    },
-  ]
+  const navItems: Array<NavItemDef> = useMemo(
+    () =>
+      NAV_ITEMS.filter((item) => {
+        if (!item.containers.includes('sidebar')) return false
+        if (item.featureFlag === 'echoStudio') return echoStudioEnabled
+        return true
+      }).map((item) => ({
+        kind: 'link' as const,
+        to: item.to,
+        icon: item.icon as unknown,
+        label: t(i18nKeyForNav(item.id) as any),
+        active: item.match(pathname),
+        dataTour: item.id === 'skills' ? 'skills' : undefined,
+      })),
+    [echoStudioEnabled, pathname],
+  )
 
   return (
     <motion.aside

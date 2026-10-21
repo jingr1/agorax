@@ -13,6 +13,7 @@ const REQUEST_TIMEOUT_MS = 3_000
 const SESSIONS_STALE_TIME_MS = 60_000
 const FILES_STALE_TIME_MS = 2 * 60_000
 const SKILLS_STALE_TIME_MS = 2 * 60_000
+const AGENTS_STALE_TIME_MS = 2 * 60_000
 const SEARCH_QUERY_GC_TIME_MS = 10 * 60_000
 const MAX_SEARCH_FILES = 2_500
 const SESSION_FTS_STALE_TIME_MS = 15_000
@@ -41,6 +42,15 @@ export type SearchSkill = {
   installed: boolean
 }
 
+export type SearchAgent = {
+  id: string
+  displayName: string
+  mentionName: string
+  runtime: string
+  profile?: string | null
+  capabilities?: Array<string>
+}
+
 export type SearchActivity = {
   id: string
   title: string
@@ -61,6 +71,11 @@ type FilesApiResponse = {
 type SkillsApiResponse = {
   ok?: boolean
   skills?: Array<Record<string, unknown>>
+}
+
+type AgentsApiResponse = {
+  ok?: boolean
+  agents?: Array<Record<string, unknown>>
 }
 
 type SessionSearchApiResponse = {
@@ -262,6 +277,37 @@ async function fetchSkills(
   })
 }
 
+async function fetchAgents(
+  querySignal?: AbortSignal,
+): Promise<Array<SearchAgent>> {
+  const data = await fetchJsonWithTimeout<AgentsApiResponse>(
+    '/api/available-agents',
+    querySignal,
+  )
+  if (!data) return []
+  if (typeof data.ok === 'boolean' && !data.ok) return []
+  const agents = Array.isArray(data.agents) ? data.agents : []
+
+  return agents.map((agent: Record<string, unknown>) => {
+    const id = String(agent.id || 'unknown')
+    const displayName =
+      typeof agent.displayName === 'string' && agent.displayName.trim()
+        ? agent.displayName.trim()
+        : id
+    return {
+      id,
+      displayName,
+      mentionName: String(agent.mentionName || id),
+      runtime: String(agent.runtime || 'unknown'),
+      profile:
+        typeof agent.profile === 'string' ? agent.profile : agent.profile,
+      capabilities: Array.isArray(agent.capabilities)
+        ? agent.capabilities.filter((c): c is string => typeof c === 'string')
+        : undefined,
+    }
+  })
+}
+
 export function useSearchData(
   scope: SearchQueryScope,
   query = '',
@@ -329,6 +375,18 @@ export function useSearchData(
     refetchOnReconnect: false,
   })
 
+  // Agents
+  const agentsQuery = useQuery({
+    queryKey: ['search', 'agents'],
+    queryFn: ({ signal }) => fetchAgents(signal),
+    enabled: enabled && (scope === 'all' || scope === 'agents'),
+    staleTime: AGENTS_STALE_TIME_MS,
+    gcTime: SEARCH_QUERY_GC_TIME_MS,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+
   // Activity events disabled — SSE to /api/events caused UI freeze
   const activityResults: Array<SearchActivity> = []
 
@@ -337,12 +395,14 @@ export function useSearchData(
     sessionSearchResults: sessionSearchQuery.data || [],
     files: filesQuery.data || [],
     skills: skillsQuery.data || [],
+    agents: agentsQuery.data || [],
     activity: activityResults,
     isLoading:
       sessionsQuery.isLoading ||
       sessionSearchQuery.isLoading ||
       filesQuery.isLoading ||
-      skillsQuery.isLoading,
+      skillsQuery.isLoading ||
+      agentsQuery.isLoading,
   }
 }
 

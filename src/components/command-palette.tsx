@@ -6,13 +6,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowDown01Icon,
   ArrowUp01Icon,
-  BrainIcon,
-  Chat01Icon,
   CommandLineIcon,
-  File01Icon,
-  McpServerIcon,
-  PuzzleIcon,
-  Settings01Icon,
 } from '@hugeicons/core-free-icons'
 import type React from 'react'
 import type { SessionMeta } from '@/screens/chat/types'
@@ -35,6 +29,7 @@ import {
   CHAT_RUN_COMMAND_EVENT,
 } from '@/screens/chat/chat-events'
 import { cn } from '@/lib/utils'
+import { NAV_ITEMS } from '@/lib/nav-registry'
 
 type CommandPaletteProps = {
   pathname: string
@@ -166,73 +161,27 @@ export function CommandPalette({ pathname, sessions }: CommandPaletteProps) {
   }
 
   const screenActions = useMemo<Array<CommandAction>>(
-    () => [
-      {
-        id: 'screen-chat',
-        group: 'Screens',
-        label: 'Chat',
-        keywords: 'conversation new session home',
-        shortcut: 'Go',
-        icon: Chat01Icon,
-        onSelect: () => void navigate({ to: '/chat' }),
-      },
-      {
-        id: 'screen-files',
-        group: 'Screens',
-        label: 'Files',
-        keywords: 'workspace editor browser',
-        shortcut: 'Go',
-        icon: File01Icon,
-        onSelect: () => void navigate({ to: '/files' }),
-      },
-      {
-        id: 'screen-terminal',
-        group: 'Screens',
-        label: 'Terminal',
-        keywords: 'console shell command line',
-        shortcut: 'Go',
-        icon: CommandLineIcon,
-        onSelect: () => void navigate({ to: '/terminal' }),
-      },
-      {
-        id: 'screen-memory',
-        group: 'Screens',
-        label: 'Memory',
-        keywords: 'knowledge durable memory notes',
-        shortcut: 'Go',
-        icon: BrainIcon,
-        onSelect: () => void navigate({ to: '/memory' }),
-      },
-      {
-        id: 'screen-skills',
-        group: 'Screens',
-        label: 'Skills',
-        keywords: 'install tools capabilities',
-        shortcut: 'Go',
-        icon: PuzzleIcon,
-        onSelect: () => void navigate({ to: '/skills' }),
-      },
-      {
-        id: 'screen-mcp',
-        group: 'Screens',
-        label: 'MCP',
-        keywords: 'mcp servers model context protocol presets',
-        shortcut: 'Go',
-        icon: McpServerIcon,
-        onSelect: () => void navigate({ to: '/mcp' }),
-      },
-      {
-        id: 'screen-settings',
-        group: 'Screens',
-        label: 'Settings',
-        keywords: 'preferences configuration',
-        shortcut: 'Go',
-        icon: Settings01Icon,
-        onSelect: () => void navigate({ to: '/settings', search: {} }),
-      },
-    ],
+    () =>
+      NAV_ITEMS.filter((item) => item.containers.includes('command')).map(
+        (item) => ({
+          id: `screen-${item.id}`,
+          group: 'Screens',
+          label: item.label,
+          keywords: item.keywords,
+          shortcut: 'Go',
+          icon: item.icon,
+          onSelect: () =>
+            void navigate({
+              to: item.to,
+              search: item.id === 'settings' ? {} : undefined,
+            }),
+        }),
+      ),
     [navigate],
   )
+
+  const chatNavIcon =
+    NAV_ITEMS.find((item) => item.id === 'chat')?.icon ?? CommandLineIcon
 
   const recentSessionActions = useMemo<Array<CommandAction>>(
     () =>
@@ -245,14 +194,14 @@ export function CommandPalette({ pathname, sessions }: CommandPaletteProps) {
           label: getSessionLabel(session),
           keywords: `${session.key} ${session.friendlyId} ${session.title ?? ''} ${session.derivedTitle ?? ''}`,
           shortcut: 'Open',
-          icon: Chat01Icon,
+          icon: chatNavIcon,
           onSelect: () =>
             void navigate({
               to: '/chat/$sessionKey',
               params: { sessionKey: session.key },
             }),
         })),
-    [navigate, sessions],
+    [chatNavIcon, navigate, sessions],
   )
 
   const slashCommandActions = useMemo<Array<CommandAction>>(

@@ -1,12 +1,12 @@
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  BotIcon,
   Chat01Icon,
   Clock01Icon,
   CommandIcon,
   File01Icon,
   FlashIcon,
   LanguageSkillIcon,
-  ListViewIcon,
 } from '@hugeicons/core-free-icons'
 import { AnimatePresence, motion } from 'motion/react'
 import { useNavigate } from '@tanstack/react-router'
@@ -69,15 +69,15 @@ export function SearchModal() {
 
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [selectedQuickIndex, setSelectedQuickIndex] = useState(-1)
   const deferredQuery = useDeferredValue(debouncedQuery)
+
+  const isQueryEmpty = query.trim().length === 0
 
   // Real data — only fetch while the modal is open so chat boot isn't
   // blocked by a deep maxDepth=5 file tree scan.
-  const { sessions, sessionSearchResults, files, skills } = useSearchData(
-    scope,
-    deferredQuery,
-    isOpen,
-  )
+  const { sessions, sessionSearchResults, files, skills, agents, isLoading } =
+    useSearchData(scope, deferredQuery, isOpen)
   const searchableFiles = useMemo(
     () => files.filter((entry) => entry.type === 'file'),
     [files],
@@ -160,6 +160,8 @@ export function SearchModal() {
     [closeModal, navigate],
   )
 
+  const quickItemCount = recentSearches.length + quickActions.length
+
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       setDebouncedQuery(query)
@@ -180,6 +182,18 @@ export function SearchModal() {
       window.cancelAnimationFrame(frameId)
     }
   }, [isOpen])
+
+  // Reset selection states when the query or scope changes.
+  useEffect(() => {
+    setSelectedIndex(0)
+    setSelectedQuickIndex(isQueryEmpty ? 0 : -1)
+  }, [deferredQuery, scope, isQueryEmpty])
+
+  useEffect(() => {
+    if (selectedQuickIndex >= quickItemCount) {
+      setSelectedQuickIndex(Math.max(0, quickItemCount - 1))
+    }
+  }, [quickItemCount, selectedQuickIndex])
 
   const resultItems = useMemo<Array<SearchResultItemData>>(() => {
     const normalized = deferredQuery.trim()
@@ -237,8 +251,26 @@ export function SearchModal() {
       },
     }))
 
-    // Real activity data
-    const activityResults: Array<SearchResultItemData> = []
+    // Real agents data
+    const agentResults = filterResults(
+      agents,
+      normalized,
+      ['displayName', 'mentionName', 'id', 'profile'],
+      RESULT_LIMITS.agents,
+    ).map<SearchResultItemData>((entry) => ({
+      id: entry.id,
+      scope: 'agents',
+      icon: <HugeiconsIcon icon={BotIcon} size={20} strokeWidth={1.5} />,
+      title: entry.displayName,
+      snippet: entry.mentionName
+        ? `@${entry.mentionName} · ${entry.runtime}`
+        : entry.runtime,
+      meta: entry.runtime,
+      onSelect: () => {
+        closeModal()
+        navigate({ to: '/agents' })
+      },
+    }))
 
     // Real skills data (static)
     const skillResults = filterResults(
@@ -271,7 +303,7 @@ export function SearchModal() {
         scope: 'actions',
         icon: (
           <HugeiconsIcon
-            icon={entry.id === 'qa-logs' ? ListViewIcon : FlashIcon}
+            icon={FlashIcon}
             size={20}
             strokeWidth={1.5}
           />
@@ -286,18 +318,19 @@ export function SearchModal() {
 
     if (scope === 'chats') return chats
     if (scope === 'files') return fileResults
-    if (scope === 'agents') return activityResults
+    if (scope === 'agents') return agentResults
     if (scope === 'skills') return skillResults
     if (scope === 'actions') return actions
 
     return [
       ...chats,
       ...fileResults,
-      ...activityResults,
+      ...agentResults,
       ...skillResults,
       ...actions,
     ].slice(0, RESULT_LIMITS.total)
   }, [
+    agents,
     closeModal,
     deferredQuery,
     navigate,
@@ -310,17 +343,26 @@ export function SearchModal() {
   ])
 
   useEffect(() => {
-    setSelectedIndex(0)
-  }, [deferredQuery, scope])
-
-  useEffect(() => {
-    if (selectedIndex < resultItems.length) return
-    setSelectedIndex(Math.max(0, resultItems.length - 1))
+    if (selectedIndex >= resultItems.length) {
+      setSelectedIndex(Math.max(0, resultItems.length - 1))
+    }
   }, [resultItems.length, selectedIndex])
+
+  const handleSelectQuickItem = (index: number) => {
+    if (index < 0 || index >= quickItemCount) return
+    if (index < recentSearches.length) {
+      setQuery(recentSearches[index])
+      return
+    }
+    const action = quickActions[index - recentSearches.length]
+    if (action) {
+      action.onSelect()
+    }
+  }
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.isComposing) return
+      if (event.defaultPrevented || event.isComposing) return
 
       const hasCommand = event.metaKey || event.ctrlKey
       if (hasCommand && event.key.toLowerCase() === 'k') {
@@ -337,15 +379,54 @@ export function SearchModal() {
         return
       }
 
+      // Tab cycles scope only while the input is focused; otherwise let the
+      // browser move focus through the scope tabs and quick-action buttons.
       if (event.key === 'Tab') {
-        event.preventDefault()
-        const direction = event.shiftKey ? -1 : 1
-        const currentIndex = SCOPE_TABS.findIndex(
-          (item) => item.value === scope,
-        )
-        const nextIndex =
-          (currentIndex + direction + SCOPE_TABS.length) % SCOPE_TABS.length
-        setScope(SCOPE_TABS[nextIndex].value)
+        const inputFocused = document.activeElement === inputRef.current
+        if (inputFocused) {
+          event.preventDefault()
+          const direction = event.shiftKey ? -1 : 1
+          const currentIndex = SCOPE_TABS.findIndex(
+            (item) => item.value === scope,
+          )
+          const nextIndex =
+            (currentIndex + direction + SCOPE_TABS.length) % SCOPE_TABS.length
+          setScope(SCOPE_TABS[nextIndex].value)
+        }
+        return
+      }
+
+      if (isQueryEmpty) {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault()
+          if (quickItemCount === 0) return
+          const direction = event.key === 'ArrowDown' ? 1 : -1
+          setSelectedQuickIndex((prev) => {
+            const next = prev + direction
+            if (next < 0) return -1
+            if (next >= quickItemCount) return quickItemCount - 1
+            return next
+          })
+          return
+        }
+
+        if (event.key === 'Enter') {
+          if (selectedQuickIndex < 0 || selectedQuickIndex >= quickItemCount)
+            return
+          event.preventDefault()
+          handleSelectQuickItem(selectedQuickIndex)
+          return
+        }
+
+        if (/^[1-9]$/.test(event.key)) {
+          const index = Number(event.key) - 1
+          if (index < 0 || index >= quickItemCount) return
+          event.preventDefault()
+          setSelectedQuickIndex(index)
+          handleSelectQuickItem(index)
+          return
+        }
+
         return
       }
 
@@ -395,10 +476,19 @@ export function SearchModal() {
     }
   }, [
     closeModal,
+    debouncedQuery,
     isOpen,
+    isQueryEmpty,
+    quickItemCount,
+    quickActions,
+    query,
+    recentSearches,
+    recordRecentSearch,
     resultItems,
     scope,
     selectedIndex,
+    selectedQuickIndex,
+    setQuery,
     setScope,
     toggleModal,
   ])
@@ -460,13 +550,27 @@ export function SearchModal() {
               </div>
             </div>
 
-            <div className="max-h-[360px] overflow-y-auto border-t border-primary-200 p-3">
-              {query.trim().length === 0 ? (
+            <div className="relative max-h-[360px] overflow-y-auto border-t border-primary-200 p-3">
+              {isLoading && !isQueryEmpty ? (
+                <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+                  <HugeiconsIcon
+                    icon={Clock01Icon}
+                    size={18}
+                    strokeWidth={1.5}
+                    className="mr-2 animate-spin"
+                  />
+                  Searching…
+                </div>
+              ) : isQueryEmpty ? (
                 <QuickActions
                   recentSearches={recentSearches}
                   actions={quickActions}
+                  selectedIndex={selectedQuickIndex}
                   onSelectRecent={(value) => {
                     setQuery(value)
+                  }}
+                  onSelectAction={(action) => {
+                    action.onSelect()
                   }}
                 />
               ) : (

@@ -1,124 +1,32 @@
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  BrainIcon,
-  Building01Icon,
   Cancel01Icon,
-  Chat01Icon,
-  Clock01Icon,
-  CommandLineIcon,
-  DashboardSquare01Icon,
-  File01Icon,
-  McpServerIcon,
   Menu01Icon,
-  MessageMultiple02Icon,
-  PuzzleIcon,
-  Rocket01Icon,
+  Search01Icon,
   Settings01Icon,
-  Target02Icon,
-  UserGroupIcon,
-  UserMultipleIcon,
 } from '@hugeicons/core-free-icons'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 import { hapticTap } from '@/lib/haptics'
 import { getTheme, getThemeVariant, isDarkTheme, setTheme } from '@/lib/theme'
+import { NAV_ITEMS } from '@/lib/nav-registry'
 import {
   selectChatProfileDisplayName,
   useChatSettingsStore,
 } from '@/hooks/use-chat-settings'
 import { useSettingsStore } from '@/hooks/use-settings'
+import { useSearchModal } from '@/hooks/use-search-modal'
 
 export const MOBILE_HAMBURGER_NAV_ITEMS = [
+  ...NAV_ITEMS.filter((item) => item.containers.includes('hamburger')),
   {
-    id: 'chat',
-    label: 'Chat',
-    icon: Chat01Icon,
-    to: '/chat/main',
-    match: (p: string) => p.startsWith('/chat') || p === '/new' || p === '/',
-  },
-  {
-    id: 'dashboard',
-    label: 'Dashboard',
-    icon: DashboardSquare01Icon,
-    to: '/dashboard',
-    match: (p: string) => p.startsWith('/dashboard'),
-  },
-  {
-    id: 'terminal',
-    label: 'Terminal',
-    icon: CommandLineIcon,
-    to: '/terminal',
-    match: (p: string) => p.startsWith('/terminal'),
-  },
-  {
-    id: 'jobs',
-    label: 'Jobs',
-    icon: Clock01Icon,
-    to: '/jobs',
-    match: (p: string) => p.startsWith('/jobs'),
-  },
-  {
-    id: 'missions',
-    label: 'Missions',
-    icon: Target02Icon,
-    to: '/missions',
-    match: (p: string) =>
-      p.startsWith('/missions') || p.startsWith('/mission-control'),
-  },
-  {
-    id: 'groups',
-    label: 'Groups',
-    icon: MessageMultiple02Icon,
-    to: '/group-chat',
-    match: (p: string) => p.startsWith('/group-chat'),
-  },
-  {
-    id: 'agents',
-    label: 'Agents',
-    icon: UserMultipleIcon,
-    to: '/agents',
-    match: (p: string) =>
-      p.startsWith('/agents') ||
-      p.startsWith('/operations') ||
-      p.startsWith('/profiles'),
-  },
-  {
-    id: 'swarm',
-    label: 'Swarm',
-    icon: UserGroupIcon,
-    to: '/swarm',
-    match: (p: string) => p === '/swarm' || p.startsWith('/swarm2'),
-  },
-  {
-    id: 'echo-studio',
-    label: 'Echo Studio',
-    icon: Rocket01Icon,
-    to: '/echo-studio',
-    match: (p: string) => p.startsWith('/echo-studio'),
-  },
-
-  {
-    id: 'memory',
-    label: 'Memory',
-    icon: BrainIcon,
-    to: '/memory',
-    match: (p: string) => p.startsWith('/memory'),
-  },
-  {
-    id: 'skills',
-    label: 'Skills',
-    icon: PuzzleIcon,
-    to: '/skills',
-    match: (p: string) => p.startsWith('/skills'),
-  },
-  {
-    id: 'mcp',
-    label: 'MCP',
-    icon: McpServerIcon,
-    to: '/mcp',
-    match: (p: string) => p.startsWith('/mcp'),
+    id: 'search',
+    label: 'Search',
+    icon: Search01Icon,
+    to: '#',
+    match: () => false,
   },
 ]
 
@@ -174,11 +82,18 @@ export function MobileHamburgerMenu() {
   const echoStudioEnabled = useSettingsStore(
     (state) => state.settings.experimentalEchoStudio,
   )
+  const openSearchModal = useSearchModal((state) => state.openModal)
   const visibleNavItems = MOBILE_HAMBURGER_NAV_ITEMS.filter(
     (item) => item.id !== 'echo-studio' || echoStudioEnabled,
   )
 
   function handleNav(to: string) {
+    if (to === '#') {
+      hapticTap()
+      openSearchModal()
+      setOpen(false)
+      return
+    }
     hapticTap()
     void navigate({ to })
     setOpen(false)

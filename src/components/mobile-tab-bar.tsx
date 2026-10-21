@@ -1,24 +1,10 @@
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  BrainIcon,
-  Building01Icon,
-  Chat01Icon,
-  Clock01Icon,
-  CommandLineIcon,
-  DashboardSquare01Icon,
-  File01Icon,
-  McpServerIcon,
-  MessageMultiple02Icon,
-  PuzzleIcon,
-  Settings01Icon,
-  Target02Icon,
-  UserGroupIcon,
-} from '@hugeicons/core-free-icons'
-import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -26,6 +12,7 @@ import type { TouchEvent } from 'react'
 import { cn } from '@/lib/utils'
 import { hapticTap } from '@/lib/haptics'
 import { useSettings } from '@/hooks/use-settings'
+import { NAV_ITEMS, type NavItem } from '@/lib/nav-registry'
 
 /** Height constant for consistent bottom insets on mobile routes with tab bar */
 export const MOBILE_TAB_BAR_OFFSET = 'var(--tabbar-h, 80px)'
@@ -41,101 +28,20 @@ export const MOBILE_TAB_BAR_OFFSET = 'var(--tabbar-h, 80px)'
 type TabItem = {
   id: string
   label: string
-  icon: typeof Chat01Icon
+  icon: NavItem['icon']
   to: string
   match: (path: string) => boolean
 }
 
-export const MOBILE_NAV_TABS: Array<TabItem> = [
-  {
-    id: 'dashboard',
-    label: 'Home',
-    icon: DashboardSquare01Icon,
-    to: '/dashboard',
-    match: (p) => p === '/dashboard',
-  },
-  {
-    id: 'chat',
-    label: 'Chat',
-    icon: Chat01Icon,
-    to: '/chat',
-    match: (p) => p.startsWith('/chat') || p === '/new',
-  },
-  {
-    id: 'files',
-    label: 'Files',
-    icon: File01Icon,
-    to: '/files',
-    match: (p) => p.startsWith('/files'),
-  },
-  {
-    id: 'terminal',
-    label: 'Terminal',
-    icon: CommandLineIcon,
-    to: '/terminal',
-    match: (p) => p.startsWith('/terminal'),
-  },
-  {
-    id: 'jobs',
-    label: 'Jobs',
-    icon: Clock01Icon,
-    to: '/jobs',
-    match: (p) => p.startsWith('/jobs'),
-  },
-  {
-    id: 'missions',
-    label: 'Missions',
-    icon: Target02Icon,
-    to: '/missions',
-    match: (p) =>
-      p.startsWith('/missions') || p.startsWith('/mission-control'),
-  },
-  {
-    id: 'groups',
-    label: 'Groups',
-    icon: MessageMultiple02Icon,
-    to: '/group-chat',
-    match: (p) => p.startsWith('/group-chat'),
-  },
-  {
-    id: 'swarm',
-    label: 'Swarm',
-    icon: UserGroupIcon,
-    to: '/swarm',
-    match: (p) => p === '/swarm' || p.startsWith('/swarm2'),
-  },
-  {
-    id: 'skills',
-    label: 'Skills',
-    icon: PuzzleIcon,
-    to: '/skills',
-    match: (p) => p.startsWith('/skills'),
-  },
-  {
-    id: 'mcp',
-    label: 'MCP',
-    icon: McpServerIcon,
-    to: '/mcp',
-    match: (p) => p.startsWith('/mcp'),
-  },
-  {
-    id: 'agents',
-    label: 'Agents',
-    icon: UserGroupIcon,
-    to: '/agents',
-    match: (p) =>
-      p.startsWith('/agents') ||
-      p.startsWith('/operations') ||
-      p.startsWith('/profiles'),
-  },
-  {
-    id: 'settings',
-    label: 'Settings',
-    icon: Settings01Icon,
-    to: '/settings',
-    match: (p) => p.startsWith('/settings'),
-  },
-]
+export const MOBILE_NAV_TABS: Array<TabItem> = NAV_ITEMS.filter((item) =>
+  item.containers.includes('tabbar'),
+).map((item) => ({
+  id: item.id,
+  label: item.label,
+  icon: item.icon,
+  to: item.to,
+  match: item.match,
+}))
 
 export function MobileTabBar() {
   const navigate = useNavigate()
@@ -151,6 +57,14 @@ export function MobileTabBar() {
   void settings.mobileChatNavMode // reserved for future use
   const isOnChat =
     pathname.startsWith('/chat') || pathname === '/new' || pathname === '/'
+
+  const visibleTabs = useMemo(
+    () =>
+      MOBILE_NAV_TABS.filter(
+        (item) => item.id !== 'echo-studio' || settings.experimentalEchoStudio,
+      ),
+    [settings.experimentalEchoStudio],
+  )
 
   // Always hide tab bar on chat routes — iMessage/Telegram pattern
   const isChatRoute = isOnChat
@@ -184,22 +98,22 @@ export function MobileTabBar() {
 
       if (Math.abs(delta) < threshold) return
 
-      const currentIdx = MOBILE_NAV_TABS.findIndex((tab) => tab.match(pathname))
+      const currentIdx = visibleTabs.findIndex((tab) => tab.match(pathname))
       const nextIdx =
         delta < 0
-          ? Math.min(currentIdx + 1, MOBILE_NAV_TABS.length - 1) // swipe left → next tab
+          ? Math.min(currentIdx + 1, visibleTabs.length - 1) // swipe left → next tab
           : Math.max(currentIdx - 1, 0) // swipe right → prev tab
 
       if (
         nextIdx !== currentIdx &&
         nextIdx >= 0 &&
-        nextIdx < MOBILE_NAV_TABS.length
+        nextIdx < visibleTabs.length
       ) {
         hapticTap()
-        void navigate({ to: MOBILE_NAV_TABS[nextIdx].to })
+        void navigate({ to: visibleTabs[nextIdx].to })
       }
     },
-    [navigate, pathname],
+    [navigate, pathname, visibleTabs],
   )
 
   // Measure pill for --tabbar-h (~80px total = pill + bottom offset)
@@ -280,7 +194,7 @@ export function MobileTabBar() {
         onTouchEnd={handlePillTouchEnd}
       >
         <div className="flex items-center gap-1">
-          {MOBILE_NAV_TABS.map((tab, idx) => {
+          {visibleTabs.map((tab, idx) => {
             const isActive = tab.match(pathname)
             const isCenter = tab.id === 'chat'
             const circleSize =

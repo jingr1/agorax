@@ -117,18 +117,19 @@ export function WorkspaceShell({ children }: WorkspaceShellProps) {
       path.startsWith('/mission-control')
     )
       return 5
-    if (path === '/swarm' || path.startsWith('/swarm2')) return 6
-    if (path.startsWith('/echo-studio')) return 6
-    if (path.startsWith('/skills')) return 7
-    if (path.startsWith('/mcp')) return 8
+    if (path.startsWith('/group-chat')) return 6
     if (
       path.startsWith('/agents') ||
       path.startsWith('/operations') ||
       path.startsWith('/profiles')
     )
-      return 9
-    if (path.startsWith('/settings')) return 10
-    if (path.startsWith('/memory')) return -1
+      return 7
+    if (path === '/swarm' || path.startsWith('/swarm2')) return 8
+    if (path.startsWith('/echo-studio')) return 9
+    if (path.startsWith('/memory')) return 10
+    if (path.startsWith('/skills')) return 11
+    if (path.startsWith('/mcp')) return 12
+    if (path.startsWith('/settings')) return 13
     return -1
   }, [])
 
