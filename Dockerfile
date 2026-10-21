@@ -68,6 +68,11 @@ COPY --from=build --chown=workspace:workspace /app/node_modules ./node_modules
 COPY --from=build --chown=workspace:workspace /app/package.json ./package.json
 COPY --from=build --chown=workspace:workspace /app/server-entry.js ./server-entry.js
 COPY --from=build --chown=workspace:workspace /app/skills ./skills
+# server-entry.js refuses to start without a project-root .env (Vite is not
+# present in production). Ship the example as a blank template; compose / -e /
+# K8s env still win because loadDotEnvFile only fills unset keys. Real secrets
+# must never be baked into the image (.dockerignore excludes .env).
+COPY --chown=workspace:workspace .env.example ./.env
 COPY --chown=workspace:workspace docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 ENV NODE_ENV=production \

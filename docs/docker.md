@@ -18,6 +18,10 @@ That's it. The repo's `docker-compose.yml` runs:
 - `hermes-agent` (port `8642`, internal only)
 - `hermes-workspace` (port `6734`, bound to `127.0.0.1`)
 
+The published image copies `.env.example` to `/app/.env` so `server-entry.js` can
+start; compose / `-e` / secrets still override (unset keys only). Never bake real
+secrets into the image.
+
 The workspace waits for the agent's `/health` to return `200` before starting (via `depends_on: condition: service_healthy`). On a fresh laptop this takes about 15 seconds.
 
 ## Multi-host / NAS / VPS

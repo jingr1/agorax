@@ -75,8 +75,9 @@ jobs:
             -p 127.0.0.1:6734:6734 \
             -e HERMES_API_URL=http://127.0.0.1:8642 \
             -e HERMES_PASSWORD=ci-smoke-test-password \
+            -e COOKIE_SECURE=0 \
             agorax:smoke)
-          trap 'docker logs "$cid" || true; docker rm -f "$cid" || true' EXIT
+          trap 'echo "---- docker logs ----"; docker logs "$cid" || true; docker rm -f "$cid" || true' EXIT
 
           for _ in $(seq 1 30); do
             status=$(docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$cid")
