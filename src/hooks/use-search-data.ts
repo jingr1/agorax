@@ -14,6 +14,7 @@ const SESSIONS_STALE_TIME_MS = 60_000
 const FILES_STALE_TIME_MS = 2 * 60_000
 const SKILLS_STALE_TIME_MS = 2 * 60_000
 const AGENTS_STALE_TIME_MS = 2 * 60_000
+const MISSIONS_STALE_TIME_MS = 2 * 60_000
 const SEARCH_QUERY_GC_TIME_MS = 10 * 60_000
 const MAX_SEARCH_FILES = 2_500
 const SESSION_FTS_STALE_TIME_MS = 15_000
@@ -51,6 +52,15 @@ export type SearchAgent = {
   capabilities?: Array<string>
 }
 
+export type SearchMission = {
+  id: string
+  missionId: string | null
+  title: string
+  status: string
+  currentStage: string | null
+  currentAssignee: string | null
+}
+
 export type SearchActivity = {
   id: string
   title: string
@@ -78,6 +88,12 @@ type AgentsApiResponse = {
   agents?: Array<Record<string, unknown>>
 }
 
+type MissionsApiResponse = {
+  ok?: boolean
+  missions?: Array<Record<string, unknown>>
+  tasks?: Array<Record<string, unknown>>
+}
+
 type SessionSearchApiResponse = {
   ok?: boolean
   results?: Array<Record<string, unknown>>
@@ -88,6 +104,7 @@ type SearchQueryScope =
   | 'chats'
   | 'files'
   | 'agents'
+  | 'missions'
   | 'skills'
   | 'actions'
 
@@ -299,11 +316,47 @@ async function fetchAgents(
       displayName,
       mentionName: String(agent.mentionName || id),
       runtime: String(agent.runtime || 'unknown'),
-      profile:
-        typeof agent.profile === 'string' ? agent.profile : agent.profile,
+      profile: typeof agent.profile === 'string' ? agent.profile : null,
       capabilities: Array.isArray(agent.capabilities)
         ? agent.capabilities.filter((c): c is string => typeof c === 'string')
         : undefined,
+    }
+  })
+}
+
+async function fetchMissions(
+  querySignal?: AbortSignal,
+): Promise<Array<SearchMission>> {
+  const data = await fetchJsonWithTimeout<MissionsApiResponse>(
+    '/api/missions',
+    querySignal,
+  )
+  if (!data) return []
+  if (typeof data.ok === 'boolean' && !data.ok) return []
+  const missions = Array.isArray(data.missions)
+    ? data.missions
+    : Array.isArray(data.tasks)
+      ? data.tasks
+      : []
+
+  return missions.map((mission: Record<string, unknown>, index: number) => {
+    const missionId =
+      typeof mission.missionId === 'string' ? mission.missionId : null
+    const title =
+      typeof mission.title === 'string' && mission.title.trim()
+        ? mission.title.trim()
+        : 'Untitled Mission'
+    return {
+      id: String(mission.id || missionId || `mission-${index}`),
+      missionId,
+      title,
+      status: String(mission.status || mission.lane || 'todo'),
+      currentStage:
+        typeof mission.currentStage === 'string' ? mission.currentStage : null,
+      currentAssignee:
+        typeof mission.currentAssignee === 'string'
+          ? mission.currentAssignee
+          : null,
     }
   })
 }
@@ -387,6 +440,18 @@ export function useSearchData(
     refetchOnReconnect: false,
   })
 
+  // Missions
+  const missionsQuery = useQuery({
+    queryKey: ['search', 'missions'],
+    queryFn: ({ signal }) => fetchMissions(signal),
+    enabled: enabled && (scope === 'all' || scope === 'missions'),
+    staleTime: MISSIONS_STALE_TIME_MS,
+    gcTime: SEARCH_QUERY_GC_TIME_MS,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+
   // Activity events disabled — SSE to /api/events caused UI freeze
   const activityResults: Array<SearchActivity> = []
 
@@ -396,13 +461,15 @@ export function useSearchData(
     files: filesQuery.data || [],
     skills: skillsQuery.data || [],
     agents: agentsQuery.data || [],
+    missions: missionsQuery.data || [],
     activity: activityResults,
     isLoading:
       sessionsQuery.isLoading ||
       sessionSearchQuery.isLoading ||
       filesQuery.isLoading ||
       skillsQuery.isLoading ||
-      agentsQuery.isLoading,
+      agentsQuery.isLoading ||
+      missionsQuery.isLoading,
   }
 }
 

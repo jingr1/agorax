@@ -11,6 +11,7 @@ export type SearchScope =
   | 'chats'
   | 'files'
   | 'agents'
+  | 'missions'
   | 'skills'
   | 'actions'
 

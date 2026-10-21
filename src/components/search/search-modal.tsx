@@ -7,6 +7,7 @@ import {
   File01Icon,
   FlashIcon,
   LanguageSkillIcon,
+  Target02Icon,
 } from '@hugeicons/core-free-icons'
 import { AnimatePresence, motion } from 'motion/react'
 import { useNavigate } from '@tanstack/react-router'
@@ -31,6 +32,7 @@ const SCOPE_TABS: Array<{ value: SearchScope; label: string }> = [
   { value: 'chats', label: '💬 Chats' },
   { value: 'files', label: '📁 Files' },
   { value: 'agents', label: '🤖 Agents' },
+  { value: 'missions', label: '🎯 Missions' },
   { value: 'skills', label: '🛠️ Skills' },
   { value: 'actions', label: '⚡ Actions' },
 ]
@@ -39,6 +41,7 @@ const RESULT_LIMITS = {
   chats: 24,
   files: 40,
   agents: 24,
+  missions: 24,
   skills: 24,
   actions: 10,
   total: 80,
@@ -76,8 +79,15 @@ export function SearchModal() {
 
   // Real data — only fetch while the modal is open so chat boot isn't
   // blocked by a deep maxDepth=5 file tree scan.
-  const { sessions, sessionSearchResults, files, skills, agents, isLoading } =
-    useSearchData(scope, deferredQuery, isOpen)
+  const {
+    sessions,
+    sessionSearchResults,
+    files,
+    skills,
+    agents,
+    missions,
+    isLoading,
+  } = useSearchData(scope, deferredQuery, isOpen)
   const searchableFiles = useMemo(
     () => files.filter((entry) => entry.type === 'file'),
     [files],
@@ -94,6 +104,16 @@ export function SearchModal() {
           closeModal()
           // /chat redirects to last session — force the new sentinel. See #300.
           navigate({ to: '/chat/$sessionKey', params: { sessionKey: 'new' } })
+        },
+      },
+      {
+        id: 'qa-missions',
+        emoji: '🎯',
+        label: 'Missions',
+        description: 'Open the missions control center',
+        onSelect: () => {
+          closeModal()
+          navigate({ to: '/missions' })
         },
       },
       {
@@ -272,6 +292,28 @@ export function SearchModal() {
       },
     }))
 
+    // Real missions data
+    const missionResults = filterResults(
+      missions,
+      normalized,
+      ['title', 'status', 'currentStage', 'currentAssignee'],
+      RESULT_LIMITS.missions,
+    ).map<SearchResultItemData>((entry) => ({
+      id: entry.id,
+      scope: 'missions',
+      icon: <HugeiconsIcon icon={Target02Icon} size={20} strokeWidth={1.5} />,
+      title: entry.title,
+      snippet: entry.currentStage
+        ? `${entry.status} · ${entry.currentStage}`
+        : entry.status,
+      meta: entry.status,
+      onSelect: () => {
+        closeModal()
+        const missionId = entry.missionId || entry.id
+        navigate({ to: '/missions', search: { missionId } })
+      },
+    }))
+
     // Real skills data (static)
     const skillResults = filterResults(
       skills,
@@ -301,13 +343,7 @@ export function SearchModal() {
       actions.push({
         id: entry.id,
         scope: 'actions',
-        icon: (
-          <HugeiconsIcon
-            icon={FlashIcon}
-            size={20}
-            strokeWidth={1.5}
-          />
-        ),
+        icon: <HugeiconsIcon icon={FlashIcon} size={20} strokeWidth={1.5} />,
         title: entry.label,
         snippet: entry.description,
         meta: 'Action',
@@ -319,6 +355,7 @@ export function SearchModal() {
     if (scope === 'chats') return chats
     if (scope === 'files') return fileResults
     if (scope === 'agents') return agentResults
+    if (scope === 'missions') return missionResults
     if (scope === 'skills') return skillResults
     if (scope === 'actions') return actions
 
@@ -326,6 +363,7 @@ export function SearchModal() {
       ...chats,
       ...fileResults,
       ...agentResults,
+      ...missionResults,
       ...skillResults,
       ...actions,
     ].slice(0, RESULT_LIMITS.total)
@@ -333,6 +371,7 @@ export function SearchModal() {
     agents,
     closeModal,
     deferredQuery,
+    missions,
     navigate,
     quickActions,
     scope,
@@ -355,9 +394,7 @@ export function SearchModal() {
       return
     }
     const action = quickActions[index - recentSearches.length]
-    if (action) {
-      action.onSelect()
-    }
+    action.onSelect()
   }
 
   useEffect(() => {

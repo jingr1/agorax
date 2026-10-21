@@ -5,7 +5,7 @@ export type SearchResultItemData = {
   title: string
   snippet: string
   meta: string
-  scope: 'chats' | 'files' | 'agents' | 'skills' | 'actions'
+  scope: 'chats' | 'files' | 'agents' | 'missions' | 'skills' | 'actions'
   icon: React.ReactNode
   badge?: string
   onSelect: () => void
