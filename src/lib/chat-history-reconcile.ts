@@ -99,6 +99,13 @@ function isOptimistic(message: LooseMessage): boolean {
   return status === 'sending' || status === 'queued'
 }
 
+/** Normalize gateway seconds vs client ms for optimistic↔echo pairing. */
+function timestampMs(message: LooseMessage): number | null {
+  const raw = message.timestamp
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return null
+  return raw < 1_000_000_000_000 ? raw * 1000 : raw
+}
+
 function toolCallCount(message: LooseMessage): number {
   const stream = Array.isArray(message.__streamToolCalls)
     ? message.__streamToolCalls.length
@@ -381,16 +388,60 @@ export function reconcileHistoryMessages<T>(
   })
 
   // Keep local optimistic rows the server has not echoed yet.
+  // Gateway user echoes usually omit clientId — matching by id alone left
+  // `opt-*` beside `msg-*` (duplicate user bubbles while Thinking…).
   for (const message of previous) {
     if (!isOptimistic(message)) continue
     const key = matchKey(message)
-    const already = key
+    const alreadyByKey = key
       ? reconciled.some((row) => matchKey(row) === key)
       : reconciled.includes(message)
-    if (!already) {
-      reconciled.push(message)
-      reusedAll = false
+    if (alreadyByKey) continue
+
+    if (message.role === 'user') {
+      const optimisticText = messageText(message)
+      const optimisticTs = timestampMs(message)
+      let echoIndex = -1
+      if (optimisticText) {
+        for (let i = reconciled.length - 1; i >= 0; i -= 1) {
+          const row = reconciled[i]
+          if (!row || row.role !== 'user' || isOptimistic(row)) continue
+          if (!textsLooselyMatch(messageText(row), optimisticText)) continue
+          const rowTs = timestampMs(row)
+          if (
+            optimisticTs !== null &&
+            rowTs !== null &&
+            Math.abs(optimisticTs - rowTs) > 15_000
+          ) {
+            continue
+          }
+          echoIndex = i
+          break
+        }
+      }
+      if (echoIndex >= 0) {
+        const echo = reconciled[echoIndex]!
+        const clientId =
+          (typeof message.clientId === 'string' && message.clientId.trim()) ||
+          (typeof message.client_id === 'string' && message.client_id.trim()) ||
+          (typeof message.__optimisticId === 'string' &&
+          message.__optimisticId.startsWith('opt-')
+            ? message.__optimisticId.slice(4).trim()
+            : '')
+        if (clientId) {
+          reconciled[echoIndex] = {
+            ...echo,
+            clientId,
+            client_id: clientId,
+          }
+          reusedAll = false
+        }
+        continue
+      }
     }
+
+    reconciled.push(message)
+    reusedAll = false
   }
 
   // Last-resort: prior turn had thinking the server omitted and match failed.

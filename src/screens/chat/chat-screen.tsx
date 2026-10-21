@@ -51,6 +51,7 @@ import {
   enqueueSessionMessage,
   queuedMessageCount,
 } from './lib/session-message-queue'
+import { isChatTurnBusyGateOpen } from './lib/chat-turn-busy-gate'
 import {
   appendHistoryMessage,
   chatQueryKeys,
@@ -1710,9 +1711,16 @@ export function ChatScreen({
   })
   const hermesPendingInteractions = hermesEngineChat.interactions
   const hermesTurnBusy = hermesEngineChat.turnBusy
-  // Composer / queue / edit: Engine busy + local AbortController + sending.
-  // waitingForResponse stays recovery-only.
-  const interactionBusy = hermesTurnBusy || localIsStreaming || sending
+  // Composer / queue / edit / send gate: must stay closed until settle.
+  // rememberedOpenTurn + activeTurnPhase close gaps where turnBusy flickers
+  // idle while the previous turn is still open (new user must not enter list).
+  const interactionBusy = isChatTurnBusyGateOpen({
+    agentSessionId: resolvedSessionKey,
+    turnBusy: hermesTurnBusy,
+    localIsStreaming,
+    sending,
+    activeTurnPhase: hermesEngineChat.activeTurn?.phase ?? null,
+  })
   // Portable keeps local Abort streaming; Hermes 1:1 chrome follows Engine.
   const activeIsRealtimeStreaming = isPortableMode
     ? localIsStreaming
@@ -2417,6 +2425,31 @@ export function ChatScreen({
       skipOptimistic = false,
       existingClientId = '',
     ) {
+      // Hard gate: while the previous turn is open, never ingest a new user row.
+      // Composer should have queued already; this catches drain races / direct calls.
+      if (
+        isChatTurnBusyGateOpen({
+          agentSessionId: sessionKey,
+          turnBusy: hermesTurnBusy,
+          localIsStreaming: localIsStreamingRef.current,
+          sending,
+          activeTurnPhase: hermesEngineChat.activeTurn?.phase ?? null,
+        })
+      ) {
+        const entry = enqueueSessionMessage(sessionKey, {
+          text: body,
+          attachments,
+        })
+        if (entry) {
+          setQueueVersion((version) => version + 1)
+          toast(
+            `Queued (${queuedMessageCount(sessionKey)}) — sends after this reply`,
+            { type: 'success' },
+          )
+        }
+        return
+      }
+
       // Read from ref so we always get the latest value without capturing it in deps
       const currentThinkingLevel = thinkingLevelRef.current
       setLocalActivity('reading')
@@ -2553,14 +2586,17 @@ export function ChatScreen({
       })
     },
     [
-      finalDisplayMessages,
       clearCompletedStreaming,
+      currentModel,
+      finalDisplayMessages,
+      hermesEngineChat.activeTurn?.phase,
+      hermesTurnBusy,
       queryClient,
+      sending,
       setLocalActivity,
       startStreaming,
       streamFinish,
       streamStart,
-      currentModel,
     ],
   )
 
@@ -3993,20 +4029,28 @@ export function ChatScreen({
     [queueSessionKey],
   )
 
-  // Drain one queued follow-up when the current turn becomes idle.
+  // Drain one queued follow-up only when the turn gate is closed (settled /
+  // no remembered open turn). A busy→idle edge or session mount may drain;
+  // a mid-turn flicker of the old busy bit must not ingest a new user.
   useEffect(() => {
-    const busy = interactionBusy || isCompacting
-    if (busy) {
+    const gateOpen = isChatTurnBusyGateOpen({
+      agentSessionId: queueSessionKey,
+      turnBusy: hermesTurnBusy || isCompacting,
+      localIsStreaming,
+      sending,
+      activeTurnPhase: hermesEngineChat.activeTurn?.phase ?? null,
+    })
+    if (gateOpen) {
       wasBusyForQueueRef.current = true
       return
     }
     if (!queueSessionKey || queueSessionKey === 'new') return
 
-    const shouldDrain =
-      wasBusyForQueueRef.current || mountDrainKeyRef.current !== queueSessionKey
+    const sessionChanged = mountDrainKeyRef.current !== queueSessionKey
     mountDrainKeyRef.current = queueSessionKey
+    const wasBusy = wasBusyForQueueRef.current
     wasBusyForQueueRef.current = false
-    if (!shouldDrain) return
+    if (!wasBusy && !sessionChanged) return
     if (queuedMessageCount(queueSessionKey) === 0) return
 
     const next = dequeueSessionMessage(queueSessionKey)
@@ -4033,10 +4077,13 @@ export function ChatScreen({
     )
   }, [
     activeFriendlyId,
-    interactionBusy,
+    hermesEngineChat.activeTurn?.phase,
+    hermesTurnBusy,
     isCompacting,
+    localIsStreaming,
     queueSessionKey,
     sendMessage,
+    sending,
   ])
 
   const runPaletteSlashCommand = useCallback(

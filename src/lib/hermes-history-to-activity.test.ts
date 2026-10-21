@@ -111,6 +111,31 @@ describe('hermesHistoryMessagesToActivity', () => {
     })
     expect(rows).toHaveLength(1)
   })
+
+  it('maps optimistic clientId to user:<clientId> and drops msg-* twin', () => {
+    const rows = hermesHistoryMessagesToActivity({
+      workspaceId: 'ws',
+      agentSessionId: 'sess-1',
+      messages: [
+        {
+          role: 'user',
+          clientId: 'c-opt',
+          client_id: 'c-opt',
+          __optimisticId: 'opt-c-opt',
+          content: [{ type: 'text', text: '继续排查' }],
+          timestamp: 1_000,
+        },
+        {
+          role: 'user',
+          id: 'msg-u',
+          content: [{ type: 'text', text: '继续排查' }],
+          timestamp: 1_001,
+        },
+      ],
+    })
+    expect(rows.map((row) => row.messageId)).toEqual(['user:c-opt'])
+    expect(rows[0]?.payload).toMatchObject({ clientSubmitId: 'c-opt' })
+  })
 })
 
 describe('mergeHermesHistoryWithLiveByTurnIdentity', () => {

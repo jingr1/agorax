@@ -139,6 +139,56 @@ describe('foldOpenTurnIntoLiveHost', () => {
     expect(folded[1]!.__streamingStatus).toBe('complete')
   })
 
+  it('does not yank a prior-turn streaming leftover into the open turn', () => {
+    const leftover = projectLiveAssistantMessage({
+      messageId: 'assistant:old',
+      runId: 'old',
+      text: '上一轮回复',
+      thinking: '',
+      toolCalls: [],
+      streaming: true,
+      timestamp: 1,
+    })
+    const folded = foldOpenTurnIntoLiveHost(
+      [
+        {
+          role: 'user',
+          id: 'u0',
+          content: [{ type: 'text', text: '旧问题' }],
+        },
+        leftover,
+        {
+          role: 'user',
+          id: 'u1',
+          content: [{ type: 'text', text: '新问题' }],
+        },
+      ],
+      {
+        liveMessageId: 'assistant:new',
+        isStreaming: true,
+        streamingText: '',
+        runId: 'new',
+      },
+    )
+
+    expect(folded.map((m) => readDurableMessageId(m) || m.id)).toEqual([
+      'u0',
+      'assistant:old',
+      'u1',
+      'assistant:new',
+    ])
+    const leftoverText = Array.isArray(folded[1]?.content)
+      ? folded[1]!.content
+          .map((part) =>
+            part && typeof part === 'object' && (part as { type?: string }).type === 'text'
+              ? String((part as { text?: string }).text ?? '')
+              : '',
+          )
+          .join('')
+      : ''
+    expect(leftoverText).toBe('上一轮回复')
+  })
+
   it('relocates a live host that landed before the latest user prompt', () => {
     const live = projectLiveAssistantMessage({
       messageId: 'assistant:pending:s:t1',

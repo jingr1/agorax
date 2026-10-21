@@ -144,6 +144,45 @@ describe('reconcileHistoryMessages', () => {
     expect(reconciled).toHaveLength(2)
     expect(reconciled[1]).toBe(optimistic)
   })
+
+  it('does not reinject optimistic user beside gateway msg-* echo', () => {
+    const clientId = 'c-dup-1'
+    const now = Date.now()
+    const optimistic = {
+      role: 'user',
+      __optimisticId: `opt-${clientId}`,
+      clientId,
+      client_id: clientId,
+      status: 'sending',
+      timestamp: now,
+      content: [{ type: 'text', text: '不要让我做这做那的，自己想办法解决' }],
+    }
+    const previous = [optimistic]
+    const incoming = [
+      {
+        role: 'user',
+        id: 'msg-u',
+        // Gateway seconds vs client ms must still fold.
+        timestamp: Math.floor(now / 1000),
+        content: [{ type: 'text', text: '不要让我做这做那的，自己想办法解决' }],
+      },
+    ]
+
+    const reconciled = reconcileHistoryMessages(previous, incoming)
+    expect(reconciled).toHaveLength(1)
+    expect(reconciled[0]).toMatchObject({
+      id: 'msg-u',
+      clientId,
+      client_id: clientId,
+    })
+    expect(
+      reconciled.some(
+        (row) =>
+          typeof (row as { __optimisticId?: string }).__optimisticId ===
+          'string',
+      ),
+    ).toBe(false)
+  })
 })
 
 describe('foldTrailingAssistantThinking', () => {

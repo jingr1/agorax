@@ -356,15 +356,15 @@ export function foldOpenTurnIntoLiveHost<T extends FoldableAssistant>(
 
   // Pull a misplaced live host out of the pre-user head. Otherwise an early
   // write-through row stays above the prompt and fold appends a second copy.
+  // Match by durable liveId only — leftover __streamingStatus on a prior
+  // turn's reply must not yank settled history into the open turn.
   const head: Array<T> = []
   const pulledFromHead: Array<T> = []
   const headEnd = lastUserIndex >= 0 ? lastUserIndex + 1 : 0
   for (let i = 0; i < headEnd; i += 1) {
     const message = messages[i]!
     const id = readDurableMessageId(message)
-    const isLive =
-      id === liveId || message.__streamingStatus === 'streaming'
-    if (isLive && message.role === 'assistant') {
+    if (id === liveId && message.role === 'assistant') {
       pulledFromHead.push(message)
       continue
     }
@@ -392,9 +392,7 @@ export function foldOpenTurnIntoLiveHost<T extends FoldableAssistant>(
   const orphans: Array<T> = []
   for (const message of openTurn) {
     const id = readDurableMessageId(message)
-    const isLive =
-      id === liveId || message.__streamingStatus === 'streaming'
-    if (isLive && !live) {
+    if (id === liveId && !live) {
       live = message
       continue
     }

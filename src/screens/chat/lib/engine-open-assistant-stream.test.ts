@@ -78,4 +78,44 @@ describe('applyOpenAssistantStreamingChrome', () => {
     })
     expect(chrome.streamingMessageId).toBe('assistant:run-1')
   })
+
+  it('queued follow-up does not relocate the prior live reply under the new user', () => {
+    // Enter-while-busy: prior turn still streaming, new user already appended.
+    const chrome = applyOpenAssistantStreamingChrome({
+      messages: [
+        msg('user:1', 'user', {
+          content: [{ type: 'text', text: '旧问题' }],
+        }),
+        msg('assistant:run-live', 'assistant', {
+          __streamingStatus: 'streaming',
+          content: [{ type: 'text', text: '旧回复还在生成' }],
+        }),
+        msg('user:2', 'user', {
+          content: [{ type: 'text', text: 'setcap 跑完了' }],
+        }),
+      ],
+      activityStreamingId: 'assistant:run-live',
+      turnActive: true,
+      submitting: true,
+    })
+    expect(chrome.turnBusy).toBe(true)
+    expect(chrome.streamingMessageId).toBeNull()
+    expect(chrome.messages.map((m) => m.messageId ?? m.id)).toEqual([
+      'user:1',
+      'assistant:run-live',
+      'user:2',
+    ])
+    expect(textFrom(chrome.messages[1]!)).toBe('旧回复还在生成')
+  })
 })
+
+function textFrom(message: ChatMessage): string {
+  if (!Array.isArray(message.content)) return ''
+  return message.content
+    .map((part) =>
+      part && typeof part === 'object' && part.type === 'text'
+        ? String(part.text ?? '')
+        : '',
+    )
+    .join('')
+}

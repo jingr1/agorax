@@ -87,4 +87,64 @@ describe('no dual assistant id families', () => {
     expect(rows[1]?.key).toBe('processing:c-dup')
     engine.dispose()
   })
+
+  it('busy history folds RQ optimistic + msg-* onto one live user', () => {
+    const workspaceId = 'ws-dup2'
+    const agentSessionId = 'sess-dup2'
+    const commandPort = createHermesCommandPort({
+      workspaceId,
+      getMapping: async () => null,
+      putMapping: async (m) => m,
+      onActivityEvent: () => undefined,
+    })
+    const engine = createHermesAgentEngine({ workspaceId, commandPort })
+    hydrateHermesAgentEngine(
+      engine,
+      createHermesSessionSkeleton({ workspaceId, agentSessionId }),
+    )
+    ingestHermesUserPromptMessage({
+      engine,
+      workspaceId,
+      agentSessionId,
+      clientSubmitId: 'c-opt',
+      text: '不要让我做这做那的，自己想办法解决',
+      occurredAtUnixMs: 2_000,
+    })
+
+    mergeHermesHistoryWhileBusy({
+      engine,
+      workspaceId,
+      agentSessionId,
+      historyMessages: [
+        {
+          role: 'user',
+          clientId: 'c-opt',
+          client_id: 'c-opt',
+          __optimisticId: 'opt-c-opt',
+          content: [
+            { type: 'text', text: '不要让我做这做那的，自己想办法解决' },
+          ],
+          timestamp: 2_000,
+        },
+        {
+          id: 'msg-u',
+          messageId: 'msg-u',
+          role: 'user',
+          content: [
+            { type: 'text', text: '不要让我做这做那的，自己想办法解决' },
+          ],
+          timestamp: 2_001,
+        },
+      ],
+    })
+
+    const chat = selectHermesChatState(engine.getSnapshot(), agentSessionId, {
+      isSubmitting: true,
+    })
+    const userIds = chat.messages
+      .filter((m) => m.role === 'user')
+      .map((m) => m.id || m.messageId)
+    expect(userIds).toEqual(['user:c-opt'])
+    engine.dispose()
+  })
 })

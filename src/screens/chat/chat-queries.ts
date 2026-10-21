@@ -194,6 +194,16 @@ function getMessageServerId(message: ChatMessage): string {
   return normalizeId(raw.id) || normalizeId(raw.messageId)
 }
 
+/** Gateway may emit seconds; client optimistic rows use ms. */
+function messageTimestampMs(message: ChatMessage): number | null {
+  const raw = message as Record<string, unknown>
+  const value = raw.timestamp
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null
+  }
+  return value < 1_000_000_000_000 ? value * 1000 : value
+}
+
 /** Local user message still awaiting a server echo (optimistic or confirmed send). */
 function isPendingLocalUserMessage(message: ChatMessage): boolean {
   if (message.role !== 'user') return false
@@ -273,11 +283,7 @@ function findRecentMatchingUserMessageIndex(
 
     if (!isContentMatch) return false
 
-    const raw = message as Record<string, unknown>
-    const timestamp =
-      typeof raw.timestamp === 'number' && Number.isFinite(raw.timestamp)
-        ? raw.timestamp
-        : null
+    const timestamp = messageTimestampMs(message)
     if (timestamp !== null) {
       return nowMs - timestamp < TEN_SECONDS
     }
@@ -683,11 +689,8 @@ export function collapseRecentDuplicateUserMessages(
       continue
     }
 
-    const raw = message as Record<string, unknown>
-    const existingRaw = existing as Record<string, unknown>
-    const ts = typeof raw.timestamp === 'number' ? raw.timestamp : null
-    const existingTs =
-      typeof existingRaw.timestamp === 'number' ? existingRaw.timestamp : null
+    const ts = messageTimestampMs(message)
+    const existingTs = messageTimestampMs(existing)
     if (
       ts !== null &&
       existingTs !== null &&

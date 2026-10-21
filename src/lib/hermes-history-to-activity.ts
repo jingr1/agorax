@@ -62,15 +62,38 @@ function durableAssistantId(
   return `assistant:history:${agentSessionId}:${index}`
 }
 
+/**
+ * Align RQ optimistic rows (`clientId` / `opt-<uuid>`) with Engine
+ * `ingestUserPrompt` ids (`user:<clientSubmitId>`). Without this, mid-turn
+ * history reconcile maps optimistic to `user:history:…` and leaves it beside
+ * the live `user:<uuid>` / gateway `msg-*` echo.
+ */
+function readClientSubmitId(message: ChatMessage): string {
+  const direct = readString(
+    (message as { clientSubmitId?: unknown }).clientSubmitId,
+  ).trim()
+  if (direct) return direct
+  const clientId =
+    readString((message as { clientId?: unknown }).clientId).trim() ||
+    readString((message as { client_id?: unknown }).client_id).trim()
+  if (clientId) return clientId
+  const optimisticId = readString(
+    (message as { __optimisticId?: unknown }).__optimisticId,
+  ).trim()
+  if (optimisticId.startsWith('opt-')) {
+    const bare = optimisticId.slice('opt-'.length).trim()
+    if (bare) return bare
+  }
+  return ''
+}
+
 function durableUserId(
   message: ChatMessage,
   agentSessionId: string,
   index: number,
 ): string {
   const existing = readDurableMessageId(message)
-  const clientSubmitId = readString(
-    (message as { clientSubmitId?: unknown }).clientSubmitId,
-  ).trim()
+  const clientSubmitId = readClientSubmitId(message)
   if (clientSubmitId) return `user:${clientSubmitId}`
   if (existing && !isWeakHermesGatewayMessageId(existing)) return existing
   if (existing) return existing
@@ -394,15 +417,50 @@ export function hermesHistoryMessagesToActivity(input: {
     const parts = contentParts(message)
 
     if (role === 'user') {
-      sequence += 1
       const messageId = durableUserId(message, agentSessionId, index)
       if (seenIds.has(messageId)) continue
-      seenIds.add(messageId)
       const text =
         parts
           .map((part) => (part.type === 'text' ? readString(part.text) : ''))
           .join('')
           .trim() || readString(message.text).trim()
+      const clientSubmitId = readClientSubmitId(message)
+      const isWeakUserId =
+        isWeakHermesGatewayMessageId(messageId) ||
+        messageId.startsWith('user:history:')
+
+      // Same history page can hold RQ optimistic (`user:<clientId>`) and the
+      // gateway `msg-*` echo — keep the durable client row only.
+      if (isWeakUserId && text) {
+        const hasDurableTwin = out.some(
+          (row) =>
+            row.role === 'user' &&
+            !isWeakHermesGatewayMessageId(row.messageId) &&
+            !row.messageId.startsWith('user:history:') &&
+            readString(row.payload.text) === text,
+        )
+        if (hasDurableTwin) continue
+      }
+      if (clientSubmitId && text) {
+        // Only absorb a trailing weak echo of this same-turn prompt — stop at
+        // any non-user row so an older identical user message stays.
+        for (let i = out.length - 1; i >= 0; i -= 1) {
+          const row = out[i]
+          if (!row || row.role !== 'user') break
+          if (
+            !isWeakHermesGatewayMessageId(row.messageId) &&
+            !row.messageId.startsWith('user:history:')
+          ) {
+            break
+          }
+          if (readString(row.payload.text) !== text) break
+          seenIds.delete(row.messageId)
+          out.splice(i, 1)
+        }
+      }
+
+      sequence += 1
+      seenIds.add(messageId)
       out.push({
         workspaceId,
         agentSessionId,
@@ -416,13 +474,7 @@ export function hermesHistoryMessagesToActivity(input: {
         payload: {
           text,
           content: text,
-          ...(readString((message as { clientSubmitId?: unknown }).clientSubmitId)
-            ? {
-                clientSubmitId: readString(
-                  (message as { clientSubmitId?: unknown }).clientSubmitId,
-                ).trim(),
-              }
-            : {}),
+          ...(clientSubmitId ? { clientSubmitId } : {}),
         },
         occurredAtUnixMs,
       })
