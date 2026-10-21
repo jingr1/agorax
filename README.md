@@ -819,15 +819,18 @@ Access Agorax from anywhere on your devices — no port forwarding, no VPN compl
 
 ## 🖥️ Native Desktop App
 
-Agorax also ships an **Electron** desktop wrapper. Build it from source:
+**Download:** pre-built installers are attached to [GitHub Releases](https://github.com/jingr1/agorax/releases) (macOS DMG, Windows NSIS/portable EXE, Linux AppImage). Pushing a `v*` tag runs the **Desktop Release** workflow; see [`docs/desktop-release.md`](docs/desktop-release.md).
+
+Build from source:
 
 ```bash
-pnpm electron:build     # current platform
-pnpm electron:build:mac # macOS
-pnpm electron:build:win # Windows
+pnpm electron:build        # current platform
+pnpm electron:build:mac    # macOS DMG
+pnpm electron:build:win    # Windows NSIS + portable
+pnpm electron:build:linux  # Linux AppImage
 ```
 
-The PWA install path above is the fastest way to get a native-feeling desktop experience today; Electron is available for users who want a standalone binary.
+Artifacts go to `release/`. Signing secrets are optional in CI — unsigned builds still publish. The PWA install path above remains the fastest way to get a native-feeling desktop experience without an installer.
 
 ---
 

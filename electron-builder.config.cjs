@@ -26,6 +26,8 @@ module.exports = {
     category: 'public.app-category.developer-tools',
     target: [{ target: 'dmg', arch: ['arm64', 'x64'] }],
     darkModeSupport: true,
+    // Local/default builds stay unsigned-friendly. CI enables hardenedRuntime
+    // when MACOS_CSC_* secrets are present (see desktop-release.yml).
     hardenedRuntime: false,
     gatekeeperAssess: false,
   },
@@ -47,10 +49,15 @@ module.exports = {
     allowToChangeInstallationDirectory: false,
     deleteAppDataOnUninstall: false,
   },
+  linux: {
+    target: ['AppImage'],
+    category: 'Development',
+    executableName: 'agorax',
+  },
   publish: {
     provider: 'github',
-    owner: 'outsourc-e',
-    repo: 'hermes-workspace',
+    owner: 'jingr1',
+    repo: 'agorax',
     releaseType: 'release',
   },
   asar: false,

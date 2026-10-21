@@ -30,6 +30,10 @@ WORKDIR /app
 # Install deps (cache-friendly: copy only manifests first)
 # NOTE: pnpm-workspace.yaml carries the allowBuilds approvals (electron/esbuild/…);
 # it must be present or pnpm 12 fatally errors on ignored build scripts.
+# Electron is a desktop-app dep (electron:build); this image runs node server-entry.js
+# only. Skip the Electron binary download so pnpm 12 allowBuilds does not fail CI
+# when GitHub is unreachable or the binary is unused.
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
 RUN pnpm install --frozen-lockfile
 

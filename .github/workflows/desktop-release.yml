@@ -1,0 +1,335 @@
+name: Desktop Release
+
+# Builds macOS / Windows / Linux Electron installers and attaches them to a
+# GitHub Release. Signing is optional: when the listed secrets are present the
+# job signs (and notarizes on macOS); otherwise it produces unsigned packages
+# with CSC_IDENTITY_AUTO_DISCOVERY=false and still publishes.
+#
+# Triggers:
+#   - push tag v*          -> release for that tag
+#   - workflow_dispatch    -> rebuild/republish an existing tag (input)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing git tag to build and publish (e.g. v1.2.3)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  resolve:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Resolve tag and semver
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag must look like vX.Y.Z (optional prerelease suffix); got '$tag'"
+            exit 1
+          fi
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building desktop release tag=$tag version=$version"
+
+  build-macos:
+    name: Build macOS
+    needs: resolve
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Align package version
+        run: node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); p.version=process.argv[1]; fs.writeFileSync('package.json', JSON.stringify(p,null,2)+'\n')" "${{ needs.resolve.outputs.version }}"
+
+      - name: Configure macOS signing (optional)
+        id: sign
+        env:
+          MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${MACOS_CSC_LINK:-}" ] && [ -n "${MACOS_CSC_KEY_PASSWORD:-}" ]; then
+            case "${MACOS_CSC_LINK}" in
+              http://*|https://*|/*|~/*)
+                echo "CSC_LINK=${MACOS_CSC_LINK}" >> "$GITHUB_ENV"
+                ;;
+              *)
+                cert_path="${RUNNER_TEMP}/macos-csc.p12"
+                node -e "require('fs').writeFileSync(process.argv[1], Buffer.from(process.env.MACOS_CSC_LINK, 'base64'))" "$cert_path"
+                echo "CSC_LINK=${cert_path}" >> "$GITHUB_ENV"
+                ;;
+            esac
+            echo "CSC_KEY_PASSWORD=${MACOS_CSC_KEY_PASSWORD}" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Signing enabled (Developer ID certificate present)"
+
+            if [ -n "${APPLE_API_KEY_P8_BASE64:-}" ] && [ -n "${APPLE_API_KEY_ID:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ]; then
+              key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY_ID}.p8"
+              node -e "require('fs').writeFileSync(process.argv[1], Buffer.from(process.env.APPLE_API_KEY_P8_BASE64, 'base64'))" "$key_path"
+              echo "APPLE_API_KEY=${key_path}" >> "$GITHUB_ENV"
+              echo "APPLE_API_KEY_ID=${APPLE_API_KEY_ID}" >> "$GITHUB_ENV"
+              echo "APPLE_API_ISSUER=${APPLE_API_ISSUER}" >> "$GITHUB_ENV"
+              echo "notarize=true" >> "$GITHUB_OUTPUT"
+              echo "Notarization credentials present"
+            else
+              echo "notarize=false" >> "$GITHUB_OUTPUT"
+              echo "No Apple notarization secrets; will sign without notarize"
+            fi
+          else
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+            echo "No MACOS_CSC_* secrets; building unsigned"
+          fi
+
+      - name: Build macOS DMG
+        env:
+          # electron-builder picks these up when set by the previous step
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          EXTRA=()
+          if [ "${{ steps.sign.outputs.signed }}" = "true" ]; then
+            EXTRA+=(-c.mac.hardenedRuntime=true -c.mac.gatekeeperAssess=false)
+          fi
+          pnpm build
+          pnpm electron:bundle-server
+          pnpm exec electron-builder --mac --publish never --config electron-builder.config.cjs "${EXTRA[@]}"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: agorax-desktop-macos
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.yml
+            release/*.yaml
+            release/*.blockmap
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows
+    needs: resolve
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Align package version
+        shell: bash
+        run: node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); p.version=process.argv[1]; fs.writeFileSync('package.json', JSON.stringify(p,null,2)+'\n')" "${{ needs.resolve.outputs.version }}"
+
+      - name: Configure Windows signing (optional)
+        id: sign
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          link="${WIN_CSC_LINK:-${CSC_LINK:-}}"
+          pass="${WIN_CSC_KEY_PASSWORD:-${CSC_KEY_PASSWORD:-}}"
+          if [ -n "$link" ] && [ -n "$pass" ]; then
+            case "$link" in
+              http://*|https://*|/*|[A-Za-z]:*)
+                echo "CSC_LINK=${link}" >> "$GITHUB_ENV"
+                ;;
+              *)
+                cert_path="${RUNNER_TEMP}/win-csc.p12"
+                CERT_B64="$link" node -e "require('fs').writeFileSync(process.argv[1], Buffer.from(process.env.CERT_B64, 'base64'))" "$cert_path"
+                echo "CSC_LINK=${cert_path}" >> "$GITHUB_ENV"
+                ;;
+            esac
+            echo "CSC_KEY_PASSWORD=${pass}" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Windows signing enabled"
+          else
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "No WIN_CSC_* / CSC_* secrets; building unsigned"
+          fi
+
+      - name: Build Windows installers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm build
+          pnpm electron:bundle-server
+          pnpm exec electron-builder --win --publish never --config electron-builder.config.cjs
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: agorax-desktop-windows
+          path: |
+            release/*.exe
+            release/*.yml
+            release/*.yaml
+            release/*.blockmap
+          if-no-files-found: error
+
+  build-linux:
+    name: Build Linux
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - name: Install AppImage tooling
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rpm fuse libfuse2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Align package version
+        run: node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); p.version=process.argv[1]; fs.writeFileSync('package.json', JSON.stringify(p,null,2)+'\n')" "${{ needs.resolve.outputs.version }}"
+
+      - name: Build Linux AppImage
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          set -euo pipefail
+          pnpm build
+          pnpm electron:bundle-server
+          pnpm exec electron-builder --linux --publish never --config electron-builder.config.cjs
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: agorax-desktop-linux
+          path: |
+            release/*.AppImage
+            release/*.yml
+            release/*.yaml
+            release/*.blockmap
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [resolve, build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all desktop artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agorax-desktop-*
+          path: desktop-artifacts
+          merge-multiple: true
+
+      - name: List release assets
+        run: find desktop-artifacts -type f | sort
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          name: Agorax ${{ needs.resolve.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(needs.resolve.outputs.version, '-') }}
+          generate_release_notes: true
+          body: |
+            ## Desktop installers
+
+            Download the asset for your platform from this release:
+
+            | Platform | Artifact |
+            |----------|----------|
+            | macOS | `agorax-setup-*.dmg` |
+            | Windows | `agorax-setup-*.exe` (NSIS installer + portable) |
+            | Linux | `agorax-setup-*.AppImage` |
+
+            **Signing:** packages are signed when repository secrets are configured
+            (`MACOS_CSC_*` / Apple notarization, `WIN_CSC_*` or `CSC_*`). Otherwise
+            builds are **unsigned** — macOS Gatekeeper and Windows SmartScreen may
+            require a manual allow.
+
+            Docker / server images are published separately by the
+            `Build & publish Docker image` workflow; they are not Electron installers.
+
+            See `docs/desktop-release.md` for the release runbook.
+          files: |
+            desktop-artifacts/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
