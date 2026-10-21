@@ -51,7 +51,9 @@ FROM node:22-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl tini python3 tmux \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd -r workspace && useradd -r -g workspace -u 10010 -m workspace
+    && groupadd -r workspace && useradd -r -g workspace -u 10010 -m workspace \
+    && mkdir -p /home/workspace/.hermes /workspace \
+    && chown -R workspace:workspace /home/workspace /workspace
 
 COPY --from=gosu_source /gosu /usr/local/bin/gosu
 COPY --from=daemon-build --chown=workspace:workspace /usr/local/bin/agorax-agentd /usr/local/bin/agorax-agentd
@@ -78,6 +80,8 @@ COPY --chown=workspace:workspace docker/entrypoint.sh /usr/local/bin/docker-entr
 ENV NODE_ENV=production \
     PORT=6734 \
     HOST=0.0.0.0 \
+    HOME=/home/workspace \
+    HERMES_HOME=/home/workspace/.hermes \
     HERMES_API_URL=http://hermes-agent:8642 \
     AGORAX_MANAGED_AGENT_URL=http://agorax-managed-agent:8788
 

@@ -22,6 +22,11 @@ The published image copies `.env.example` to `/app/.env` so `server-entry.js` ca
 start; compose / `-e` / secrets still override (unset keys only). Never bake real
 secrets into the image.
 
+State files (`collab.db`, etc.) live under `HERMES_HOME` (default
+`/home/workspace/.hermes`). The entrypoint always chowns that directory to the
+`workspace` user after creating it — otherwise a root-owned `.hermes` causes
+`SqliteError: unable to open database file` once privileges are dropped.
+
 The workspace waits for the agent's `/health` to return `200` before starting (via `depends_on: condition: service_healthy`). On a fresh laptop this takes about 15 seconds.
 
 ## Multi-host / NAS / VPS

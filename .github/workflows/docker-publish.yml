@@ -74,6 +74,7 @@ jobs:
           cid=$(docker run -d \
             -p 127.0.0.1:6734:6734 \
             -e HERMES_API_URL=http://127.0.0.1:8642 \
+            -e HERMES_HOME=/home/workspace/.hermes \
             -e HERMES_PASSWORD=ci-smoke-test-password \
             -e COOKIE_SECURE=0 \
             agorax:smoke)
