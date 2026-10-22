@@ -1805,7 +1805,7 @@ export function SettingsDialog({
               >
                 <TabsList
                   variant="default"
-                  className="w-full flex-col items-stretch gap-0.5 rounded-lg border border-primary-200/80 bg-primary-100/40 p-1 dark:border-neutral-700 dark:bg-neutral-900/40"
+                  className="w-full flex-col items-stretch gap-0.5 rounded-none border-0 bg-transparent p-0"
                 >
                   {SECTIONS.map((s) => (
                     <TabsTab

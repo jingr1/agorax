@@ -597,7 +597,7 @@ export function ClaudeCodeSettingsPanel({
                   setSecretDirty(true)
                 }}
                 placeholder={
-                  authMode === 'auth_token' ? 'gateway token…' : 'sk-ant-…'
+                  authMode === 'auth_token' ? 'gateway token…' : 'API key…'
                 }
                 className={cn(SETTINGS_CONTROL_CLASS, 'font-mono')}
               />
