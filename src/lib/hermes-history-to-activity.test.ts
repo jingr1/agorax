@@ -136,6 +136,36 @@ describe('hermesHistoryMessagesToActivity', () => {
     expect(rows.map((row) => row.messageId)).toEqual(['user:c-opt'])
     expect(rows[0]?.payload).toMatchObject({ clientSubmitId: 'c-opt' })
   })
+
+  it('strips Workspace::v1 so gateway echo matches bare optimistic prompt', () => {
+    // Root cause of double user bubbles: one send → plain live + prefixed
+    // history. Mapping must normalize before identity merge / twin absorb.
+    const rows = hermesHistoryMessagesToActivity({
+      workspaceId: 'ws',
+      agentSessionId: 'sess-1',
+      messages: [
+        {
+          role: 'user',
+          clientId: 'c-opt',
+          content: [{ type: 'text', text: '开始新一轮' }],
+          timestamp: 1_000,
+        },
+        {
+          role: 'user',
+          id: 'msg-u',
+          content: [
+            {
+              type: 'text',
+              text: '[Workspace::v1: /tmp/proj]\n开始新一轮',
+            },
+          ],
+          timestamp: 1_001,
+        },
+      ],
+    })
+    expect(rows.map((row) => row.messageId)).toEqual(['user:c-opt'])
+    expect(rows[0]?.payload.text).toBe('开始新一轮')
+  })
 })
 
 describe('mergeHermesHistoryWithLiveByTurnIdentity', () => {
@@ -499,6 +529,163 @@ describe('mergeHermesHistoryWithLiveByTurnIdentity', () => {
     expect(users.filter((row) => row.payload.text === '开始新一轮')).toHaveLength(
       1,
     )
+  })
+
+  it('stamps history user:<clientSubmitId> onto live by id (no text needed)', () => {
+    const history = hermesHistoryMessagesToActivity({
+      workspaceId: 'ws',
+      agentSessionId: 's',
+      messages: [
+        {
+          id: 'user:c-same',
+          role: 'user',
+          clientSubmitId: 'c-same',
+          content: [
+            {
+              type: 'text',
+              text: '[Workspace::v1: /tmp/proj]\nhistory body only',
+            },
+          ],
+          timestamp: 3,
+        },
+      ],
+    })
+    expect(history[0]?.messageId).toBe('user:c-same')
+    expect(history[0]?.payload.text).toBe('history body only')
+    const live: AgentActivityDurableMessage[] = [
+      {
+        ...base,
+        messageId: 'user:c-same',
+        turnId: 'turn-c-same',
+        role: 'user',
+        kind: 'text',
+        payload: {
+          text: 'live optimistic body',
+          clientSubmitId: 'c-same',
+        },
+        occurredAtUnixMs: 3,
+      },
+    ]
+    const merged = mergeHermesHistoryWithLiveByTurnIdentity({
+      workspaceId: 'ws',
+      agentSessionId: 's',
+      history,
+      live,
+    })
+    // Shared submit/messageId pairs even when bodies differ.
+    expect(merged.map((row) => row.messageId)).toEqual(['user:c-same'])
+  })
+
+  it('pairs Workspace-prefixed gateway history onto bare live user via mapping', () => {
+    // Prove the write/read identity fix: mapping strips the transport
+    // envelope so ordinal/same-prompt pairing stamps one user — not merge
+    // echo-skip as a display patch.
+    const history = hermesHistoryMessagesToActivity({
+      workspaceId: 'ws',
+      agentSessionId: 's',
+      messages: [
+        {
+          id: 'msg-echo',
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: '[Workspace::v1: /tmp/proj]\n开始新一轮',
+            },
+          ],
+          timestamp: 3,
+        },
+        {
+          id: 'msg-a',
+          role: 'assistant',
+          content: [{ type: 'text', text: '好的' }],
+          timestamp: 4,
+        },
+      ],
+    })
+    expect(history[0]?.payload.text).toBe('开始新一轮')
+    const live: AgentActivityDurableMessage[] = [
+      {
+        ...base,
+        messageId: 'user:c-new',
+        turnId: 'turn-c-new',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '开始新一轮', clientSubmitId: 'c-new' },
+        occurredAtUnixMs: 3,
+      },
+    ]
+    const merged = mergeHermesHistoryWithLiveByTurnIdentity({
+      workspaceId: 'ws',
+      agentSessionId: 's',
+      history,
+      live,
+    })
+    const users = merged.filter((row) => row.role === 'user')
+    expect(users.map((row) => row.messageId)).toEqual(['user:c-new'])
+    expect(users).toHaveLength(1)
+  })
+
+  it('does not ordinal-pair two assistant-bearing turns without shared submit', () => {
+    const history: AgentActivityDurableMessage[] = [
+      {
+        ...base,
+        messageId: 'hist-u1',
+        turnId: 'turn-old',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '旧问题' },
+        occurredAtUnixMs: 1_000,
+      },
+      {
+        ...base,
+        messageId: 'assistant:run-old',
+        turnId: 'turn-old',
+        role: 'assistant',
+        kind: 'text',
+        sequence: 2,
+        version: 2,
+        payload: { text: '很长的上一条回复……要我继续钉死吗？' },
+        occurredAtUnixMs: 1_100,
+      },
+    ]
+    const live: AgentActivityDurableMessage[] = [
+      {
+        ...base,
+        messageId: 'user:c-new',
+        turnId: 'turn-c-new',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '现在是哪个模型', clientSubmitId: 'c-new' },
+        occurredAtUnixMs: 2_000,
+      },
+      {
+        ...base,
+        messageId: 'assistant:run-new',
+        turnId: 'turn-c-new',
+        role: 'assistant',
+        kind: 'text',
+        sequence: 2,
+        version: 2,
+        payload: { text: '这次生效了。现在跑的是 DeepSeek-V4-Flash' },
+        occurredAtUnixMs: 2_100,
+      },
+    ]
+    const merged = mergeHermesHistoryWithLiveByTurnIdentity({
+      workspaceId: 'ws',
+      agentSessionId: 's',
+      history,
+      live,
+    })
+    expect(merged.map((row) => row.messageId)).toEqual([
+      'hist-u1',
+      'assistant:run-old',
+      'user:c-new',
+      'assistant:run-new',
+    ])
+    expect(
+      merged.find((row) => row.messageId === 'assistant:run-new')?.payload.text,
+    ).toBe('这次生效了。现在跑的是 DeepSeek-V4-Flash')
   })
 
   it('does not relocate a prior history assistant under a new open user', () => {

@@ -12,6 +12,7 @@ import type {
   AgentActivityMessage,
 } from '@agorax/agent-activity-core'
 import { assistantMessageIdForRun, readDurableMessageId } from './chat-turn-identity'
+import { stripWorkspaceDirective } from './workspace-message-scope'
 import type { ChatMessage } from '@/screens/chat/types'
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -305,6 +306,10 @@ function turnsTemporallyCompatible(
  * Ordinal suffix pairing must not graft a prior history assistant onto a
  * live open turn that only has the new user yet — that relocates the old
  * reply under the follow-up user (the flash/reorder bug).
+ *
+ * When both sides already have assistants, ordinal is unsafe without a shared
+ * user identity (submit id). Length-based stampRow would then overwrite the
+ * live host with the previous turn's longer body.
  */
 function canOrdinalPairTurns(
   historyTurn: HermesActivityTurn,
@@ -316,9 +321,21 @@ function canOrdinalPairTurns(
   if (liveSubmit && histSubmit && liveSubmit !== histSubmit) return false
   const liveText = readString(liveTurn.user?.payload.text).trim()
   const histText = readString(historyTurn.user?.payload.text).trim()
+  const sameOpenUserBySubmit =
+    Boolean(liveSubmit) && Boolean(histSubmit) && liveSubmit === histSubmit
+  const sameOpenUserByText =
+    Boolean(liveText) && Boolean(histText) && liveText === histText
+  // Tutti primary: shared clientSubmitId. No-id degeneration: gateway msg-*
+  // without platform_message_id may still echo the bare prompt.
   const sameOpenUser =
-    (Boolean(liveSubmit) && Boolean(histSubmit) && liveSubmit === histSubmit) ||
-    (Boolean(liveText) && liveText === histText)
+    sameOpenUserBySubmit ||
+    (Boolean(liveSubmit) && !histSubmit && sameOpenUserByText) ||
+    (!liveSubmit && !histSubmit && sameOpenUserByText)
+  // Live already has a submit id: ordinal only for that turn's echo (by
+  // submit or bare-prompt), never for a different hist turn by position.
+  if (liveSubmit) {
+    return sameOpenUser
+  }
   const liveHasAssistantRest = liveTurn.rest.some(
     (row) => row.role === 'assistant',
   )
@@ -326,8 +343,11 @@ function canOrdinalPairTurns(
     (row) => row.role === 'assistant',
   )
   // Refuse grafting a *different* turn's assistant under a new live user.
-  // Same-prompt gateway echoes (msg-* + body) may still pair onto the open user.
   if (histHasAssistantRest && !liveHasAssistantRest && !sameOpenUser) {
+    return false
+  }
+  // Both already have assistants: only pair on shared bare-prompt echo.
+  if (histHasAssistantRest && liveHasAssistantRest && !sameOpenUser) {
     return false
   }
   return true
@@ -422,6 +442,7 @@ function isUserOnlyEchoOfLiveTurn(
 ): boolean {
   if (!historyTurn.user || historyTurn.rest.length > 0) return false
   const histUser = historyTurn.user
+  // History mapping already strips Workspace::v1; compare bare prompt text.
   const histText = readString(histUser.payload.text).trim()
   const histSubmit = readString(histUser.payload.clientSubmitId).trim()
   for (const liveTurn of liveTurns) {
@@ -481,11 +502,17 @@ export function hermesHistoryMessagesToActivity(input: {
     if (role === 'user') {
       const messageId = durableUserId(message, agentSessionId, index)
       if (seenIds.has(messageId)) continue
-      const text =
+      // send-stream injects `[Workspace::v1: …]` for the model; gateway
+      // persists that envelope. Optimistic UI keeps the bare prompt. If we
+      // leave the prefix on history rows, one send becomes two user identities
+      // (plain live vs prefixed msg-*) and the list shows both. Strip at the
+      // history→activity boundary — transport metadata is not the user turn.
+      const text = stripWorkspaceDirective(
         parts
           .map((part) => (part.type === 'text' ? readString(part.text) : ''))
           .join('')
-          .trim() || readString(message.text).trim()
+          .trim() || readString(message.text).trim(),
+      ).trim()
       const clientSubmitId = readClientSubmitId(message)
       const isWeakUserId =
         isWeakHermesGatewayMessageId(messageId) ||

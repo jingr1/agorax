@@ -49,4 +49,33 @@ describe('toChatMessage thinking normalization', () => {
       { type: 'text', text: '<think>not thinking</think>hi' },
     ])
   })
+
+  it('maps platform_message_id to durable user:<clientSubmitId>', () => {
+    const msg = toChatMessage({
+      id: 42,
+      session_id: 'sess-1',
+      role: 'user',
+      content: '现在是哪个模型',
+      timestamp: 1700000000,
+      platform_message_id: 'c-submit-abc',
+    })
+
+    expect(msg.id).toBe('user:c-submit-abc')
+    expect(msg.clientSubmitId).toBe('c-submit-abc')
+    expect(msg.clientId).toBe('c-submit-abc')
+  })
+
+  it('does not treat assistant message_id as clientSubmitId', () => {
+    const msg = toChatMessage({
+      id: 7,
+      session_id: 'sess-1',
+      role: 'assistant',
+      content: 'ok',
+      timestamp: 1700000000,
+      message_id: 'msg_should_not_become_submit',
+    })
+
+    expect(msg.id).toBe('msg-7')
+    expect(msg.clientSubmitId).toBeUndefined()
+  })
 })

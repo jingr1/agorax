@@ -293,7 +293,8 @@ if [[ -f "$HERMES_ENV_PATH" ]]; then
 fi
 
 cyan "→ Installing npm deps (pnpm install)…"
-pnpm_cmd install --silent
+# Electron binary CDN backup (npmmirror) when ELECTRON_MIRROR is unset — see scripts/pnpm-install.sh
+bash "$INSTALL_DIR/scripts/pnpm-install.sh" --silent
 green "  deps installed ✓"
 
 # ─── seed Hermes skills (Conductor needs workspace-dispatch) ─────────────

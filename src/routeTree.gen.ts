@@ -223,6 +223,7 @@ import { Route as ApiAgentRuntimeEnableRouteImport } from './routes/api/agent-ru
 import { Route as ApiMissionsMissionIdIndexRouteImport } from './routes/api/missions/$missionId/index'
 import { Route as ApiSessionsSessionKeyTruncateRouteImport } from './routes/api/sessions/$sessionKey.truncate'
 import { Route as ApiSessionsSessionKeyStatusRouteImport } from './routes/api/sessions/$sessionKey.status'
+import { Route as ApiSessionsSessionKeyModelRouteImport } from './routes/api/sessions/$sessionKey.model'
 import { Route as ApiSessionsSessionKeyCompressRouteImport } from './routes/api/sessions/$sessionKey.compress'
 import { Route as ApiSessionsSessionKeyActiveRunRouteImport } from './routes/api/sessions/$sessionKey.active-run'
 import { Route as ApiRunsRunIdStopRouteImport } from './routes/api/runs/$runId.stop'
@@ -1355,6 +1356,12 @@ const ApiSessionsSessionKeyStatusRoute =
     path: '/$sessionKey/status',
     getParentRoute: () => ApiSessionsRoute,
   } as any)
+const ApiSessionsSessionKeyModelRoute =
+  ApiSessionsSessionKeyModelRouteImport.update({
+    id: '/$sessionKey/model',
+    path: '/$sessionKey/model',
+    getParentRoute: () => ApiSessionsRoute,
+  } as any)
 const ApiSessionsSessionKeyCompressRoute =
   ApiSessionsSessionKeyCompressRouteImport.update({
     id: '/$sessionKey/compress',
@@ -1877,6 +1884,7 @@ export interface FileRoutesByFullPath {
   '/api/runs/$runId/stop': typeof ApiRunsRunIdStopRoute
   '/api/sessions/$sessionKey/active-run': typeof ApiSessionsSessionKeyActiveRunRoute
   '/api/sessions/$sessionKey/compress': typeof ApiSessionsSessionKeyCompressRoute
+  '/api/sessions/$sessionKey/model': typeof ApiSessionsSessionKeyModelRoute
   '/api/sessions/$sessionKey/status': typeof ApiSessionsSessionKeyStatusRoute
   '/api/sessions/$sessionKey/truncate': typeof ApiSessionsSessionKeyTruncateRoute
   '/api/missions/$missionId/': typeof ApiMissionsMissionIdIndexRoute
@@ -2139,6 +2147,7 @@ export interface FileRoutesByTo {
   '/api/runs/$runId/stop': typeof ApiRunsRunIdStopRoute
   '/api/sessions/$sessionKey/active-run': typeof ApiSessionsSessionKeyActiveRunRoute
   '/api/sessions/$sessionKey/compress': typeof ApiSessionsSessionKeyCompressRoute
+  '/api/sessions/$sessionKey/model': typeof ApiSessionsSessionKeyModelRoute
   '/api/sessions/$sessionKey/status': typeof ApiSessionsSessionKeyStatusRoute
   '/api/sessions/$sessionKey/truncate': typeof ApiSessionsSessionKeyTruncateRoute
   '/api/missions/$missionId': typeof ApiMissionsMissionIdIndexRoute
@@ -2405,6 +2414,7 @@ export interface FileRoutesById {
   '/api/runs/$runId/stop': typeof ApiRunsRunIdStopRoute
   '/api/sessions/$sessionKey/active-run': typeof ApiSessionsSessionKeyActiveRunRoute
   '/api/sessions/$sessionKey/compress': typeof ApiSessionsSessionKeyCompressRoute
+  '/api/sessions/$sessionKey/model': typeof ApiSessionsSessionKeyModelRoute
   '/api/sessions/$sessionKey/status': typeof ApiSessionsSessionKeyStatusRoute
   '/api/sessions/$sessionKey/truncate': typeof ApiSessionsSessionKeyTruncateRoute
   '/api/missions/$missionId/': typeof ApiMissionsMissionIdIndexRoute
@@ -2672,6 +2682,7 @@ export interface FileRouteTypes {
     | '/api/runs/$runId/stop'
     | '/api/sessions/$sessionKey/active-run'
     | '/api/sessions/$sessionKey/compress'
+    | '/api/sessions/$sessionKey/model'
     | '/api/sessions/$sessionKey/status'
     | '/api/sessions/$sessionKey/truncate'
     | '/api/missions/$missionId/'
@@ -2934,6 +2945,7 @@ export interface FileRouteTypes {
     | '/api/runs/$runId/stop'
     | '/api/sessions/$sessionKey/active-run'
     | '/api/sessions/$sessionKey/compress'
+    | '/api/sessions/$sessionKey/model'
     | '/api/sessions/$sessionKey/status'
     | '/api/sessions/$sessionKey/truncate'
     | '/api/missions/$missionId'
@@ -3199,6 +3211,7 @@ export interface FileRouteTypes {
     | '/api/runs/$runId/stop'
     | '/api/sessions/$sessionKey/active-run'
     | '/api/sessions/$sessionKey/compress'
+    | '/api/sessions/$sessionKey/model'
     | '/api/sessions/$sessionKey/status'
     | '/api/sessions/$sessionKey/truncate'
     | '/api/missions/$missionId/'
@@ -4928,6 +4941,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSessionsSessionKeyStatusRouteImport
       parentRoute: typeof ApiSessionsRoute
     }
+    '/api/sessions/$sessionKey/model': {
+      id: '/api/sessions/$sessionKey/model'
+      path: '/$sessionKey/model'
+      fullPath: '/api/sessions/$sessionKey/model'
+      preLoaderRoute: typeof ApiSessionsSessionKeyModelRouteImport
+      parentRoute: typeof ApiSessionsRoute
+    }
     '/api/sessions/$sessionKey/compress': {
       id: '/api/sessions/$sessionKey/compress'
       path: '/$sessionKey/compress'
@@ -5554,6 +5574,7 @@ interface ApiSessionsRouteChildren {
   ApiSessionsSendRoute: typeof ApiSessionsSendRoute
   ApiSessionsSessionKeyActiveRunRoute: typeof ApiSessionsSessionKeyActiveRunRoute
   ApiSessionsSessionKeyCompressRoute: typeof ApiSessionsSessionKeyCompressRoute
+  ApiSessionsSessionKeyModelRoute: typeof ApiSessionsSessionKeyModelRoute
   ApiSessionsSessionKeyStatusRoute: typeof ApiSessionsSessionKeyStatusRoute
   ApiSessionsSessionKeyTruncateRoute: typeof ApiSessionsSessionKeyTruncateRoute
 }
@@ -5563,6 +5584,7 @@ const ApiSessionsRouteChildren: ApiSessionsRouteChildren = {
   ApiSessionsSendRoute: ApiSessionsSendRoute,
   ApiSessionsSessionKeyActiveRunRoute: ApiSessionsSessionKeyActiveRunRoute,
   ApiSessionsSessionKeyCompressRoute: ApiSessionsSessionKeyCompressRoute,
+  ApiSessionsSessionKeyModelRoute: ApiSessionsSessionKeyModelRoute,
   ApiSessionsSessionKeyStatusRoute: ApiSessionsSessionKeyStatusRoute,
   ApiSessionsSessionKeyTruncateRoute: ApiSessionsSessionKeyTruncateRoute,
 }

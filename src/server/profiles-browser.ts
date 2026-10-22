@@ -641,6 +641,8 @@ export function getMessagesForProfile(
   tool_calls?: unknown
   tool_call_id?: string
   tool_name?: string
+  /** Agorax clientSubmitId stamped at send (Hermes platform_message_id). */
+  platform_message_id?: string
 }> | null {
   const sid = sessionId.trim()
   if (!sid || sid === 'new' || sid === 'main') return null
@@ -649,7 +651,8 @@ export function getMessagesForProfile(
 
   try {
     const stmt = db.prepare(
-      `SELECT id, session_id, role, content, tool_calls, tool_call_id, tool_name, timestamp
+      `SELECT id, session_id, role, content, tool_calls, tool_call_id, tool_name,
+              timestamp, platform_message_id
        FROM messages
        WHERE session_id = ?
        ORDER BY timestamp DESC, id DESC
@@ -670,6 +673,10 @@ export function getMessagesForProfile(
       tool_call_id:
         typeof r.tool_call_id === 'string' ? r.tool_call_id : undefined,
       tool_name: typeof r.tool_name === 'string' ? r.tool_name : undefined,
+      platform_message_id:
+        typeof r.platform_message_id === 'string' && r.platform_message_id.trim()
+          ? r.platform_message_id.trim()
+          : undefined,
     }))
   } catch {
     return null

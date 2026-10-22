@@ -97,10 +97,16 @@ export function normalizeContextUsageOverride(
  */
 function ContextIndicatorComponent({
   sessionId,
+  model,
+  profile,
   refreshToken,
   usage,
 }: {
   sessionId?: string
+  /** Composer-selected model — included in poll query so switches refresh the window. */
+  model?: string
+  /** Hermes agent/profile id — compression.threshold is per-profile. */
+  profile?: string
   refreshToken?: string | number
   usage?: ContextUsageOverride | null
 }) {
@@ -111,26 +117,30 @@ function ContextIndicatorComponent({
   )
   const [polledCtx, setPolledCtx] = useState<ContextData>(EMPTY)
   const [tooltipOpen, setTooltipOpen] = useState(false)
+  const modelKey = (model || '').trim()
+  const profileKey = (profile || '').trim()
 
   const refresh = useCallback(async () => {
     if (external) return
     try {
-      const params = sessionId
-        ? `?sessionId=${encodeURIComponent(sessionId)}`
-        : ''
-      const res = await fetch(`/api/context-usage${params}`)
+      const params = new URLSearchParams()
+      if (sessionId) params.set('sessionId', sessionId)
+      if (modelKey) params.set('model', modelKey)
+      if (profileKey) params.set('profile', profileKey)
+      const qs = params.toString()
+      const res = await fetch(`/api/context-usage${qs ? `?${qs}` : ''}`)
       if (!res.ok) return
       const data = await res.json()
       if (!data.ok) return
 
       const maxTokens = Number(data.maxTokens) || 0
-      // Server already applies compression.threshold from Hermes config; 0.5
-      // matches the Hermes default only as a last-resort client fallback.
+      // Prefer server thresholdTokens (profile compression.threshold). Only
+      // fall back to 50% when the server omitted it entirely.
       const thresholdTokens =
         Number(data.thresholdTokens) ||
         (maxTokens > 0 ? Math.floor(maxTokens * 0.5) : 0)
 
-      setPolledCtx({
+      const next: ContextData = {
         contextPercent: Number(data.contextPercent) || 0,
         model: typeof data.model === 'string' ? data.model : '',
         maxTokens,
@@ -143,11 +153,43 @@ function ContextIndicatorComponent({
           Number(data.cacheWriteTokens) || 0,
           data.cacheHitPercent,
         ),
+      }
+
+      // Tutti-style retain: brief gaps keep the last window only for the same
+      // model. Model switches must not keep the previous denominator.
+      setPolledCtx((prev) => {
+        if (next.maxTokens > 0) return next
+        const sameModel =
+          !modelKey ||
+          !prev.model ||
+          prev.model.toLowerCase() === modelKey.toLowerCase() ||
+          next.model.toLowerCase() === prev.model.toLowerCase()
+        if (prev.maxTokens > 0 && sameModel) {
+          return {
+            ...next,
+            maxTokens: prev.maxTokens,
+            model: next.model || prev.model,
+            thresholdTokens:
+              next.thresholdTokens > 0
+                ? next.thresholdTokens
+                : prev.thresholdTokens,
+            contextPercent:
+              next.usedTokens > 0 && prev.maxTokens > 0
+                ? Math.round((next.usedTokens / prev.maxTokens) * 1000) / 10
+                : next.contextPercent || prev.contextPercent,
+          }
+        }
+        return next
       })
     } catch {
-      /* ignore */
+      /* ignore — keep last good window for same model */
     }
-  }, [external, sessionId])
+  }, [external, modelKey, profileKey, sessionId])
+
+  useEffect(() => {
+    if (external) return
+    setPolledCtx(EMPTY)
+  }, [external, modelKey, profileKey, sessionId])
 
   useEffect(() => {
     if (external) return

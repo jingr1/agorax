@@ -1381,11 +1381,9 @@ function ChatComposerComponent({
     useCustomModelsEndpoint,
   ])
 
-  // Model switching is now per-session via the persistent store above.
-  // Previously this issued a PATCH /api/hermes-proxy/api/config to write to
-  // ~/.hermes/config.yaml — that endpoint 404s and would clobber the global
-  // default for every channel anyway. The mutation block + retry callback +
-  // dead onError handler were removed alongside it.
+  // Model switching is per-session: local store for the next send, plus a
+  // Hermes session lock when we already have a gateway session id. Do not
+  // PATCH profile config.yaml (that would clobber every channel).
 
   const handleModelSelect = useCallback(
     function handleModelSelect(nextModel: string, provider?: string) {
@@ -1407,18 +1405,48 @@ function ChatComposerComponent({
         modelKeyMode === 'bare'
           ? model
           : getResolvedModelKey(model, provider)
-      // Per-session, browser-local persistence. No global config write —
-      // picking a model here only affects this chat. The actual model is
-      // passed on each request via the chat-completion `model` field.
+      // Browser-local pick for this chat. Hermes send-stream splits
+      // provider/model and locks the gateway session so the turn matches.
       setPersistedSessionModel(modelSessionKey, resolved)
       setIsModelMenuOpen(false)
+
+      // Managed runtimes apply via updateSessionSettings on submit.
+      if (modelKeyMode === 'bare') return
+      const gatewaySessionId =
+        typeof sessionKey === 'string' ? sessionKey.trim() : ''
+      if (
+        !gatewaySessionId ||
+        gatewaySessionId === 'new' ||
+        gatewaySessionId.startsWith('new:')
+      ) {
+        return
+      }
+      const profile =
+        skillsAgentId?.trim() ||
+        workspaceProfileName ||
+        activeProfileName ||
+        ''
+      void fetch(`/api/sessions/${encodeURIComponent(gatewaySessionId)}/model`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: resolved,
+          profileName: profile || undefined,
+        }),
+      }).catch(() => {
+        /* send-stream still carries per-turn model+provider */
+      })
     },
     [
+      activeProfileName,
       gatewayModeQuery.data,
       modelKeyMode,
       modelSessionKey,
+      sessionKey,
       setPersistedSessionModel,
+      skillsAgentId,
       useCustomModelsEndpoint,
+      workspaceProfileName,
       zeroForkModelInfoFlags,
     ],
   )
@@ -1479,6 +1507,11 @@ function ChatComposerComponent({
     'Workspace'
 
   const currentModel = currentModelQuery.data ?? ''
+  const contextProfile =
+    skillsAgentId?.trim() ||
+    workspaceProfileName ||
+    activeProfileName ||
+    ''
 
   // Auto-switch to hermes-agent model on mount (Agorax uses the Hermes Agent runtime)
   // Removed: auto-switch to hermes-agent. The workspace respects the
@@ -2955,7 +2988,15 @@ function ChatComposerComponent({
               <div className="relative z-[2] flex shrink-0 items-center gap-1">
                 <ContextIndicator
                   sessionId={sessionKey}
-                  refreshToken={contextRefreshToken}
+                  model={
+                    persistedSessionModel ||
+                    currentModel ||
+                    catalogCurrentModel ||
+                    configuredModel ||
+                    undefined
+                  }
+                  profile={contextProfile || undefined}
+                  refreshToken={`${contextRefreshToken ?? ''}:${persistedSessionModel || currentModel || catalogCurrentModel || ''}:${contextProfile}`}
                   usage={contextUsage}
                 />
                 {showMicButton ? (
@@ -3889,7 +3930,15 @@ function ChatComposerComponent({
               <div className="ml-1 flex shrink-0 items-center gap-0.5 md:gap-1">
                 <ContextIndicator
                   sessionId={sessionKey}
-                  refreshToken={contextRefreshToken}
+                  model={
+                    persistedSessionModel ||
+                    currentModel ||
+                    catalogCurrentModel ||
+                    configuredModel ||
+                    undefined
+                  }
+                  profile={contextProfile || undefined}
+                  refreshToken={`${contextRefreshToken ?? ''}:${persistedSessionModel || currentModel || catalogCurrentModel || ''}:${contextProfile}`}
                   usage={contextUsage}
                 />
                 {showMicButton ? (

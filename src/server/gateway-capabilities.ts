@@ -732,15 +732,38 @@ async function probeEnhancedChatStream(): Promise<boolean> {
       },
     )
     // Vanilla hermes-agent has no such endpoint — dashboard layer 404s,
-    // gateway 404s, anything in between 404s. Enhanced fork accepts POST
-    // and returns either a 4xx structured error (validation) or starts a
-    // stream; either way the path is registered.
-    if (res.status === 404 || res.status === 403) return false
+    // gateway 404s, anything in between 404s. Current Hermes api_server
+    // registers POST /api/sessions/{id}/chat/stream and returns a structured
+    // session_not_found 404 for the fake probe id — that is NOT "path missing".
+    // Misreading it as absent forced getChatMode() → portable, so Workspace
+    // chat never consumed browser_model_lock (only session chat does).
+    if (res.status === 403) return false
+    if (res.status === 404) {
+      const text = await res.text().catch(() => '')
+      try {
+        const body = JSON.parse(text) as {
+          error?: { code?: string; message?: string }
+          code?: string
+        }
+        const code = body.error?.code || body.code || ''
+        const message = body.error?.message || ''
+        if (
+          code === 'session_not_found' ||
+          /session not found/i.test(message)
+        ) {
+          return true
+        }
+      } catch {
+        if (/session not found/i.test(text)) return true
+      }
+      return false
+    }
     // 405 = the path exists but POST is wrong. That's still vanilla — no
     // enhanced fork would 405 a POST to its own chat/stream endpoint.
     if (res.status === 405) return false
     // 401 means auth gate is wired; treat as available so token-gated
     // setups don't get downgraded by a missing token at probe time.
+    // 400/422 = route accepted the POST and failed validation (empty body).
     return true
   } catch {
     return false
@@ -1374,12 +1397,22 @@ export function getGatewayMode(): GatewayMode {
 
 /**
  * UI-facing chat transport mode:
- * - enhanced-claude: legacy fork session streaming API available
+ * - enhanced-claude: session `/chat/stream` (consumes browser_model_lock)
  * - portable: OpenAI-compatible /v1/chat/completions transport
  * - disconnected: no usable chat backend
+ *
+ * Zero-fork (sessions + chatCompletions) must use session chat — that is the
+ * only Hermes path that reads a confirmed browser_model_lock. Preferring
+ * portable whenever `enhancedChat` probe lagged left composer locks written
+ * but turns still on config.yaml's top-level model. Aligns with
+ * `useChatMode` (sessions → enhanced-claude).
  */
 export function getChatMode(): ChatMode {
   if (capabilities.enhancedChat) return 'enhanced-claude'
+  // zero-fork: sessions API implies chat/stream on current Hermes api_server
+  if (capabilities.sessions && capabilities.chatCompletions) {
+    return 'enhanced-claude'
+  }
   if (capabilities.chatCompletions || capabilities.health) return 'portable'
   return 'disconnected'
 }

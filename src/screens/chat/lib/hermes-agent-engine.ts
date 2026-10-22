@@ -44,6 +44,7 @@ import {
 } from './activity-message-mapper'
 import {
   assistantPlainTextFromHistoryMessage,
+  baselineAfterOpenTurnUser,
   hermesAssistantTextStampDelta,
   hermesSettledTurnUpdate,
   pickAuthoritativeAssistantText,
@@ -634,10 +635,22 @@ export function createHermesCommandPort(
                       text?: unknown
                     }>
                   }
-                  const authText = pickAuthoritativeAssistantText(
-                    historyJson.messages ?? [],
-                    0,
-                  )
+                  const historyMessages = historyJson.messages ?? []
+                  // Only assistants after *this* turn's user. If history has not
+                  // persisted the open user yet, skip stamp — falling back to
+                  // "last user in page" re-hosted the previous reply under the
+                  // new prompt (length-wins made it stick).
+                  const baseline = baselineAfterOpenTurnUser(historyMessages, {
+                    clientSubmitId,
+                    userText: message,
+                  })
+                  const authText =
+                    baseline === null
+                      ? ''
+                      : pickAuthoritativeAssistantText(
+                          historyMessages,
+                          baseline,
+                        )
                   if (
                     shouldStampAssistantText(adapter.lastText, authText) &&
                     adapter.assistantMessageId

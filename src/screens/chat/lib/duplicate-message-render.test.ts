@@ -147,4 +147,67 @@ describe('no dual assistant id families', () => {
     expect(userIds).toEqual(['user:c-opt'])
     engine.dispose()
   })
+
+  it('busy history folds Workspace-prefixed gateway user onto bare optimistic', () => {
+    const workspaceId = 'ws-dup-ws'
+    const agentSessionId = 'sess-dup-ws'
+    const commandPort = createHermesCommandPort({
+      workspaceId,
+      getMapping: async () => null,
+      putMapping: async (m) => m,
+      onActivityEvent: () => undefined,
+    })
+    const engine = createHermesAgentEngine({ workspaceId, commandPort })
+    hydrateHermesAgentEngine(
+      engine,
+      createHermesSessionSkeleton({ workspaceId, agentSessionId }),
+    )
+    ingestHermesUserPromptMessage({
+      engine,
+      workspaceId,
+      agentSessionId,
+      clientSubmitId: 'c-ws',
+      text: '开始新一轮',
+      occurredAtUnixMs: 3_000,
+    })
+
+    mergeHermesHistoryWhileBusy({
+      engine,
+      workspaceId,
+      agentSessionId,
+      historyMessages: [
+        {
+          id: 'msg-u',
+          messageId: 'msg-u',
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: '[Workspace::v1: /home/ramon/proj]\n开始新一轮',
+            },
+          ],
+          timestamp: 3_001,
+        },
+        {
+          id: 'msg-a',
+          messageId: 'msg-a',
+          role: 'assistant',
+          content: [{ type: 'text', text: '收到' }],
+          timestamp: 3_002,
+        },
+      ],
+    })
+
+    const chat = selectHermesChatState(engine.getSnapshot(), agentSessionId, {
+      isSubmitting: true,
+    })
+    const userIds = chat.messages
+      .filter((m) => m.role === 'user')
+      .map((m) => m.id || m.messageId)
+    expect(userIds).toEqual(['user:c-ws'])
+    expect(
+      chat.messages.find((m) => m.role === 'user')?.content?.[0],
+    ).toMatchObject({ text: '开始新一轮' })
+    engine.dispose()
+  })
 })

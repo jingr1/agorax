@@ -1,6 +1,13 @@
 packages:
   - 'packages/*'
 
+# pnpm 12: settings belong here (not .npmrc — that is auth/registry only).
+# Default verifyDepsBeforeRun is "install"; that pre-script install inherits no
+# ELECTRON_MIRROR, so Electron postinstall hits GitHub and stalls. Disable it;
+# `pnpm dev` / `pnpm start` use scripts/dev-stack.sh which exports the mirror
+# and installs when the Electron binary is missing.
+verifyDepsBeforeRun: false
+
 # pnpm 12: packages allowed to run lifecycle scripts (native addons).
 # Sole allowlist — do not duplicate in package.json.
 allowBuilds:

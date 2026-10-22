@@ -54,11 +54,12 @@ AgentSessionEngine
 
 | 角色 | id |
 | --- | --- |
+| User（乐观 + 权威） | `user:<clientSubmitId>` — 发送时种壳；`send-stream` 把同一 nonce 作为 `client_submit_id` 交给 gateway，落库为 `platform_message_id`；history 回读映射回同一 `user:<id>`（Tutti 同源：按 id stamp，不靠正文） |
 | Assistant 正文 | `assistant:<runId>`（首条 durable 行由 daemon/SSE 写出；发送时不种本地 pending assistant） |
 | Reasoning | `assistant:<runId>:thinking` |
 | Tool | `toolcall:<toolCallId>` |
 
-首包分配，流式 / 落库 / 历史同一行。禁止结束后换 ID 换皮。
+首包分配，流式 / 落库 / 历史同一行。禁止结束后换 ID 换皮。History↔live merge 主路径只认 `messageId` / `clientSubmitId` / `runId`；正文与 ordinal 仅作无-id 遗留退化。
 
 ### 2.2 Adapter 职责
 

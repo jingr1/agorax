@@ -3,10 +3,27 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../../server/gateway-capabilities', () => ({
   BEARER_TOKEN: '',
   HERMES_API: 'http://127.0.0.1:8642',
+  CLAUDE_DASHBOARD_URL: 'http://127.0.0.1:9119',
   dashboardFetch: vi.fn(),
   ensureGatewayProbed: vi.fn(async () => ({ dashboard: { available: false } })),
   getCapabilities: vi.fn(() => ({ dashboard: { available: false } })),
   shouldUseDashboard: vi.fn(() => false),
+  // resolveChatGateway() calls these; missing mocks throw before fetch.
+  getGatewayBearerToken: vi.fn(() => ''),
+  readProfileApiServerKey: vi.fn(() => ''),
+}))
+
+vi.mock('../../server/gateway-ports', () => ({
+  isGatewayPoolEnabled: vi.fn(() => false),
+  getProfileGatewayUrl: vi.fn(() => 'http://127.0.0.1:8642'),
+}))
+
+vi.mock('../../server/hermes-config-store', () => ({
+  resolveHermesConfigPaths: vi.fn(() => ({
+    configPath: '/tmp/agorax-test-hermes-config.yaml',
+    envPath: '/tmp/agorax-test-hermes.env',
+  })),
+  readHermesConfigFiles: vi.fn(() => ({ config: null, env: {} })),
 }))
 
 vi.mock('../../server/hermes-api', () => ({
@@ -33,13 +50,16 @@ import {
   getLocalMessages,
   getLocalSession,
 } from '../../server/local-session-store'
+import { clearModelsDevContextCache } from '../../server/hermes-model-context'
 import {
+  clearSessionContextWindowCache,
   computeThresholdTokens,
   estimateContextTokensFromCacheRead,
   estimateContextTokensFromMessages,
   estimateContextTokensFromSessionUsage,
   parseCompressionSettings,
   readContextUsage,
+  rememberSessionContextWindow,
   resolvePreferredContextWindow,
 } from '../../server/context-usage'
 
@@ -53,6 +73,8 @@ function jsonResponse(body: unknown, status = 200) {
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.clearAllMocks()
+  clearSessionContextWindowCache()
+  clearModelsDevContextCache()
   // clearAllMocks does not drop mockImplementation — reset so a prior test's
   // dashboardFetch stub cannot leak into fetch-based cases.
   vi.mocked(dashboardFetch).mockReset()
@@ -591,12 +613,167 @@ describe('context usage estimation', () => {
 })
 
 describe('context window + compression threshold helpers', () => {
-  it('prefers gateway effective length over the static model table', () => {
-    expect(resolvePreferredContextWindow('gpt-5.4', 512000)).toBe(512000)
-    expect(resolvePreferredContextWindow('Kimi-K3', 1_048_576)).toBe(1_048_576)
-    expect(resolvePreferredContextWindow('gpt-5.4', undefined, 272000)).toBe(
+  it('prefers provider/session length, then session cache, then metadata backup', () => {
+    // session report wins over backup
+    expect(resolvePreferredContextWindow('gpt-5.4', 512000, 272000)).toBe(
       272000,
     )
+    // session cache wins over backup
+    expect(
+      resolvePreferredContextWindow('gpt-5.4', 512000, undefined, 400000),
+    ).toBe(400000)
+    // backup only
+    expect(resolvePreferredContextWindow('gpt-5.4', 512000)).toBe(512000)
+    // Unknown → 0 (ContextIndicator hides)
+    expect(resolvePreferredContextWindow('DeepSeek-V4-Flash')).toBe(0)
+  })
+
+  it('resolves composer-selected model via Hermes metadata when gateway has no window', async () => {
+    vi.mocked(getLocalSession).mockReturnValue(null as any)
+    vi.mocked(getLocalMessages).mockReturnValue([] as any)
+    vi.mocked(shouldUseDashboard).mockReturnValue(false)
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('127.0.0.1:8642') && url.includes('/api/model/info')) {
+        return new Response('not found', { status: 404 })
+      }
+      if (url.includes('127.0.0.1:9119') && url.includes('/api/model/info')) {
+        // Profile default — not the composer-selected model.
+        return jsonResponse({
+          model: 'DeepSeek-V4-Pro',
+          effective_context_length: 1_000_000,
+        })
+      }
+      if (url.includes('/api/config') || url.includes('/runtime')) {
+        return new Response('not found', { status: 404 })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await readContextUsage('new', {
+      model: 'Kimi-K2.7-Code',
+    })
+    expect(snapshot.model).toBe('Kimi-K2.7-Code')
+    // models.dev disk cache (Hermes) — not the Pro default from :9119
+    expect(snapshot.maxTokens).toBe(262_144)
+  })
+
+  it('hides the meter when gateway and dashboard model/info are both unavailable', async () => {
+    vi.mocked(getLocalSession).mockReturnValue(null as any)
+    vi.mocked(getLocalMessages).mockReturnValue([] as any)
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/runtime')) {
+        return new Response('gateway down', { status: 502 })
+      }
+      if (url.includes('/api/model/info') || url.includes('/api/config')) {
+        return new Response('not found', { status: 404 })
+      }
+      if (url.includes('/api/sessions/sess-flash')) {
+        return jsonResponse({
+          session: {
+            id: 'sess-flash',
+            model: 'DeepSeek-V4-Flash',
+            message_count: 2,
+            api_call_count: 0,
+            input_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+          },
+        })
+      }
+      if (url.includes('/messages')) {
+        return jsonResponse({
+          items: [
+            { role: 'user', content: 'hi' },
+            { role: 'assistant', content: 'hello' },
+          ],
+        })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await readContextUsage('sess-flash')
+    expect(snapshot.model).toBe('DeepSeek-V4-Flash')
+    expect(snapshot.maxTokens).toBe(0)
+  })
+
+  it('reads context length from dashboard /api/model/info when gateway api_server 404s', async () => {
+    // Real Hermes: model/info lives on :9119 web_server, not gateway :8642.
+    vi.mocked(getLocalSession).mockReturnValue(null as any)
+    vi.mocked(getLocalMessages).mockReturnValue([] as any)
+    vi.mocked(shouldUseDashboard).mockReturnValue(false)
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('127.0.0.1:8642') && url.includes('/api/model/info')) {
+        return new Response('not found', { status: 404 })
+      }
+      if (url.includes('127.0.0.1:9119') && url.includes('/api/model/info')) {
+        return jsonResponse({
+          model: 'DeepSeek-V4-Pro',
+          effective_context_length: 1_000_000,
+          auto_context_length: 1_000_000,
+        })
+      }
+      if (url.includes('/api/config')) {
+        return new Response('not found', { status: 404 })
+      }
+      if (url.includes('/runtime')) {
+        return new Response('not found', { status: 404 })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await readContextUsage('new')
+    expect(snapshot).toMatchObject({
+      ok: true,
+      model: 'DeepSeek-V4-Pro',
+      maxTokens: 1_000_000,
+    })
+  })
+
+  it('reuses the last provider-reported window for the same session when gateway length is missing', async () => {
+    rememberSessionContextWindow('sess-cached', 262_144, 'Kimi-K2.7-Code')
+    vi.mocked(getLocalSession).mockReturnValue(null as any)
+    vi.mocked(getLocalMessages).mockReturnValue([] as any)
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/runtime')) {
+        return new Response('gateway down', { status: 502 })
+      }
+      if (url.includes('/api/model/info') || url.includes('/api/config')) {
+        return new Response('gateway down', { status: 502 })
+      }
+      if (url.includes('/api/sessions/sess-cached')) {
+        return jsonResponse({
+          session: {
+            id: 'sess-cached',
+            model: 'Kimi-K2.7-Code',
+            message_count: 1,
+            api_call_count: 0,
+            input_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+          },
+        })
+      }
+      if (url.includes('/messages')) {
+        return jsonResponse({ items: [{ role: 'user', content: 'hi' }] })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snapshot = await readContextUsage('sess-cached')
+    expect(snapshot.maxTokens).toBe(262_144)
+    expect(snapshot.model).toBe('Kimi-K2.7-Code')
   })
 
   it('parses compression.threshold from Hermes config and matches agent math', () => {
@@ -610,5 +787,60 @@ describe('context window + compression threshold helpers', () => {
     expect(computeThresholdTokens(1_048_576, undefined, 0.5)).toBe(524288)
     expect(computeThresholdTokens(200000, undefined, 0.5, 80_000)).toBe(80_000)
     expect(computeThresholdTokens(200000, 150000, 0.5)).toBe(150000)
+  })
+
+  it('reads compression.threshold from the named agent profile, not root ~/.hermes', async () => {
+    const { readHermesConfigFiles, resolveHermesConfigPaths } = await import(
+      '../../server/hermes-config-store'
+    )
+    vi.mocked(resolveHermesConfigPaths).mockImplementation((profile?: string) => ({
+      hermesHome:
+        profile === 'developer'
+          ? '/tmp/agorax-test-hermes-developer'
+          : '/tmp/agorax-test-hermes-root',
+      configPath:
+        profile === 'developer'
+          ? '/tmp/agorax-test-hermes-developer/config.yaml'
+          : '/tmp/agorax-test-hermes-root/config.yaml',
+      envPath: '/tmp/agorax-test-hermes.env',
+      authProfilesPath: '/tmp/agorax-test-auth.json',
+    }))
+    vi.mocked(readHermesConfigFiles).mockImplementation((paths: any) => {
+      if (String(paths?.configPath || '').includes('developer')) {
+        return {
+          config: { compression: { threshold: 0.7 } },
+          env: {},
+        } as any
+      }
+      return {
+        config: { compression: { threshold: 0.5 } },
+        env: {},
+      } as any
+    })
+
+    vi.mocked(getLocalSession).mockReturnValue(null as any)
+    vi.mocked(getLocalMessages).mockReturnValue([] as any)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/model/info')) {
+          return jsonResponse({
+            model: 'Kimi-K2.7-Code',
+            effective_context_length: 262_144,
+          })
+        }
+        return new Response('not found', { status: 404 })
+      }),
+    )
+
+    const rootSnap = await readContextUsage('new', { model: 'Kimi-K2.7-Code' })
+    expect(rootSnap.thresholdTokens).toBe(131_072)
+
+    const devSnap = await readContextUsage('new', {
+      model: 'Kimi-K2.7-Code',
+      profile: 'developer',
+    })
+    expect(devSnap.thresholdTokens).toBe(183_500)
   })
 })

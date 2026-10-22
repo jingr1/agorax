@@ -6,6 +6,7 @@
  */
 
 import type { AgentActivityUpdatedEvent } from '@agorax/agent-activity-core'
+import { stripWorkspaceDirective } from './workspace-message-scope'
 
 export type HistoryLikeMessage = {
   role?: string
@@ -98,8 +99,85 @@ export function assistantPlainTextFromHistoryMessage(
 }
 
 /**
+ * Index after the last user row — assistants before this belong to prior turns.
+ * Settle backfill must never stamp an earlier turn's greeting onto the live host.
+ */
+export function baselineAfterLastUserMessage(
+  messages: readonly HistoryLikeMessage[],
+): number {
+  let baseline = 0
+  for (let i = 0; i < messages.length; i += 1) {
+    if (messages[i]?.role === 'user') baseline = i + 1
+  }
+  return baseline
+}
+
+function historyUserPlainText(message: HistoryLikeMessage): string {
+  let raw = ''
+  if (typeof message.text === 'string' && message.text.trim()) {
+    raw = message.text.trim()
+  } else if (Array.isArray(message.content)) {
+    const parts: string[] = []
+    for (const part of message.content) {
+      if (!part || typeof part !== 'object') continue
+      const rec = part as Record<string, unknown>
+      if (
+        rec.type === 'text' &&
+        typeof rec.text === 'string' &&
+        rec.text.trim()
+      ) {
+        parts.push(rec.text.trim())
+      }
+    }
+    raw = parts.join('\n').trim()
+  }
+  // Gateway persists Workspace::v1 envelope; open turn holds bare prompt.
+  return stripWorkspaceDirective(raw).trim()
+}
+
+function historyUserClientSubmitId(message: HistoryLikeMessage): string {
+  const rec = message as HistoryLikeMessage & {
+    clientId?: unknown
+    client_id?: unknown
+    clientSubmitId?: unknown
+    payload?: { clientSubmitId?: unknown }
+  }
+  for (const value of [
+    rec.clientSubmitId,
+    rec.clientId,
+    rec.client_id,
+    rec.payload?.clientSubmitId,
+  ]) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+/**
+ * Baseline after the open turn's user row. Returns null when history does not
+ * yet contain this turn — callers must not fall back to a prior user (that
+ * stamped the previous reply under the new prompt).
+ */
+export function baselineAfterOpenTurnUser(
+  messages: readonly HistoryLikeMessage[],
+  open: { clientSubmitId?: string; userText?: string },
+): number | null {
+  const submit = open.clientSubmitId?.trim() ?? ''
+  const userText = stripWorkspaceDirective(open.userText?.trim() ?? '').trim()
+  if (!submit && !userText) return null
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const row = messages[i]
+    if (!row || row.role !== 'user') continue
+    const rowSubmit = historyUserClientSubmitId(row)
+    if (submit && rowSubmit && rowSubmit === submit) return i + 1
+    if (userText && historyUserPlainText(row) === userText) return i + 1
+  }
+  return null
+}
+
+/**
  * Prefer the last assistant message after `baselineCount` that has body text.
- * Falls back to any last assistant with text in the full list.
+ * Does not fall back to earlier turns — empty recent slice means no stamp.
  */
 export function pickAuthoritativeAssistantText(
   messages: readonly HistoryLikeMessage[],
@@ -113,17 +191,15 @@ export function pickAuthoritativeAssistantText(
     const text = assistantPlainTextFromHistoryMessage(msg)
     if (text) return text
   }
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const msg = messages[i]
-    if (!msg || msg.role !== 'assistant') continue
-    const text = assistantPlainTextFromHistoryMessage(msg)
-    if (text) return text
-  }
   return ''
 }
 
 /**
- * Whether history text should replace live text (strictly longer / live empty).
+ * Whether history text should replace live text.
+ *
+ * Only when live is empty, or authoritative is a completion of the same stream
+ * (`auth.startsWith(live)`). Never stamp merely because auth is longer — that
+ * pulled the previous turn's reply onto a new short host when history lagged.
  */
 export function shouldStampAssistantText(
   liveText: string,
@@ -134,7 +210,7 @@ export function shouldStampAssistantText(
   if (!auth) return false
   if (!live) return true
   if (auth === live) return false
-  return auth.length > live.length
+  return auth.startsWith(live)
 }
 
 /**

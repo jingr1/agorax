@@ -65,6 +65,7 @@ export const Route = createFileRoute('/api/history')({
                       tool_calls: message.tool_calls,
                       tool_call_id: message.tool_call_id,
                       tool_name: message.tool_name,
+                      platform_message_id: message.platform_message_id,
                     },
                     { historyIndex: index },
                   ),

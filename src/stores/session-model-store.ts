@@ -8,9 +8,9 @@ import { persist, createJSONStorage } from 'zustand/middleware'
  * different model for one chat without affecting the global default in
  * `~/.hermes/config.yaml` or any other channel (Telegram, Discord, etc.).
  *
- * On every send, the workspace passes this value as the `model` field in
- * the chat-completion request body. The gateway uses it for that request
- * only; nothing else mutates.
+ * On every send, the workspace splits `provider/model` and passes both on
+ * the Hermes session-chat body (and best-effort session model lock) so the
+ * pick applies to this chat without mutating profile `config.yaml`.
  *
  * Cleared automatically when the session is deleted.
  *

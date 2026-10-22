@@ -75,6 +75,13 @@ export type HermesMessage = {
   timestamp: number
   token_count?: number | null
   finish_reason?: string | null
+  /**
+   * Client turn nonce (Agorax `clientSubmitId`) stamped at send time.
+   * Hermes stores this as `platform_message_id` and may also echo it as
+   * `message_id` on conversation replay.
+   */
+  platform_message_id?: string | null
+  message_id?: string | null
 }
 
 export type HermesConfig = {
@@ -377,6 +384,15 @@ export async function respondRunApproval(
 
 // ── Conversion helpers (Claude → Chat format) ─────────────────
 
+/** Client turn nonce stamped onto the user row at send time. */
+function readHermesClientSubmitId(msg: HermesMessage): string {
+  if (msg.role !== 'user') return ''
+  for (const value of [msg.platform_message_id, msg.message_id]) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
 /** Convert a HermesMessage to the ChatMessage format the frontend expects */
 export function toChatMessage(
   msg: HermesMessage,
@@ -453,8 +469,14 @@ export function toChatMessage(
     .filter(Boolean)
     .join('\n')
 
+  const clientSubmitId = readHermesClientSubmitId(msg)
+
   return {
-    id: `msg-${msg.id}`,
+    // Prefer Tutti-style durable user id when gateway stamped the submit nonce.
+    id:
+      msg.role === 'user' && clientSubmitId
+        ? `user:${clientSubmitId}`
+        : `msg-${msg.id}`,
     role: msg.role,
     content,
     text: visibleText,
@@ -463,6 +485,13 @@ export function toChatMessage(
       ? new Date(msg.timestamp * 1000).toISOString()
       : undefined,
     sessionKey: msg.session_id,
+    ...(clientSubmitId
+      ? {
+          clientId: clientSubmitId,
+          client_id: clientSubmitId,
+          clientSubmitId,
+        }
+      : {}),
     ...(typeof options?.historyIndex === 'number'
       ? { __historyIndex: options.historyIndex }
       : {}),
@@ -524,13 +553,48 @@ type StreamChatOptions = {
  * Send a chat message and stream SSE events from Hermes Agent FastAPI.
  * Returns a promise that resolves when the stream ends.
  */
+/**
+ * Persist a confirmed per-session model lock on the gateway.
+ * Wins over later one-off request fields until replaced (Hermes
+ * `browser_model_lock` / session `/model` precedence).
+ */
+export async function setSessionModel(
+  sessionId: string,
+  input: { model: string; provider?: string },
+): Promise<Record<string, unknown>> {
+  const sid = sessionId.trim()
+  const model = input.model.trim()
+  if (!sid) throw new Error('sessionId required')
+  if (!model) throw new Error('model required')
+  const provider =
+    typeof input.provider === 'string' && input.provider.trim()
+      ? input.provider.trim()
+      : undefined
+  return hermesPost(`/api/sessions/${encodeURIComponent(sid)}/model`, {
+    model,
+    ...(provider ? { provider } : {}),
+  })
+}
+
 export async function streamChat(
   sessionId: string,
   body: {
     message: string
     model?: string
+    provider?: string
+    /**
+     * Hermes Browser model lock. Without this, a body `model` is treated as a
+     * one-off override that loses to `sessions.model`, and a confirmed
+     * `browser_model_lock` is skipped whenever the body names a model.
+     */
+    require_model_lock?: boolean
     system_message?: string
     attachments?: Array<Record<string, unknown>>
+    /**
+     * Tutti/Agorax client turn nonce. Gateway persists as `platform_message_id`
+     * so history rehydrates the same `user:<id>` as the optimistic bubble.
+     */
+    client_submit_id?: string
   },
   opts: StreamChatOptions,
 ): Promise<void> {
@@ -623,15 +687,20 @@ export async function streamChat(
 /** Non-streaming chat */
 export async function sendChat(
   sessionId: string,
-  messageOrOpts: string | { message: string; model?: string },
+  messageOrOpts:
+    | string
+    | { message: string; model?: string; provider?: string },
   model?: string,
 ): Promise<Record<string, unknown>> {
   const msg =
     typeof messageOrOpts === 'string' ? messageOrOpts : messageOrOpts.message
   const mdl = typeof messageOrOpts === 'string' ? model : messageOrOpts.model
+  const provider =
+    typeof messageOrOpts === 'string' ? undefined : messageOrOpts.provider
   return hermesPost(`/api/sessions/${sessionId}/chat`, {
     message: msg,
     model: mdl,
+    ...(provider ? { provider } : {}),
   })
 }
 

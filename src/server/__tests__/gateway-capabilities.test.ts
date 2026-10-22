@@ -486,6 +486,48 @@ describe('gateway-capabilities', () => {
     expect(caps.skills).toBe(true)
     expect(caps.config).toBe(true)
     expect(mod.getGatewayMode()).toBe('zero-fork')
+    // Path-missing 404 keeps enhancedChat false, but zero-fork still uses
+    // session chat so browser_model_lock is consumed.
+    expect(caps.enhancedChat).toBe(false)
+    expect(mod.getChatMode()).toBe('enhanced-claude')
+  })
+
+  it('treats session_not_found on chat/stream probe as enhancedChat', async () => {
+    process.env.HERMES_API_URL = 'http://gateway.test'
+    existsSync.mockReturnValue(true)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url === 'http://gateway.test/health') {
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { 'content-type': 'application/json' },
+          })
+        }
+        if (url === 'http://gateway.test/v1/chat/completions') {
+          return new Response('', { status: 405 })
+        }
+        if (url === 'http://gateway.test/api/sessions/__probe__/chat/stream') {
+          return new Response(
+            JSON.stringify({
+              error: {
+                message: 'Session not found: __probe__',
+                code: 'session_not_found',
+              },
+            }),
+            { status: 404, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      }),
+    )
+
+    const mod = await loadMod()
+    const caps = await mod.probeGateway({ force: true, waitForEnhanced: true })
+    expect(caps.enhancedChat).toBe(true)
+    expect(mod.getChatMode()).toBe('enhanced-claude')
   })
 
   describe('isUsableCapabilityCache', () => {

@@ -1,5 +1,6 @@
 import { resolveChatGateway } from '@/server/chat-gateway'
 import {
+  CLAUDE_DASHBOARD_URL,
   dashboardFetch,
   ensureGatewayProbed,
   getCapabilities,
@@ -12,6 +13,7 @@ import {
 } from '@/server/hermes-config-store'
 import { getLocalMessages, getLocalSession } from './local-session-store'
 import { getActiveRunForSession } from './run-store'
+import { lookupModelsDevContextWindow } from '@/server/hermes-model-context'
 import {
   resolveMainChatSessionId,
   shouldBindMainToPortableSession,
@@ -44,31 +46,48 @@ type ResolvedModelContext = {
   maxTokens: number
 }
 
-const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-  'claude-opus-4-6': 200_000,
-  'claude-opus-4-5': 200_000,
-  'claude-sonnet-4-6': 200_000,
-  'claude-sonnet-4-5': 200_000,
-  'claude-sonnet-4': 200_000,
-  'claude-3-5-sonnet': 200_000,
-  'claude-3-opus': 200_000,
-  'claude-haiku-3.5': 200_000,
-  'gpt-5.4': 1_000_000,
-  'gpt-5.2-codex': 1_000_000,
-  'gpt-4.1': 1_000_000,
-  'gpt-4.1-mini': 1_000_000,
-  'gpt-4o': 128_000,
-  'gpt-4o-mini': 128_000,
-  'gpt-4-turbo': 128_000,
-  o1: 200_000,
-  'o3-mini': 200_000,
-  'gemini-2.5-flash': 1_000_000,
-  'gemini-2.5-pro': 1_000_000,
-  'kimi-k2.6': 262_144,
-  'kimi-k2.7': 262_144,
+const CHARS_PER_TOKEN = 3.5
+
+/**
+ * Last provider/gateway-reported context window per session.
+ * Tutti-aligned: never invent a denominator from the model name; when the
+ * live gateway has no length, reuse the same session's last authoritative
+ * window (same model) so a brief outage does not blank the meter.
+ */
+type CachedSessionWindow = { maxTokens: number; model: string }
+const SESSION_CONTEXT_WINDOW_CACHE = new Map<string, CachedSessionWindow>()
+
+export function rememberSessionContextWindow(
+  sessionId: string,
+  maxTokens: number,
+  model = '',
+): void {
+  const sid = sessionId.trim()
+  if (!sid || !(maxTokens > 0)) return
+  SESSION_CONTEXT_WINDOW_CACHE.set(sid, {
+    maxTokens,
+    model: model.trim(),
+  })
 }
 
-const CHARS_PER_TOKEN = 3.5
+export function recallSessionContextWindow(
+  sessionId: string,
+  model = '',
+): number {
+  const sid = sessionId.trim()
+  if (!sid) return 0
+  const entry = SESSION_CONTEXT_WINDOW_CACHE.get(sid)
+  if (!entry || !(entry.maxTokens > 0)) return 0
+  const want = model.trim().toLowerCase()
+  const have = entry.model.trim().toLowerCase()
+  if (want && have && want !== have) return 0
+  return entry.maxTokens
+}
+
+/** @internal test helper */
+export function clearSessionContextWindowCache(): void {
+  SESSION_CONTEXT_WINDOW_CACHE.clear()
+}
 
 type MessageLike = {
   content?: unknown
@@ -161,35 +180,88 @@ export function estimateContextTokensFromSessionUsage(
   return Math.ceil(totalInput / calls)
 }
 
-function lookupModelContextWindow(model: string): number {
-  const lower = model.toLowerCase()
-  for (const [key, value] of Object.entries(MODEL_CONTEXT_WINDOWS)) {
-    if (lower.includes(key.toLowerCase()) || key.toLowerCase().includes(lower))
-      return value
-  }
-  return 0
-}
-
-function lookupStaticContextWindow(model: string): number {
-  if (!model) return 0
-  if (MODEL_CONTEXT_WINDOWS[model]) return MODEL_CONTEXT_WINDOWS[model]
-  return lookupModelContextWindow(model)
-}
-
 /**
- * Prefer live session length, then gateway effective_context_length, then the
- * static table. Never invent a 200k default ahead of the gateway value — that
- * shadows real windows (e.g. Kimi-K3 ≈ 1M) and desyncs the meter from compression.
+ * Priority (Tutti-aligned):
+ * 1. Provider/session-reported length
+ * 2. Last provider-reported window cached for this session+model
+ * 3. Hermes metadata backup (dashboard model/info or models.dev cache)
+ * Never invent a bare 200k/1M from the model name alone.
  */
 export function resolvePreferredContextWindow(
-  model: string,
-  configuredMaxTokens?: number,
+  _model: string,
+  backupMaxTokens?: number,
   sessionContextLength?: number,
+  cachedMaxTokens?: number,
 ): number {
   if (sessionContextLength && sessionContextLength > 0)
     return sessionContextLength
-  if (configuredMaxTokens && configuredMaxTokens > 0) return configuredMaxTokens
-  return lookupStaticContextWindow(model)
+  if (cachedMaxTokens && cachedMaxTokens > 0) return cachedMaxTokens
+  if (backupMaxTokens && backupMaxTokens > 0) return backupMaxTokens
+  return 0
+}
+
+function resolveSessionContextWindow(
+  sessionId: string,
+  model: string,
+  backupMaxTokens?: number,
+  sessionContextLength?: number,
+): number {
+  // Only provider/session reports enter the session cache (not metadata backup).
+  if (sessionContextLength && sessionContextLength > 0) {
+    rememberSessionContextWindow(sessionId, sessionContextLength, model)
+  }
+  return resolvePreferredContextWindow(
+    model,
+    backupMaxTokens,
+    sessionContextLength,
+    recallSessionContextWindow(sessionId, model),
+  )
+}
+
+function modelKeysMatch(a: string, b: string): boolean {
+  const left = a.trim().toLowerCase()
+  const right = b.trim().toLowerCase()
+  if (!left || !right) return false
+  if (left === right) return true
+  const bare = (value: string) =>
+    value.includes('/') ? value.slice(value.lastIndexOf('/') + 1) : value
+  return bare(left) === bare(right)
+}
+
+/**
+ * Hermes metadata backup for a composer-selected model.
+ * Dashboard /api/model/info only returns the profile default — when the
+ * picker selects another model, fall through to models.dev disk cache
+ * (same catalog Hermes uses).
+ */
+function resolveBackupContextWindow(
+  preferredModel: string,
+  configured: ResolvedModelContext | null,
+): { model: string; maxTokens: number } {
+  const preferred = preferredModel.trim()
+  if (
+    configured &&
+    configured.maxTokens > 0 &&
+    (!preferred || modelKeysMatch(preferred, configured.model))
+  ) {
+    return {
+      model: preferred || configured.model,
+      maxTokens: configured.maxTokens,
+    }
+  }
+  if (preferred) {
+    const fromCatalog = lookupModelsDevContextWindow(preferred)
+    if (fromCatalog > 0) {
+      return { model: preferred, maxTokens: fromCatalog }
+    }
+  }
+  if (configured && configured.maxTokens > 0) {
+    return {
+      model: preferred || configured.model,
+      maxTokens: configured.maxTokens,
+    }
+  }
+  return { model: preferred || configured?.model || '', maxTokens: 0 }
 }
 
 function authHeaders(): Record<string, string> {
@@ -356,8 +428,9 @@ async function parseJsonObject(
 }
 
 /**
- * Prefer gateway / local config. Dashboard :9119 is optional and only tried
- * when `shouldUseDashboard()` is true.
+ * Prefer gateway, then dashboard when allowed. Local Agorax zero-fork keeps
+ * `shouldUseDashboard()` false for control-plane writes — see
+ * `fetchHermesModelInfo` for the model/info exception.
  */
 async function fetchGatewayJson(
   path: string,
@@ -383,9 +456,37 @@ async function fetchGatewayJson(
   }
 }
 
-function readLocalCompressionSettings(): CompressionSettings {
+/**
+ * Hermes context windows are resolved on the Agent Dashboard web server
+ * (`GET /api/model/info` → models.dev / OpenRouter / overrides), not on the
+ * gateway api_server (:8642). Zero-fork still needs that read for the composer
+ * meter; the endpoint is public on :9119 (no dashboard auth).
+ */
+async function fetchHermesModelInfo(): Promise<Record<string, unknown> | null> {
+  const fromGateway = await fetchGatewayJson('/api/model/info')
+  if (fromGateway) return fromGateway
   try {
-    const files = readHermesConfigFiles(resolveHermesConfigPaths())
+    const base = (CLAUDE_DASHBOARD_URL || 'http://127.0.0.1:9119').replace(
+      /\/$/,
+      '',
+    )
+    return await parseJsonObject(
+      await fetch(`${base}/api/model/info`, {
+        signal: AbortSignal.timeout(2500),
+      }),
+    )
+  } catch {
+    return null
+  }
+}
+
+function readLocalCompressionSettings(
+  profileName?: string,
+): CompressionSettings {
+  try {
+    const files = readHermesConfigFiles(
+      resolveHermesConfigPaths(profileName),
+    )
     return parseCompressionSettings(files.config)
   } catch {
     return {
@@ -395,33 +496,29 @@ function readLocalCompressionSettings(): CompressionSettings {
   }
 }
 
-async function readCompressionSettings(): Promise<CompressionSettings> {
-  const payload = await fetchGatewayJson('/api/config')
-  if (payload) return parseCompressionSettings(payload)
-  return readLocalCompressionSettings()
+async function readCompressionSettings(
+  profileName?: string,
+): Promise<CompressionSettings> {
+  // Named Hermes agents own profiles/<id>/config.yaml. Gateway api_server
+  // has no /api/config, so read the profile file directly (not root ~/.hermes).
+  return readLocalCompressionSettings(profileName)
 }
 
 async function readConfiguredModelContext(): Promise<ResolvedModelContext | null> {
   try {
-    const payload = await fetchGatewayJson('/api/model/info')
+    const payload = await fetchHermesModelInfo()
     if (!payload) return null
-
     const model = typeof payload.model === 'string' ? payload.model.trim() : ''
-    const configuredLength = readConfiguredContextLength(payload)
-    // Prefer gateway effective_context_length (same resolution chain as the
-    // agent). Static table is last-resort only when the gateway has no length.
-    const maxTokens =
-      configuredLength > 0 ? configuredLength : lookupStaticContextWindow(model)
-
-    if (!model && maxTokens <= 0) return null
-
-    return {
-      model,
-      maxTokens,
+    // Only Hermes-reported lengths (models.dev / OpenRouter / overrides).
+    // No local config.yaml invent and no Agorax static model table.
+    const maxTokens = readConfiguredContextLength(payload)
+    if (model || maxTokens > 0) {
+      return { model, maxTokens }
     }
   } catch {
-    return null
+    /* gateway/dashboard unreachable — caller may still use per-session cache */
   }
+  return null
 }
 
 async function readGatewayRuntimeSnapshot(
@@ -459,7 +556,8 @@ async function readGatewayRuntimeSnapshot(
       ''
     const sessionContextLength =
       Number(data.context_length) || Number(data.effective_context_length) || 0
-    const maxTokens = resolvePreferredContextWindow(
+    const maxTokens = resolveSessionContextWindow(
+      sid,
       model,
       configuredModelContext?.maxTokens,
       sessionContextLength,
@@ -595,16 +693,27 @@ async function resolveMirroredRuntimeSessionId(
 
 export async function readContextUsage(
   sessionId = '',
+  options: { model?: string; profile?: string } = {},
 ): Promise<ContextUsageSnapshot> {
   try {
     let sessionData: Record<string, unknown> | null = null
     let fallbackSnapshot: ContextUsageSnapshot | null = null
     const explicitSessionId = sessionId.trim()
+    const preferredModel = (options.model || '').trim()
+    const profileName = (options.profile || '').trim()
     const capabilities = await ensureGatewayProbed()
     const [configuredModelContext, compression] = await Promise.all([
       readConfiguredModelContext(),
-      readCompressionSettings(),
+      readCompressionSettings(profileName || undefined),
     ])
+    const backup = resolveBackupContextWindow(
+      preferredModel,
+      configuredModelContext,
+    )
+    const backupContext: ResolvedModelContext | null =
+      backup.maxTokens > 0 || backup.model
+        ? { model: backup.model, maxTokens: backup.maxTokens }
+        : null
     const resolvedSessionId = explicitSessionId
       ? await resolveRuntimeSessionId(explicitSessionId)
       : ''
@@ -613,9 +722,15 @@ export async function readContextUsage(
       const liveRuntime = await readGatewayRuntimeSnapshot(
         resolvedSessionId,
         compression,
-        configuredModelContext,
+        backupContext,
       )
-      if (liveRuntime) return liveRuntime
+      if (liveRuntime) {
+        // Prefer composer-selected model label when runtime omitted it.
+        if (preferredModel && !liveRuntime.model) {
+          return { ...liveRuntime, model: preferredModel }
+        }
+        return liveRuntime
+      }
 
       const localSession = getLocalSession(explicitSessionId)
       const localMessages = getLocalMessages(explicitSessionId)
@@ -627,9 +742,14 @@ export async function readContextUsage(
           const mirroredRuntime = await readGatewayRuntimeSnapshot(
             mirroredRuntimeSessionId,
             compression,
-            configuredModelContext,
+            backupContext,
           )
-          if (mirroredRuntime) return mirroredRuntime
+          if (mirroredRuntime) {
+            if (preferredModel && !mirroredRuntime.model) {
+              return { ...mirroredRuntime, model: preferredModel }
+            }
+            return mirroredRuntime
+          }
         }
 
         const pendingMessages = activeRun?.assistantText
@@ -644,10 +764,14 @@ export async function readContextUsage(
           : localMessages
         const usedTokens = estimateContextTokensFromMessages(pendingMessages)
         const model =
-          localSession.model || configuredModelContext?.model || 'gpt-5.4'
-        const maxTokens = resolvePreferredContextWindow(
+          preferredModel ||
+          localSession.model ||
+          backupContext?.model ||
+          ''
+        const maxTokens = resolveSessionContextWindow(
+          explicitSessionId,
           model,
-          configuredModelContext?.maxTokens,
+          backupContext?.maxTokens,
         )
         const contextPercent =
           maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 1000) / 10 : 0
@@ -671,10 +795,11 @@ export async function readContextUsage(
             ]
           : localMessages
         const usedTokens = estimateContextTokensFromMessages(pendingMessages)
-        const model = configuredModelContext?.model || 'gpt-5.4'
-        const maxTokens = resolvePreferredContextWindow(
+        const model = preferredModel || backupContext?.model || ''
+        const maxTokens = resolveSessionContextWindow(
+          explicitSessionId,
           model,
-          configuredModelContext?.maxTokens,
+          backupContext?.maxTokens,
         )
         const contextPercent =
           maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 1000) / 10 : 0
@@ -724,26 +849,31 @@ export async function readContextUsage(
     if (explicitSessionId && !sessionData) {
       return (
         fallbackSnapshot ??
-        configuredEmptySnapshot(configuredModelContext, compression)
+        configuredEmptySnapshot(backupContext, compression)
       )
     }
 
     if (!explicitSessionId) {
-      return configuredEmptySnapshot(configuredModelContext, compression)
+      return configuredEmptySnapshot(backupContext, compression)
     }
 
     if (!sessionData) {
       return (
         fallbackSnapshot ??
-        configuredEmptySnapshot(configuredModelContext, compression)
+        configuredEmptySnapshot(backupContext, compression)
       )
     }
 
-    const model = String(sessionData.model || '')
+    const model =
+      preferredModel ||
+      String(sessionData.model || '') ||
+      backupContext?.model ||
+      ''
     const sessionContextLength = Number(sessionData.context_length) || 0
-    const maxTokens = resolvePreferredContextWindow(
+    const maxTokens = resolveSessionContextWindow(
+      explicitSessionId,
       model,
-      configuredModelContext?.maxTokens,
+      backupContext?.maxTokens,
       sessionContextLength,
     )
     const cacheReadTokens = Number(sessionData.cache_read_tokens) || 0
@@ -836,9 +966,10 @@ export async function readContextUsage(
       ),
     })
   } catch {
+    // Unknown window → hide ContextIndicator (maxTokens 0). Do not invent.
     return buildSnapshot({
       contextPercent: 0,
-      maxTokens: 128_000,
+      maxTokens: 0,
       usedTokens: 0,
       model: '',
       thresholdRatio: DEFAULT_COMPRESSION_THRESHOLD,

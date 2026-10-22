@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { assistantMessageIdForRun } from '../../lib/chat-turn-identity'
+import { hermesChatModelFields } from '../../lib/chat-model-ref'
 import { buildResolvedSessionHeaders } from '../../lib/send-stream-session-headers'
 import { buildWorkspaceScopedTextMessage } from '../../lib/workspace-message-scope'
 import { resolveSessionKey } from '../../server/session-utils'
@@ -50,6 +51,7 @@ import {
   getGatewayCapabilities,
   getMessages as getSessionMessagesFromAgent,
   listSessions,
+  setSessionModel,
   streamChat,
 } from '../../server/hermes-api'
 import { loadWorkspaceCatalog } from './workspace'
@@ -1429,12 +1431,51 @@ export const Route = createFileRoute('/api/send-stream')({
               })()
 
               try {
+                // Composer stores `provider/model`. Gateway session-chat needs
+                // them split — a combined `model` string often falls back to
+                // the profile default so the picker lies about the live turn.
+                const chatModel = hermesChatModelFields(
+                  typeof body.model === 'string' ? body.model : undefined,
+                )
+                if (chatModel.model) {
+                  // Confirm Browser lock before the turn. Hermes session-chat
+                  // skips persisted locks whenever the body carries model/
+                  // provider without require_model_lock — and then
+                  // sessions.model (often still the profile default) wins over
+                  // the composer pick. See api_server._effective_session_runtime_request.
+                  try {
+                    await setSessionModel(sessionKey, {
+                      model: chatModel.model,
+                      provider: chatModel.provider,
+                    })
+                  } catch {
+                    /* optional capability */
+                  }
+                }
+                const clientSubmitId =
+                  typeof body.idempotencyKey === 'string'
+                    ? body.idempotencyKey.trim()
+                    : typeof body.clientSubmitId === 'string'
+                      ? body.clientSubmitId.trim()
+                      : typeof body.client_submit_id === 'string'
+                        ? body.client_submit_id.trim()
+                        : ''
                 await streamChat(
                   sessionKey,
                   {
                     message: scopedMessage,
-                    model:
-                      typeof body.model === 'string' ? body.model : undefined,
+                    ...chatModel,
+                    // Force lock path even if POST …/model was unavailable —
+                    // otherwise body model is a non-locking one-off and the
+                    // profile/session default keeps answering.
+                    ...(chatModel.model
+                      ? { require_model_lock: true }
+                      : {}),
+                    // Tutti-style turn identity: gateway persists as
+                    // platform_message_id → history rehydrates user:<id>.
+                    ...(clientSubmitId
+                      ? { client_submit_id: clientSubmitId }
+                      : {}),
                     system_message: thinking,
                     attachments: attachments || undefined,
                   },

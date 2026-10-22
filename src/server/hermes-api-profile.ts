@@ -170,6 +170,7 @@ async function profileStreamChat(
     message: string
     model?: string
     provider?: string
+    require_model_lock?: boolean
     system_message?: string
     attachments?: Array<Record<string, unknown>>
   },

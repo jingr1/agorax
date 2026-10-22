@@ -148,6 +148,7 @@ cd ~/hermes-workspace && pnpm dev:ui
 
 - **Merge conflict markers in source files:** `grep -r "<<<<<<" src/` — if you find any, resolve them or `git checkout -- <file>`.
 - **Missing node_modules:** `pnpm install`
+- **Electron postinstall aborts / `pnpm dev` re-installs every time:** official GitHub Electron CDN timed out (`ETIMEDOUT` / `server aborted pending request`). **pnpm 12 ignores non-auth settings in `.npmrc`** — `verifyDepsBeforeRun` and mirrors must live in `pnpm-workspace.yaml` / process env. Confirm while postinstall runs: no `ELECTRON_MIRROR` in `/proc/<pid>/environ` and TCP peer `*.github.com` means the mirror is inactive. Use `pnpm install:deps` or `pnpm dev` (`scripts/dev-stack.sh` exports `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`). Workspace sets `verifyDepsBeforeRun: false` so the pre-script install cannot bypass that. After `electron/dist` exists, installs stop retrying.
 - **Node version too old:** `node --version` — requires Node 22+.
 - **Port already in use:** `lsof -i :6734` (macOS) or `ss -tlnp | grep 6734` (Linux) — kill the stale process.
 

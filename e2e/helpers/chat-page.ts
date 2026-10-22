@@ -4,13 +4,27 @@ export async function ensureChatComposerReady(page: Page, timeoutMs = 10000) {
   // Wait for the root route chrome / app shell to render.
   await page.waitForSelector('body', { state: 'attached', timeout: timeoutMs })
 
+  // Pre-seed localStorage to suppress the Agorax release-notes modal.
+  await page.evaluate(() => {
+    try {
+      localStorage.setItem('hermes-update-v2-release-notes-seen', 'test-run')
+      localStorage.setItem(
+        'hermes-update-v2-release-notes',
+        JSON.stringify({ id: 'test-run' }),
+      )
+    } catch {}
+  })
+
   // Poll-dismiss any overlay-scrim modal that blocks composer interactions.
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 20; attempt++) {
     const anyModal = page.locator('.overlay-scrim:visible')
     const count = await anyModal.count()
     if (count === 0) break
 
-    const closeBtn = anyModal.locator('button').filter({ hasText: /Continue|Close|Dismiss|Got it/i }).first()
+    const closeBtn = anyModal
+      .locator('button')
+      .filter({ hasText: /Continue|Close|Dismiss|Got it/i })
+      .first()
     if (await closeBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
       await closeBtn.click()
     } else {
