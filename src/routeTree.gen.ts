@@ -143,6 +143,7 @@ import { Route as ApiUsageByModelRouteImport } from './routes/api/usage/by-model
 import { Route as ApiUsageByAgentRouteImport } from './routes/api/usage/by-agent'
 import { Route as ApiUpdateWorkspaceRouteImport } from './routes/api/update/workspace'
 import { Route as ApiUpdateStatusRouteImport } from './routes/api/update/status'
+import { Route as ApiUpdateRestartRouteImport } from './routes/api/update/restart'
 import { Route as ApiUpdateAgentRouteImport } from './routes/api/update/agent'
 import { Route as ApiTasksTaskIdRouteImport } from './routes/api/tasks/$taskId'
 import { Route as ApiSwarmRuntimeResetRouteImport } from './routes/api/swarm-runtime.reset'
@@ -939,6 +940,11 @@ const ApiUpdateWorkspaceRoute = ApiUpdateWorkspaceRouteImport.update({
 const ApiUpdateStatusRoute = ApiUpdateStatusRouteImport.update({
   id: '/api/update/status',
   path: '/api/update/status',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUpdateRestartRoute = ApiUpdateRestartRouteImport.update({
+  id: '/api/update/restart',
+  path: '/api/update/restart',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiUpdateAgentRoute = ApiUpdateAgentRouteImport.update({
@@ -1803,6 +1809,7 @@ export interface FileRoutesByFullPath {
   '/api/swarm-runtime/reset': typeof ApiSwarmRuntimeResetRoute
   '/api/tasks/$taskId': typeof ApiTasksTaskIdRoute
   '/api/update/agent': typeof ApiUpdateAgentRoute
+  '/api/update/restart': typeof ApiUpdateRestartRoute
   '/api/update/status': typeof ApiUpdateStatusRoute
   '/api/update/workspace': typeof ApiUpdateWorkspaceRoute
   '/api/usage/by-agent': typeof ApiUsageByAgentRoute
@@ -2060,6 +2067,7 @@ export interface FileRoutesByTo {
   '/api/swarm-runtime/reset': typeof ApiSwarmRuntimeResetRoute
   '/api/tasks/$taskId': typeof ApiTasksTaskIdRoute
   '/api/update/agent': typeof ApiUpdateAgentRoute
+  '/api/update/restart': typeof ApiUpdateRestartRoute
   '/api/update/status': typeof ApiUpdateStatusRoute
   '/api/update/workspace': typeof ApiUpdateWorkspaceRoute
   '/api/usage/by-agent': typeof ApiUsageByAgentRoute
@@ -2321,6 +2329,7 @@ export interface FileRoutesById {
   '/api/swarm-runtime/reset': typeof ApiSwarmRuntimeResetRoute
   '/api/tasks/$taskId': typeof ApiTasksTaskIdRoute
   '/api/update/agent': typeof ApiUpdateAgentRoute
+  '/api/update/restart': typeof ApiUpdateRestartRoute
   '/api/update/status': typeof ApiUpdateStatusRoute
   '/api/update/workspace': typeof ApiUpdateWorkspaceRoute
   '/api/usage/by-agent': typeof ApiUsageByAgentRoute
@@ -2583,6 +2592,7 @@ export interface FileRouteTypes {
     | '/api/swarm-runtime/reset'
     | '/api/tasks/$taskId'
     | '/api/update/agent'
+    | '/api/update/restart'
     | '/api/update/status'
     | '/api/update/workspace'
     | '/api/usage/by-agent'
@@ -2840,6 +2850,7 @@ export interface FileRouteTypes {
     | '/api/swarm-runtime/reset'
     | '/api/tasks/$taskId'
     | '/api/update/agent'
+    | '/api/update/restart'
     | '/api/update/status'
     | '/api/update/workspace'
     | '/api/usage/by-agent'
@@ -3100,6 +3111,7 @@ export interface FileRouteTypes {
     | '/api/swarm-runtime/reset'
     | '/api/tasks/$taskId'
     | '/api/update/agent'
+    | '/api/update/restart'
     | '/api/update/status'
     | '/api/update/workspace'
     | '/api/usage/by-agent'
@@ -3329,6 +3341,7 @@ export interface RootRouteChildren {
   ApiSwarmLanggraphStatusRoute: typeof ApiSwarmLanggraphStatusRoute
   ApiTasksTaskIdRoute: typeof ApiTasksTaskIdRoute
   ApiUpdateAgentRoute: typeof ApiUpdateAgentRoute
+  ApiUpdateRestartRoute: typeof ApiUpdateRestartRoute
   ApiUpdateStatusRoute: typeof ApiUpdateStatusRoute
   ApiUpdateWorkspaceRoute: typeof ApiUpdateWorkspaceRoute
   ApiUsageByAgentRoute: typeof ApiUsageByAgentRoute
@@ -4306,6 +4319,13 @@ declare module '@tanstack/react-router' {
       path: '/api/update/status'
       fullPath: '/api/update/status'
       preLoaderRoute: typeof ApiUpdateStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/update/restart': {
+      id: '/api/update/restart'
+      path: '/api/update/restart'
+      fullPath: '/api/update/restart'
+      preLoaderRoute: typeof ApiUpdateRestartRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/update/agent': {
@@ -5769,6 +5789,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSwarmLanggraphStatusRoute: ApiSwarmLanggraphStatusRoute,
   ApiTasksTaskIdRoute: ApiTasksTaskIdRoute,
   ApiUpdateAgentRoute: ApiUpdateAgentRoute,
+  ApiUpdateRestartRoute: ApiUpdateRestartRoute,
   ApiUpdateStatusRoute: ApiUpdateStatusRoute,
   ApiUpdateWorkspaceRoute: ApiUpdateWorkspaceRoute,
   ApiUsageByAgentRoute: ApiUsageByAgentRoute,

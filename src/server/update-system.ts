@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -349,7 +349,7 @@ function readCommits(
   )
 }
 
-function workspaceInstallKind(): InstallKind {
+export function workspaceInstallKind(): InstallKind {
   if (
     process.env.AGORAX_DESKTOP === '1' ||
     process.env.ELECTRON_RUN_AS_NODE
@@ -358,6 +358,79 @@ function workspaceInstallKind(): InstallKind {
   if (process.env.AGORAX_DOCKER === '1' || existsSync('/.dockerenv'))
     return 'docker'
   return realGitRepoPath(process.cwd()) ? 'git' : 'unknown'
+}
+
+export type WorkspaceUiRestartResult =
+  | { ok: true; restarting: true }
+  | { ok: false; error: string }
+
+export type WorkspaceUiRestartDeps = {
+  installKind?: InstallKind
+  spawn?: (
+    command: string,
+    args: Array<string>,
+    options: {
+      cwd: string
+      env: NodeJS.ProcessEnv
+      detached: boolean
+      stdio: 'ignore'
+    },
+  ) => Pick<ChildProcess, 'unref'>
+  exit?: (code: number) => void
+  delayMs?: number
+  cwd?: string
+  execPath?: string
+  setTimer?: typeof setTimeout
+}
+
+/**
+ * Schedule a UI-only process restart after the HTTP response can flush.
+ * Spawns a detached `node server-entry.js` then exits the current process.
+ * Gateway / managed-agent are left alone (start-stack skips them when healthy).
+ */
+export function scheduleWorkspaceUiRestart(
+  deps: WorkspaceUiRestartDeps = {},
+): WorkspaceUiRestartResult {
+  const kind = deps.installKind ?? workspaceInstallKind()
+  if (kind !== 'git') {
+    return {
+      ok: false,
+      error:
+        kind === 'desktop'
+          ? 'Desktop restart is handled by the app updater.'
+          : kind === 'docker'
+            ? 'Restart the container to load the new build.'
+            : 'Workspace restart is only supported for git installs.',
+    }
+  }
+
+  const cwd = deps.cwd ?? process.cwd()
+  const entry = join(cwd, 'server-entry.js')
+  if (!existsSync(entry)) {
+    return {
+      ok: false,
+      error: `Missing ${entry}; cannot restart Workspace.`,
+    }
+  }
+
+  const spawnFn = deps.spawn ?? spawn
+  const exitFn = deps.exit ?? ((code: number) => process.exit(code))
+  const execPath = deps.execPath ?? process.execPath
+  const delayMs = deps.delayMs ?? 250
+  const setTimer = deps.setTimer ?? setTimeout
+
+  setTimer(() => {
+    const child = spawnFn(execPath, [entry], {
+      cwd,
+      env: process.env,
+      detached: true,
+      stdio: 'ignore',
+    })
+    child.unref()
+    exitFn(0)
+  }, delayMs)
+
+  return { ok: true, restarting: true }
 }
 
 export function readWorkspaceUpdateStatus(

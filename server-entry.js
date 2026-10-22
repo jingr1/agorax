@@ -172,6 +172,12 @@ const MIME_TYPES = {
   '.webmanifest': 'application/manifest+json',
 }
 
+/** True when the last path segment looks like `file.ext` (static asset). */
+function pathnameHasFileExtension(pathname) {
+  const last = pathname.split('/').pop() || ''
+  return last.includes('.')
+}
+
 async function tryServeStatic(req, res) {
   const url = new URL(
     req.url || '/',
@@ -222,9 +228,13 @@ async function tryServeStatic(req, res) {
       'Content-Length': data.length,
     }
 
-    // Cache hashed assets aggressively (they have content hashes in filenames)
+    // Cache hashed assets aggressively (they have content hashes in filenames).
+    // Everything else (sw.js, manifest, robots, …) must not stick across deploys.
     if (pathname.startsWith('/assets/')) {
       headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    } else {
+      headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
+      headers['Pragma'] = 'no-cache'
     }
 
     res.writeHead(200, headers)
@@ -280,18 +290,20 @@ async function requestHandler(req, res) {
       if (typeof value === 'string') headers[name] = value
     }
 
-    // /api/* responses must NEVER be cacheable by intermediaries — the SPA
-    // uses /api/auth-check, /api/connection-status, etc. to decide whether
-    // to show the password form. Cloudflare's Browser Cache TTL default
-    // (7200s) is applied to any GET that doesn't say `no-store`, which
-    // caused the auth-check response to be served stale from the edge
-    // for ~2h after a fresh login, trapping the user in a password loop.
-    // Strip any Cache-Control/Pragma/Expires on API responses so the
-    // edge never reuses them. Hash-named assets keep their immutable
-    // header (set above in tryServeStatic) and are unaffected here
-    // because static assets short-circuit before this branch.
+    // /api/* and HTML shells must NEVER be cacheable by browsers/edge.
+    // Without this, after `pnpm build` + restart the browser can keep a
+    // stale SSR document that still points at old hashed `/assets/*`
+    // chunks (those are intentionally immutable), so the UI looks "旧的"
+    // even though dist/ and server-entry already loaded the new build.
+    // Hash-named assets keep their immutable header in tryServeStatic.
     const reqPathname = new URL(request.url).pathname
-    if (reqPathname.startsWith('/api/')) {
+    const contentType = String(headers['content-type'] || headers['Content-Type'] || '')
+    const isHtmlShell =
+      contentType.includes('text/html') ||
+      (!reqPathname.startsWith('/api/') &&
+        !reqPathname.startsWith('/assets/') &&
+        (reqPathname === '/' || !pathnameHasFileExtension(reqPathname)))
+    if (reqPathname.startsWith('/api/') || isHtmlShell) {
       headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
       headers['Pragma'] = 'no-cache'
       headers['Expires'] = '0'

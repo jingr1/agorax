@@ -120,6 +120,9 @@ export function UpdateCenterNotifier() {
     agent: '',
   })
   const [notes, setNotes] = useState<Notes | null>(null)
+  const [restartPrompt, setRestartPrompt] = useState(false)
+  const [restarting, setRestarting] = useState(false)
+  const [restartError, setRestartError] = useState('')
 
   useEffect(() => {
     const values = new Set<string>()
@@ -215,6 +218,11 @@ export function UpdateCenterNotifier() {
       }
       setPhases((prev) => ({ ...prev, workspace: 'done' }))
       dismiss(product)
+      const needsRestart = Boolean(result.restartRequired)
+      if (needsRestart) {
+        setRestartPrompt(true)
+        setRestartError('')
+      }
       const stored = result.releaseNotes?.length
         ? storeNotes(result.releaseNotes)
         : null
@@ -225,16 +233,61 @@ export function UpdateCenterNotifier() {
       await queryClient.invalidateQueries({
         queryKey: AGENT_PROVIDER_STATUS_QUERY_KEY,
       })
-      toast(`${product.label} updated. Restart may be required.`, {
-        type: 'success',
-        duration: 7000,
-      })
+      toast(
+        needsRestart
+          ? `${product.label} updated. Restart Workspace to apply.`
+          : `${product.label} updated.`,
+        {
+          type: 'success',
+          duration: 7000,
+        },
+      )
     } catch (err) {
       setPhases((prev) => ({ ...prev, workspace: 'error' }))
       setErrors((prev) => ({
         ...prev,
         workspace: err instanceof Error ? err.message : String(err),
       }))
+    }
+  }
+
+  async function restartWorkspace() {
+    setRestarting(true)
+    setRestartError('')
+    try {
+      const res = await fetch('/api/update/restart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const result = (await res.json()) as {
+        ok: boolean
+        restarting?: boolean
+        error?: string
+      }
+      if (!res.ok || !result.ok) {
+        setRestartError(result.error || 'Restart failed')
+        setRestarting(false)
+        return
+      }
+      const deadline = Date.now() + 30_000
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500))
+        try {
+          const check = await fetch('/api/auth-check', { cache: 'no-store' })
+          if (check.ok) {
+            window.location.reload()
+            return
+          }
+        } catch {
+          // Server is still coming back up.
+        }
+      }
+      setRestartError('Restart timed out — refresh the page manually.')
+      setRestarting(false)
+    } catch (err) {
+      setRestartError(err instanceof Error ? err.message : String(err))
+      setRestarting(false)
     }
   }
 
@@ -245,9 +298,31 @@ export function UpdateCenterNotifier() {
 
   return (
     <>
-      <ReleaseNotes notes={notes} onClose={closeNotes} />
+      <ReleaseNotes
+        notes={notes}
+        onClose={closeNotes}
+        showRestart={restartPrompt}
+        restarting={restarting}
+        onRestart={() => {
+          void restartWorkspace()
+        }}
+      />
       <div className="pointer-events-none fixed left-1/2 top-[calc(var(--titlebar-h,0px)+1rem)] z-[9998] flex w-[92vw] max-w-md -translate-x-1/2 flex-col gap-3">
         <AnimatePresence>
+          {restartPrompt ? (
+            <RestartCard
+              key="workspace-restart"
+              restarting={restarting}
+              error={restartError}
+              onRestart={() => {
+                void restartWorkspace()
+              }}
+              onDismiss={() => {
+                setRestartPrompt(false)
+                setRestartError('')
+              }}
+            />
+          ) : null}
           {visibleProducts.map((product) => (
             <UpdateCard
               key={product.id}
@@ -261,6 +336,95 @@ export function UpdateCenterNotifier() {
         </AnimatePresence>
       </div>
     </>
+  )
+}
+
+function RestartCard({
+  restarting,
+  error,
+  onRestart,
+  onDismiss,
+}: {
+  restarting: boolean
+  error: string
+  onRestart: () => void
+  onDismiss: () => void
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -24, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -24, scale: 0.96 }}
+      transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+      onContextMenu={(event) => event.stopPropagation()}
+      className="pointer-events-auto overflow-hidden rounded-2xl shadow-2xl select-text"
+      style={{
+        background: 'var(--theme-card)',
+        border: '1px solid var(--theme-border)',
+        color: 'var(--theme-text)',
+        boxShadow: 'var(--theme-shadow-3)',
+      }}
+    >
+      {restarting ? (
+        <div
+          className="h-0.5 animate-pulse"
+          style={{ background: 'var(--theme-accent)' }}
+        />
+      ) : null}
+      <div className="flex items-center gap-3 px-5 py-3.5">
+        <div
+          className="flex size-9 shrink-0 items-center justify-center rounded-xl"
+          style={{
+            background:
+              'color-mix(in srgb, var(--theme-accent) 14%, transparent)',
+          }}
+        >
+          <HugeiconsIcon
+            icon={restarting ? Loading03Icon : Tick01Icon}
+            size={18}
+            strokeWidth={2}
+            className={restarting ? 'animate-spin' : undefined}
+            style={{ color: 'var(--theme-accent)' }}
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p
+            className="text-sm font-semibold"
+            style={{ color: 'var(--theme-text)' }}
+          >
+            Updated — restart to load the new build
+          </p>
+          <p className="text-xs" style={{ color: 'var(--theme-muted)' }}>
+            {error
+              ? error
+              : restarting
+                ? 'Restarting Workspace…'
+                : 'Without a restart the running process still serves the previous server bundle.'}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onRestart}
+            disabled={restarting}
+            className="rounded-lg px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+            style={{ background: 'var(--theme-accent)' }}
+          >
+            {restarting ? 'Restarting' : 'Restart Workspace'}
+          </button>
+          <button
+            type="button"
+            onClick={onDismiss}
+            disabled={restarting}
+            className="rounded-lg p-1.5 transition-opacity hover:opacity-80 disabled:opacity-50"
+            style={{ color: 'var(--theme-muted)' }}
+            aria-label="Dismiss restart prompt"
+          >
+            <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />
+          </button>
+        </div>
+      </div>
+    </motion.div>
   )
 }
 
@@ -439,9 +603,15 @@ function UpdateCard({
 function ReleaseNotes({
   notes,
   onClose,
+  showRestart,
+  restarting,
+  onRestart,
 }: {
   notes: Notes | null
   onClose: () => void
+  showRestart: boolean
+  restarting: boolean
+  onRestart: () => void
 }) {
   if (!notes) return null
   return (
@@ -483,7 +653,9 @@ function ReleaseNotes({
             <div className="min-w-0 flex-1">
               <p className="text-base font-semibold">Agorax updated</p>
               <p className="text-sm" style={{ color: 'var(--theme-muted)' }}>
-                What changed in this update.
+                {showRestart
+                  ? 'Restart Workspace to load the new build.'
+                  : 'What changed in this update.'}
               </p>
             </div>
             <button
@@ -528,17 +700,43 @@ function ReleaseNotes({
             ))}
           </div>
           <div
-            className="flex justify-end border-t px-5 py-3"
+            className="flex justify-end gap-2 border-t px-5 py-3"
             style={{ borderColor: 'var(--theme-border)' }}
           >
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg px-4 py-2 text-sm font-semibold text-white"
-              style={{ background: 'var(--theme-accent)' }}
-            >
-              Continue
-            </button>
+            {showRestart ? (
+              <>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={restarting}
+                  className="rounded-lg px-4 py-2 text-sm font-semibold transition-opacity hover:opacity-90 disabled:opacity-60"
+                  style={{
+                    background: 'var(--theme-card2)',
+                    color: 'var(--theme-text)',
+                  }}
+                >
+                  Later
+                </button>
+                <button
+                  type="button"
+                  onClick={onRestart}
+                  disabled={restarting}
+                  className="rounded-lg px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+                  style={{ background: 'var(--theme-accent)' }}
+                >
+                  {restarting ? 'Restarting…' : 'Restart Workspace'}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg px-4 py-2 text-sm font-semibold text-white"
+                style={{ background: 'var(--theme-accent)' }}
+              >
+                Continue
+              </button>
+            )}
           </div>
         </motion.div>
       </motion.div>

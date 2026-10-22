@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   remoteUrlMatches,
+  scheduleWorkspaceUiRestart,
   updateAvailableFromDivergence,
 } from './update-system'
 
@@ -46,5 +48,70 @@ describe('update-system helpers', () => {
     )
     expect(UPDATE_CHECK_TTL_MS).toBe(PRODUCT_UPDATE_CHECK_INTERVAL_MS)
     expect(UPDATE_CHECK_TTL_MS).toBe(24 * 60 * 60 * 1000)
+  })
+})
+
+describe('scheduleWorkspaceUiRestart', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('rejects non-git install kinds without spawning', () => {
+    const spawn = vi.fn()
+    const exit = vi.fn()
+    const result = scheduleWorkspaceUiRestart({
+      installKind: 'desktop',
+      spawn,
+      exit,
+    })
+    expect(result).toEqual({
+      ok: false,
+      error: 'Desktop restart is handled by the app updater.',
+    })
+    expect(spawn).not.toHaveBeenCalled()
+    expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('spawns detached server-entry then exits for git installs', () => {
+    vi.useFakeTimers()
+    const unref = vi.fn()
+    const spawn = vi.fn(() => ({ unref }))
+    const exit = vi.fn()
+    const cwd = process.cwd()
+    const result = scheduleWorkspaceUiRestart({
+      installKind: 'git',
+      spawn,
+      exit,
+      cwd,
+      execPath: '/usr/bin/node',
+      delayMs: 100,
+    })
+    expect(result).toEqual({ ok: true, restarting: true })
+    expect(spawn).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(100)
+    expect(spawn).toHaveBeenCalledWith(
+      '/usr/bin/node',
+      [join(cwd, 'server-entry.js')],
+      expect.objectContaining({
+        cwd,
+        detached: true,
+        stdio: 'ignore',
+      }),
+    )
+    expect(unref).toHaveBeenCalled()
+    expect(exit).toHaveBeenCalledWith(0)
+  })
+
+  it('rejects docker installs with a container restart hint', () => {
+    expect(
+      scheduleWorkspaceUiRestart({
+        installKind: 'docker',
+        spawn: vi.fn(),
+        exit: vi.fn(),
+      }),
+    ).toEqual({
+      ok: false,
+      error: 'Restart the container to load the new build.',
+    })
   })
 })
