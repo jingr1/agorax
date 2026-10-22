@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type * as React from 'react'
 import { Button } from '@/components/ui/button'
 import { ProviderLogo } from '@/components/provider-logo'
 import { CodexLoginModal } from '@/components/settings-dialog/codex-login-modal'
@@ -10,6 +9,7 @@ import {
   hermesConfigUrl,
   withHermesConfigProfile,
 } from '@/lib/hermes-config-client'
+import { SETTINGS_CONTROL_CLASS } from '@/components/settings/settings-section'
 import { cn } from '@/lib/utils'
 
 export const PROVIDER_CARDS: Array<{
@@ -683,12 +683,14 @@ export function ModelProviderPanel({
     }
   }
 
-  const cardStyle: React.CSSProperties = {
-    backgroundColor: 'var(--theme-card)',
-    border: '1px solid var(--theme-border)',
-    color: 'var(--theme-text)',
-  }
-  const mutedStyle: React.CSSProperties = { color: 'var(--theme-muted)' }
+  const panelClass =
+    'space-y-3 rounded-xl border border-primary-200 bg-primary-50/80 px-3 py-2.5'
+  const mutedClass = 'text-primary-600'
+  const fieldClass = cn(SETTINGS_CONTROL_CLASS, 'font-mono')
+  const chipClass =
+    'rounded-md border border-primary-200 bg-primary-100/70 px-2.5 py-1 text-xs font-medium text-primary-900 transition-colors'
+  const chipActiveClass =
+    'border-[var(--theme-accent)] bg-[var(--theme-accent-subtle)] text-primary-900'
 
   return (
     <div className="space-y-5">
@@ -711,13 +713,10 @@ export function ModelProviderPanel({
       )}
 
       <div>
-        <p
-          className="mb-1 text-xs font-semibold uppercase tracking-wider"
-          style={mutedStyle}
-        >
+        <p className={cn('mb-1 text-sm font-medium text-primary-900')}>
           Provider
         </p>
-        <p className="mb-3 text-[11px]" style={mutedStyle}>
+        <p className={cn('mb-3 text-xs', mutedClass)}>
           {configureOnly
             ? 'Configure URL, keys, and OAuth for each provider. Settings are copied into every profile.'
             : 'Select your AI provider. OAuth providers authenticate via browser.'}
@@ -782,13 +781,12 @@ export function ModelProviderPanel({
                   if (action === 'select') selectProvider(p.id)
                 }}
                 className={cn(
-                  'flex flex-col items-start gap-1 rounded-xl px-3 py-2.5 text-left transition-all',
+                  'flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-colors',
                   isActive
-                    ? 'ring-2 ring-accent-500 shadow-md'
-                    : 'hover:brightness-110',
+                    ? 'border-[var(--theme-accent)] bg-[var(--theme-accent-subtle)] shadow-sm'
+                    : 'border-primary-200 bg-primary-50/80 hover:bg-primary-100/70',
                   missingKey && 'opacity-60',
                 )}
-                style={cardStyle}
               >
                 <div className="flex w-full items-center justify-between">
                   <ProviderLogo provider={p.id} size={32} />
@@ -800,10 +798,10 @@ export function ModelProviderPanel({
                     <span className="size-2 rounded-full bg-green-500/40" />
                   ) : null}
                 </div>
-                <span className="mt-1 text-xs font-semibold">{p.name}</span>
-                <span className="text-[9px]" style={mutedStyle}>
-                  {label}
+                <span className="mt-1 text-xs font-semibold text-primary-900">
+                  {p.name}
                 </span>
+                <span className={cn('text-[10px]', mutedClass)}>{label}</span>
               </button>
             )
           })}
@@ -815,20 +813,20 @@ export function ModelProviderPanel({
       activeCard?.source === 'builtin' &&
       activeCard.authType === 'api_key' &&
       activeCard.envKey ? (
-        <div className="space-y-2 rounded-xl px-3 py-2.5" style={cardStyle}>
+        <div className={panelClass}>
           <p className="text-sm font-semibold">{activeCard.name}</p>
           <label className="block space-y-1">
-            <span className="text-xs font-medium" style={mutedStyle}>
+            <span className={cn("text-xs font-medium", mutedClass)}>
               key_env
             </span>
             <input
               value={activeCard.envKey}
               readOnly
-              className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 font-mono text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+              className={fieldClass}
             />
           </label>
           <label className="block space-y-1">
-            <span className="text-xs font-medium" style={mutedStyle}>
+            <span className={cn("text-xs font-medium", mutedClass)}>
               Secret value
             </span>
             <input
@@ -840,7 +838,7 @@ export function ModelProviderPanel({
                   ? 'Leave blank to keep'
                   : 'Paste API key'
               }
-              className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 font-mono text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+              className={fieldClass}
             />
           </label>
           <div className="flex justify-end gap-2">
@@ -905,23 +903,23 @@ export function ModelProviderPanel({
       ) : null}
 
       {onSaveExtraProvider && activeCard?.source === 'catalog' ? (
-        <div className="space-y-2 rounded-xl px-3 py-2.5" style={cardStyle}>
+        <div className={panelClass}>
           <p className="text-sm font-semibold">
-            {activeCard?.name || activeProvider}
+            {activeCard.name || activeProvider}
           </p>
           {(() => {
-            const catalogKeyEnv = extraDraft.key_env || activeCard?.envKey || ''
+            const catalogKeyEnv = extraDraft.key_env || activeCard.envKey || ''
             const catalogKeyConfigured = isProviderKeyConfigured(
               {
                 envKey: catalogKeyEnv,
-                keyConfigured: activeCard?.keyConfigured,
+                keyConfigured: activeCard.keyConfigured,
               },
               configuredKeys,
             )
             return (
               <>
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium" style={mutedStyle}>
+                  <span className={cn("text-xs font-medium", mutedClass)}>
                     Base URL
                   </span>
                   <input
@@ -933,7 +931,7 @@ export function ModelProviderPanel({
                       }))
                     }
                     placeholder="https://host/v1"
-                    className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 font-mono text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                    className={fieldClass}
                   />
                 </label>
                 <div className="grid gap-2 md:grid-cols-2">
@@ -946,7 +944,7 @@ export function ModelProviderPanel({
                       }))
                     }
                     placeholder="key_env (optional)"
-                    className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 font-mono text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                    className={fieldClass}
                   />
                   <input
                     type="password"
@@ -962,11 +960,11 @@ export function ModelProviderPanel({
                         ? 'Leave blank to keep'
                         : 'Paste API key'
                     }
-                    className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 font-mono text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                    className={fieldClass}
                   />
                 </div>
                 <label className="block space-y-1.5">
-                  <span className="text-xs font-medium" style={mutedStyle}>
+                  <span className={cn("text-xs font-medium", mutedClass)}>
                     Models
                   </span>
                   {extraDraft.models.length > 0 ? (
@@ -974,7 +972,7 @@ export function ModelProviderPanel({
                       {extraDraft.models.map((model) => (
                         <span
                           key={model}
-                          className="inline-flex items-center gap-1 rounded-md border border-primary-200 bg-primary-50 px-2 py-1 font-mono text-xs text-primary-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                          className="inline-flex items-center gap-1 rounded-md border border-primary-200 bg-primary-100/70 px-2 py-0.5 text-xs font-medium text-primary-900"
                         >
                           {model}
                           <button
@@ -996,7 +994,7 @@ export function ModelProviderPanel({
                       ))}
                     </div>
                   ) : (
-                    <p className="text-xs" style={mutedStyle}>
+                    <p className={cn("text-xs", mutedClass)}>
                       No models yet. Add model ids used by this gateway.
                     </p>
                   )}
@@ -1011,7 +1009,7 @@ export function ModelProviderPanel({
                         }
                       }}
                       placeholder="e.g. Kimi-K2.7-Code"
-                      className="h-9 min-w-0 flex-1 rounded-lg border border-primary-200 bg-primary-50 px-3 font-mono text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                      className={cn(fieldClass, "min-w-0 flex-1")}
                     />
                     <Button
                       type="button"
@@ -1087,7 +1085,7 @@ export function ModelProviderPanel({
       ) : null}
 
       {oauthProviderId ? (
-        <div className="rounded-xl px-3 py-2.5" style={cardStyle}>
+        <div className={panelClass}>
           {(() => {
             const provider = cards.find((p) => p.id === oauthProviderId)
             if (!provider) return null
@@ -1135,7 +1133,7 @@ export function ModelProviderPanel({
       ) : null}
 
       {localProviderId ? (
-        <div className="rounded-xl px-3 py-2.5" style={cardStyle}>
+        <div className={panelClass}>
           {(() => {
             const provider = cards.find((p) => p.id === localProviderId)
             if (!provider) return null
@@ -1170,10 +1168,9 @@ export function ModelProviderPanel({
                 {models.length > 0 ? (
                   <div>
                     <p
-                      className="mb-2 text-xs font-semibold uppercase tracking-wider"
-                      style={mutedStyle}
+                      className={cn('mb-2 text-xs font-medium', mutedClass)}
                     >
-                      Detected Models
+                      Detected models
                     </p>
                     <div className="flex flex-wrap gap-2">
                       {models.map((model) => (
@@ -1189,13 +1186,12 @@ export function ModelProviderPanel({
                             setActiveModel(model.id)
                           }}
                           className={cn(
-                            'rounded-lg px-3 py-1.5 text-xs font-medium transition-all hover:brightness-110',
+                            chipClass,
+                            'hover:bg-primary-100',
                             activeProvider === provider.id &&
-                              activeModel === model.id
-                              ? 'ring-2 ring-accent-500'
-                              : '',
+                              activeModel === model.id &&
+                              chipActiveClass,
                           )}
-                          style={cardStyle}
                         >
                           {model.id}
                           {defaultProvider === provider.id &&
@@ -1236,8 +1232,7 @@ export function ModelProviderPanel({
       activeProvider ? (
         <div>
           <p
-            className="mb-1 text-xs font-semibold uppercase tracking-wider"
-            style={mutedStyle}
+            className={cn('mb-1 text-xs font-medium', mutedClass)}
           >
             Model — pick one, then confirm below
           </p>
@@ -1256,15 +1251,13 @@ export function ModelProviderPanel({
                 aria-pressed={activeModel === model}
                 onClick={() => setActiveModel(model)}
                 className={cn(
-                  'rounded-lg px-3 py-1.5 text-xs font-medium transition-all',
-                  activeModel === model
-                    ? 'ring-2 ring-accent-500'
-                    : 'hover:brightness-110',
-                  defaultProvider === activeProvider && defaultModelId === model
-                    ? 'border border-accent-500/40'
-                    : '',
+                  chipClass,
+                  'hover:bg-primary-100',
+                  activeModel === model && chipActiveClass,
+                  defaultProvider === activeProvider &&
+                    defaultModelId === model &&
+                    'border-[var(--theme-accent)]/50',
                 )}
-                style={cardStyle}
               >
                 {model}
                 {defaultProvider === activeProvider && defaultModelId === model
@@ -1294,12 +1287,11 @@ export function ModelProviderPanel({
       {showApiKeys && !configureOnly ? (
         <div>
           <p
-            className="mb-1 text-xs font-semibold uppercase tracking-wider"
-            style={mutedStyle}
+            className={cn('mb-1 text-xs font-medium', mutedClass)}
           >
-            API Keys
+            API keys
           </p>
-          <p className="mb-2 text-[11px]" style={mutedStyle}>
+          <p className={cn("mb-2 text-[11px]", mutedClass)}>
             API keys are global and stored in ~/.hermes/.env
           </p>
           <div className="space-y-1.5">
@@ -1312,8 +1304,7 @@ export function ModelProviderPanel({
                 return (
                   <div
                     key={p.id}
-                    className="flex items-center gap-3 rounded-xl px-3 py-2.5"
-                    style={cardStyle}
+                    className={cn('flex items-center gap-3', panelClass)}
                   >
                     <ProviderLogo
                       provider={p.id}
@@ -1322,15 +1313,14 @@ export function ModelProviderPanel({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium">{p.name}</div>
-                      <div className="text-[11px] font-mono" style={mutedStyle}>
+                      <div className={cn("text-[11px] font-mono", mutedClass)}>
                         {isEditing ? (
                           <input
                             type="password"
                             value={keyInput}
                             onChange={(e) => setKeyInput(e.target.value)}
                             placeholder={`Paste ${key}`}
-                            className="w-full rounded border-0 bg-transparent py-0.5 text-[11px] outline-none"
-                            style={{ color: 'var(--theme-text)' }}
+                            className="w-full rounded border-0 bg-transparent py-0.5 text-[11px] text-primary-900 outline-none"
                           />
                         ) : hasKey ? (
                           configuredKeys[key]
@@ -1340,30 +1330,28 @@ export function ModelProviderPanel({
                       </div>
                     </div>
                     {isEditing ? (
-                      <button
-                        type="button"
+                      <Button
+                        size="sm"
                         onClick={() => {
                           if (keyInput)
                             void saveGlobal({ env: { [key]: keyInput } })
                           setEditingKey(null)
                           setKeyInput('')
                         }}
-                        className="rounded-lg bg-accent-500 px-2 py-1 text-[11px] font-medium text-white"
                       >
                         Save
-                      </button>
+                      </Button>
                     ) : (
-                      <button
-                        type="button"
+                      <Button
+                        size="sm"
+                        variant="ghost"
                         onClick={() => {
                           setEditingKey(key)
                           setKeyInput('')
                         }}
-                        className="text-xs font-medium"
-                        style={{ color: 'var(--theme-accent)' }}
                       >
                         {hasKey ? 'Update' : 'Add'}
-                      </button>
+                      </Button>
                     )}
                   </div>
                 )
@@ -1373,22 +1361,21 @@ export function ModelProviderPanel({
       ) : null}
 
       {!configureOnly ? (
-        <div className="rounded-xl px-3 py-2.5" style={cardStyle}>
+        <div className={panelClass}>
           <div className="mb-2 flex items-center gap-2">
             <span className="size-2 animate-pulse rounded-full bg-green-500" />
             <span
-              className="text-xs font-semibold uppercase tracking-wider"
-              style={mutedStyle}
+              className={cn('text-xs font-medium', mutedClass)}
             >
               Runtime
             </span>
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-            <span style={mutedStyle}>Model</span>
+            <span className={mutedClass}>Model</span>
             <span className="font-mono font-medium">
               {defaultModelId || activeModel || '—'}
             </span>
-            <span style={mutedStyle}>Provider</span>
+            <span className={mutedClass}>Provider</span>
             <span className="font-mono font-medium">
               {cards.find((p) => p.id === (defaultProvider || activeProvider))
                 ?.name ||
@@ -1396,7 +1383,7 @@ export function ModelProviderPanel({
                 activeProvider ||
                 '—'}
             </span>
-            <span style={mutedStyle}>Config</span>
+            <span className={mutedClass}>Config</span>
             <span className="font-mono font-medium">{configPathLabel}</span>
           </div>
         </div>

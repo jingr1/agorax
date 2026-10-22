@@ -19,12 +19,10 @@ import {
   VolumeHighIcon,
 } from '@hugeicons/core-free-icons'
 import { Component, useEffect, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
-import { ModelProviderPanel } from './model-provider-panel'
-import { ClaudeCodeSettingsPanel } from './claude-code-settings-panel'
 import { agentRuntimeLabel } from '@/lib/managed-agent-runtime/agent-targets'
-import { CodexSettingsPanel } from './codex-settings-panel'
 import { UsagePricingPanel } from './usage-pricing-panel'
+import { AgentModelPanel } from '@/components/settings/agent-model-panel'
+import { ModelProviderScopePanel } from '@/components/settings/model-provider-scope'
 import type * as React from 'react'
 import type { AccentColor, SettingsThemeMode } from '@/hooks/use-settings'
 import type { LoaderStyle } from '@/hooks/use-chat-settings'
@@ -61,12 +59,6 @@ import { BrailleSpinner } from '@/components/ui/braille-spinner'
 import { ThreeDotsSpinner } from '@/components/ui/three-dots-spinner'
 import { applyAccentColor } from '@/lib/accent-colors'
 import { useProfiles } from '@/screens/chat/hooks/use-profiles'
-import {
-  profileConfigPathLabel,
-  readModelProviderFromConfig,
-  saveProfileModelProvider,
-} from '@/lib/model-provider'
-import { useProviderCatalog } from '@/components/settings/provider-catalog-panel'
 import { fetchAgents } from '@/lib/agent-api'
 import {
   DialogClose,
@@ -179,41 +171,12 @@ const SETTINGS_CARD_CLASS =
 
 // ── Section components ──────────────────────────────────────────────────
 
-function HermesContent({ profileName }: { profileName?: string }) {
-  const queryClient = useQueryClient()
-  const { activeProfileName, isReady } = useProfiles()
-  const { catalog } = useProviderCatalog()
-  const [initialProvider, setInitialProvider] = useState('')
-  const [initialModel, setInitialModel] = useState('')
-  const [loaded, setLoaded] = useState(false)
+function HermesMemoryExtras({ profileName }: { profileName: string }) {
   const [memEnabled, setMemEnabled] = useState(true)
   const [userProfileEnabled, setUserProfileEnabled] = useState(true)
 
-  const targetProfileName = profileName || activeProfileName
-
   useEffect(() => {
-    if (!isReady) return
-    let cancelled = false
-    setLoaded(false)
-    fetch(`/api/profiles/read?name=${encodeURIComponent(targetProfileName)}`)
-      .then((r) => r.json())
-      .then((d: { profile?: { config?: Record<string, unknown> } }) => {
-        if (cancelled) return
-        const mp = readModelProviderFromConfig(d.profile?.config)
-        setInitialProvider(mp.provider)
-        setInitialModel(mp.model)
-        setLoaded(true)
-      })
-      .catch(() => {
-        if (!cancelled) setLoaded(true)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [targetProfileName, isReady])
-
-  useEffect(() => {
-    fetch(hermesConfigUrl(targetProfileName))
+    fetch(hermesConfigUrl(profileName))
       .then((r) => r.json())
       .then((d: { config?: { memory?: Record<string, unknown> } }) => {
         const mem = d.config?.memory ?? {}
@@ -221,15 +184,15 @@ function HermesContent({ profileName }: { profileName?: string }) {
         setUserProfileEnabled(mem.user_profile_enabled !== false)
       })
       .catch(() => {})
-  }, [targetProfileName])
+  }, [profileName])
 
   const saveMemory = async (patch: Record<string, unknown>) => {
     try {
-      await fetch(hermesConfigUrl(targetProfileName), {
+      await fetch(hermesConfigUrl(profileName), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
-          withHermesConfigProfile(targetProfileName, {
+          withHermesConfigProfile(profileName, {
             config: { memory: patch },
           }),
         ),
@@ -247,86 +210,81 @@ function HermesContent({ profileName }: { profileName?: string }) {
   const mutedStyle: React.CSSProperties = { color: 'var(--theme-muted)' }
 
   return (
-    <div className="space-y-5">
-      <SectionHeader
-        title="Model"
-        description={`Active profile: ${targetProfileName}. Changes apply only to this profile.`}
-      />
-      {loaded ? (
-        <ModelProviderPanel
-          key={`${targetProfileName}:${catalog?.providers.map((p) => p.id).join(',')}`}
-          profileName={targetProfileName}
-          initialProvider={initialProvider}
-          initialModel={initialModel}
-          banner={`Editing profile ${targetProfileName}. Use All settings for global or other profiles.`}
-          configPathLabel={profileConfigPathLabel(targetProfileName)}
-          showApiKeys={false}
-          extraProviders={catalog?.providers ?? []}
-          onSetDefault={async (providerId, modelId) => {
-            const message = await saveProfileModelProvider(
-              targetProfileName,
-              providerId,
-              modelId,
-            )
-            void queryClient.invalidateQueries({
-              queryKey: ['profiles', 'chat'],
-            })
-            void queryClient.invalidateQueries({
-              queryKey: ['claude', 'models'],
-            })
-            return message
-          }}
-        />
-      ) : (
-        <div className="h-20 animate-pulse rounded-lg bg-primary-100/70 dark:bg-neutral-800" />
-      )}
-
-      <div>
-        <p
-          className="mb-1 text-xs font-semibold uppercase tracking-wider"
-          style={mutedStyle}
+    <div>
+      <p
+        className="mb-1 text-xs font-semibold uppercase tracking-wider"
+        style={mutedStyle}
+      >
+        Memory
+      </p>
+      <div className="space-y-1.5">
+        <div
+          className="flex items-center justify-between rounded-xl px-3 py-2.5"
+          style={cardStyle}
         >
-          Memory
-        </p>
-        <div className="space-y-1.5">
-          <div
-            className="flex items-center justify-between rounded-xl px-3 py-2.5"
-            style={cardStyle}
-          >
-            <div>
-              <div className="text-sm font-medium">Memory</div>
-              <div className="text-[11px]" style={mutedStyle}>
-                Store & recall memories across sessions
-              </div>
+          <div>
+            <div className="text-sm font-medium">Memory</div>
+            <div className="text-[11px]" style={mutedStyle}>
+              Store & recall memories across sessions
             </div>
-            <Switch
-              checked={memEnabled}
-              onCheckedChange={(c) => {
-                setMemEnabled(c)
-                void saveMemory({ memory_enabled: c })
-              }}
-            />
           </div>
-          <div
-            className="flex items-center justify-between rounded-xl px-3 py-2.5"
-            style={cardStyle}
-          >
-            <div>
-              <div className="text-sm font-medium">User Profile</div>
-              <div className="text-[11px]" style={mutedStyle}>
-                Remember preferences & context
-              </div>
+          <Switch
+            checked={memEnabled}
+            onCheckedChange={(c) => {
+              setMemEnabled(c)
+              void saveMemory({ memory_enabled: c })
+            }}
+          />
+        </div>
+        <div
+          className="flex items-center justify-between rounded-xl px-3 py-2.5"
+          style={cardStyle}
+        >
+          <div>
+            <div className="text-sm font-medium">User Profile</div>
+            <div className="text-[11px]" style={mutedStyle}>
+              Remember preferences & context
             </div>
-            <Switch
-              checked={userProfileEnabled}
-              onCheckedChange={(c) => {
-                setUserProfileEnabled(c)
-                void saveMemory({ user_profile_enabled: c })
-              }}
-            />
           </div>
+          <Switch
+            checked={userProfileEnabled}
+            onCheckedChange={(c) => {
+              setUserProfileEnabled(c)
+              void saveMemory({ user_profile_enabled: c })
+            }}
+          />
         </div>
       </div>
+      <p className="mt-3 text-[11px]" style={mutedStyle}>
+        <a
+          href="/settings?section=model&pane=provider"
+          className="font-medium underline underline-offset-2"
+        >
+          Edit shared providers
+        </a>
+      </p>
+    </div>
+  )
+}
+
+function HermesContent({ profileName }: { profileName?: string }) {
+  const { activeProfileName, isReady } = useProfiles()
+  const targetProfileName = profileName || activeProfileName || 'default'
+
+  return (
+    <div className="space-y-4">
+      {!isReady ? (
+        <div className="h-20 animate-pulse rounded-lg bg-primary-100/70 dark:bg-neutral-800" />
+      ) : (
+        <>
+          <ModelProviderScopePanel
+            mode="model"
+            profileName={targetProfileName}
+            lockProfile
+          />
+          <HermesMemoryExtras profileName={targetProfileName} />
+        </>
+      )}
     </div>
   )
 }
@@ -1779,15 +1737,20 @@ export function SettingsDialog({
           </div>
         )
       }
-      if (agent.runtime === 'hermes') {
-        return <HermesContent profileName={hermesProfileName} />
-      }
-      if (agent.runtime === 'codex') {
-        return <CodexSettingsPanel agentId={agent.agentId} />
-      }
-      // Generic managed-runtime settings for every other non-hermes runtime
-      // (claude-code, opencode, cursor, kimi, and future managed backends).
-      return <ClaudeCodeSettingsPanel agentId={agent.agentId} />
+      const profileForAgent =
+        agent.runtime === 'hermes'
+          ? hermesProfileName || agent.agentId
+          : 'default'
+      return (
+        <AgentModelPanel
+          agent={agent}
+          hermesProfile={profileForAgent}
+          onHermesProfileChange={() => {}}
+          hermesExtras={(profile) => (
+            <HermesMemoryExtras profileName={profile} />
+          )}
+        />
+      )
     }
     return renderSettingsSection(active, hermesProfileName)
   }
@@ -1892,7 +1855,11 @@ export function SettingsDialog({
             Most changes save automatically; the default model commits only when
             you click Set as default.{' '}
             <a
-              href="/settings"
+              href={
+                agent
+                  ? `/settings?section=model&pane=model&agent=${encodeURIComponent(agent.agentId)}`
+                  : '/settings?section=model&pane=provider'
+              }
               className="ml-2 font-medium underline underline-offset-2 hover:text-primary-700 dark:hover:text-neutral-200"
             >
               All settings →

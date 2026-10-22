@@ -1,8 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import type * as React from 'react'
 import { Button } from '@/components/ui/button'
+import {
+  SETTINGS_CONTROL_CLASS,
+  SettingsRow,
+} from '@/components/settings/settings-section'
 import { cn } from '@/lib/utils'
 
 export type CatalogProvider = {
@@ -33,9 +36,6 @@ type CatalogResponse = {
   selection?: ProfileProviderSelection | null
   message?: string
 }
-
-const fieldClassName =
-  'h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 text-sm text-primary-900 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100'
 
 async function postCatalog(
   body: Record<string, unknown>,
@@ -68,18 +68,6 @@ export function ProviderCatalogPanel({
   const [addModels, setAddModels] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-
-  const panelStyle: React.CSSProperties = {
-    backgroundColor: 'var(--theme-card)',
-    border: '1px solid var(--theme-border)',
-    color: 'var(--theme-text)',
-  }
-  const rowStyle: React.CSSProperties = {
-    backgroundColor: 'var(--theme-panel)',
-    border: '1px solid var(--theme-border)',
-    color: 'var(--theme-text)',
-  }
-  const mutedStyle: React.CSSProperties = { color: 'var(--theme-muted)' }
 
   const flash = (text: string) => {
     setMessage(text)
@@ -136,21 +124,18 @@ export function ProviderCatalogPanel({
   return (
     <div
       className={
-        embedded ? 'space-y-4 border-t pt-4' : 'space-y-4 rounded-xl p-4'
+        embedded
+          ? 'space-y-4 border-t border-primary-200 pt-4'
+          : 'space-y-4 rounded-2xl border border-primary-200 bg-primary-50/80 p-4'
       }
-      style={embedded ? { borderColor: 'var(--theme-border)' } : panelStyle}
     >
       <div>
-        <p
-          className="text-sm font-semibold"
-          style={{ color: 'var(--theme-text)' }}
-        >
+        <p className="text-sm font-medium text-primary-900">
           Add custom provider
         </p>
-        <p className="mt-1 text-xs leading-relaxed" style={mutedStyle}>
-          Add a named OpenAI-compatible gateway. It appears in the provider card
-          grid above and is copied into every profile with URL, key, and model
-          list.
+        <p className="mt-0.5 text-xs text-primary-600">
+          Named OpenAI-compatible gateway — appears in the grid above and is
+          copied into every profile.
         </p>
       </div>
 
@@ -167,56 +152,77 @@ export function ProviderCatalogPanel({
         </div>
       ) : null}
 
-      <div className="space-y-2 rounded-lg p-3" style={rowStyle}>
-        <div className="grid gap-2 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-2">
+        <SettingsRow stacked label="Title">
           <input
             value={addName}
             onChange={(event) => setAddName(event.target.value)}
-            placeholder="Title (e.g. TokenX)"
-            className={fieldClassName}
+            placeholder="e.g. TokenX"
+            className={SETTINGS_CONTROL_CLASS}
           />
+        </SettingsRow>
+        <SettingsRow stacked label="Provider id">
           <input
             value={addId}
             onChange={(event) => setAddId(event.target.value)}
-            placeholder="Provider id (e.g. tokenx)"
-            className={fieldClassName + ' font-mono'}
+            placeholder="e.g. tokenx"
+            className={cn(SETTINGS_CONTROL_CLASS, 'font-mono')}
           />
-          <input
-            value={addUrl}
-            onChange={(event) => setAddUrl(event.target.value)}
-            placeholder="Base URL"
-            className={fieldClassName + ' font-mono md:col-span-2'}
-          />
+        </SettingsRow>
+        <div className="md:col-span-2">
+          <SettingsRow stacked label="Base URL">
+            <input
+              value={addUrl}
+              onChange={(event) => setAddUrl(event.target.value)}
+              placeholder="https://host/v1"
+              className={cn(SETTINGS_CONTROL_CLASS, 'font-mono')}
+            />
+          </SettingsRow>
+        </div>
+        <SettingsRow stacked label="key_env">
           <input
             value={addKeyEnv}
             onChange={(event) => setAddKeyEnv(event.target.value)}
-            placeholder="key_env (optional)"
-            className={fieldClassName + ' font-mono'}
+            placeholder="optional"
+            className={cn(SETTINGS_CONTROL_CLASS, 'font-mono')}
           />
+        </SettingsRow>
+        <SettingsRow stacked label="Secret">
           <input
             type="password"
             value={addKeyValue}
             onChange={(event) => setAddKeyValue(event.target.value)}
-            placeholder="Secret value (optional)"
-            className={fieldClassName + ' font-mono'}
+            placeholder="optional"
+            className={SETTINGS_CONTROL_CLASS}
           />
-          <textarea
-            value={addModels}
-            onChange={(event) => setAddModels(event.target.value)}
-            placeholder="Models (optional, one per line)"
-            rows={3}
-            className={fieldClassName + ' font-mono md:col-span-2 resize-y'}
-          />
-        </div>
-        <div className="flex justify-end">
-          <Button
-            size="sm"
-            disabled={saving || !addId.trim() || !addUrl.trim()}
-            onClick={() => void addProvider()}
+        </SettingsRow>
+        <div className="md:col-span-2">
+          <SettingsRow
+            stacked
+            label="Models"
+            description="Optional · one model id per line."
           >
-            Add provider
-          </Button>
+            <textarea
+              value={addModels}
+              onChange={(event) => setAddModels(event.target.value)}
+              placeholder={'Kimi-K2.7-Code\nDeepSeek-V4-Pro'}
+              rows={3}
+              className={cn(
+                SETTINGS_CONTROL_CLASS,
+                'h-auto min-h-[5rem] resize-y py-2 font-mono leading-5',
+              )}
+            />
+          </SettingsRow>
         </div>
+      </div>
+      <div className="flex justify-end">
+        <Button
+          size="sm"
+          disabled={saving || !addId.trim() || !addUrl.trim()}
+          onClick={() => void addProvider()}
+        >
+          Add provider
+        </Button>
       </div>
     </div>
   )

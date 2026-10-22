@@ -1,12 +1,16 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type * as React from 'react'
+import { AiBrain01Icon } from '@hugeicons/core-free-icons'
+import type { ExtraCatalogProvider } from '@/components/settings-dialog/model-provider-panel'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import {
-  mergeProviderCards,
-  type ExtraCatalogProvider,
-} from '@/components/settings-dialog/model-provider-panel'
+  SETTINGS_CONTROL_CLASS,
+  SettingsRow,
+  SettingsSection,
+} from '@/components/settings/settings-section'
+import { mergeProviderCards } from '@/components/settings-dialog/model-provider-panel'
 import { profileConfigPathLabel } from '@/lib/model-provider'
 import { cn } from '@/lib/utils'
 
@@ -23,14 +27,15 @@ type ProfileModelSelectorProps = {
   loaded: boolean
   loadError: string | null
   message: string | null
+  /** When true, profile is pinned by the parent agent filter. */
+  lockProfile?: boolean
   onProfileChange: (name: string) => void
   onSaveDefault: (providerId: string, modelId: string) => Promise<void>
   onSaveFallback: (providerId: string, modelId: string) => Promise<void>
   onClearFallback: () => Promise<void>
 }
 
-const selectClassName =
-  'control-surface h-9 w-full rounded-lg px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--theme-accent)]/35'
+const selectClassName = SETTINGS_CONTROL_CLASS
 
 export function ProfileModelSelector({
   profileName,
@@ -45,6 +50,7 @@ export function ProfileModelSelector({
   loaded,
   loadError,
   message,
+  lockProfile = false,
   onProfileChange,
   onSaveDefault,
   onSaveFallback,
@@ -86,7 +92,7 @@ export function ProfileModelSelector({
       const catalogEntry = catalog.find((entry) => entry.id === providerId)
       try {
         const params = new URLSearchParams({ provider: providerId })
-        if (profileName?.trim()) params.set('profile', profileName.trim())
+        if (profileName.trim()) params.set('profile', profileName.trim())
         const res = await fetch(
           `/api/hermes-proxy/api/available-models?${params.toString()}`,
         )
@@ -100,7 +106,6 @@ export function ProfileModelSelector({
       } catch {
         // fall through
       }
-      // Fallback: fetch full model catalog and filter by provider
       try {
         const res = await fetch('/api/models')
         if (res.ok) {
@@ -147,13 +152,6 @@ export function ProfileModelSelector({
     }
   }, [catalogProviders, draftFallbackProvider, fetchModels])
 
-  const panelStyle: React.CSSProperties = {
-    backgroundColor: 'var(--theme-card)',
-    border: '1px solid var(--theme-border)',
-    color: 'var(--theme-text)',
-  }
-  const mutedStyle: React.CSSProperties = { color: 'var(--theme-muted)' }
-
   const renderProviderSelect = (
     value: string,
     onChange: (next: string) => void,
@@ -182,7 +180,7 @@ export function ProfileModelSelector({
     <select
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className={selectClassName + ' font-mono'}
+      className={cn(selectClassName, 'font-mono')}
       disabled={!providerId}
     >
       <option value="">
@@ -200,50 +198,49 @@ export function ProfileModelSelector({
   )
 
   return (
-    <div className="space-y-4 rounded-xl p-4" style={panelStyle}>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p
-            className="text-sm font-semibold"
-            style={{ color: 'var(--theme-text)' }}
-          >
-            Profile selection
-          </p>
-          <p className="text-xs leading-relaxed" style={mutedStyle}>
-            Choose which provider and model this profile uses. Provider URLs and
-            keys are configured in the card grid above.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={profileName}
-            onChange={(event) => onProfileChange(event.target.value)}
-            className={selectClassName}
-          >
-            {profileNames.map((name) => (
-              <option key={name} value={name}>
-                {name}
-                {name === activeProfileName ? ' (active)' : ''}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={!isReady || profileName === activeProfileName}
-            onClick={() => onProfileChange(activeProfileName)}
-            className={cn(
-              'control-surface h-9 rounded-lg px-3 text-xs font-medium transition-colors hover:bg-[var(--theme-card2)]',
-              (!isReady || profileName === activeProfileName) && 'opacity-50',
-            )}
-          >
-            Use active profile
-          </button>
-        </div>
-      </div>
-
-      <p className="text-[11px] font-mono" style={mutedStyle}>
-        Writes to {profileConfigPathLabel(profileName)}
-      </p>
+    <SettingsSection
+      title={lockProfile ? 'Model' : 'Profile model'}
+      description={
+        lockProfile
+          ? 'Default and optional fallback for this agent.'
+          : 'Default and optional fallback for the selected profile.'
+      }
+      icon={AiBrain01Icon}
+      trailing={
+        lockProfile ? (
+          <Badge variant="outline" className="font-mono font-normal">
+            {profileName || 'default'}
+          </Badge>
+        ) : undefined
+      }
+    >
+      {!lockProfile ? (
+        <SettingsRow label="Profile" description="Which Hermes profile to edit.">
+          <div className="flex w-full flex-wrap items-center gap-2 md:w-auto">
+            <select
+              value={profileName}
+              onChange={(event) => onProfileChange(event.target.value)}
+              className={cn(selectClassName, 'md:min-w-[10rem]')}
+            >
+              {profileNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                  {name === activeProfileName ? ' (active)' : ''}
+                </option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={!isReady || profileName === activeProfileName}
+              onClick={() => onProfileChange(activeProfileName)}
+            >
+              Use active
+            </Button>
+          </div>
+        </SettingsRow>
+      ) : null}
 
       {loadError ? (
         <div className="rounded-lg bg-red-500/15 px-3 py-2 text-sm font-medium text-red-500 dark:text-red-400">
@@ -264,36 +261,24 @@ export function ProfileModelSelector({
       ) : null}
 
       {!loaded ? (
-        <div
-          className="h-24 animate-pulse rounded-xl"
-          style={{ backgroundColor: 'var(--theme-panel)' }}
-        />
+        <div className="h-24 animate-pulse rounded-xl bg-primary-100/70" />
       ) : (
-        <div className="space-y-4">
-          <div
-            className="space-y-2 rounded-lg p-3"
-            style={{ backgroundColor: 'var(--theme-panel)' }}
+        <>
+          <SettingsRow
+            stacked
+            label="Default"
+            description="Primary provider and model for this agent."
           >
-            <p
-              className="text-xs font-semibold uppercase tracking-wider"
-              style={mutedStyle}
-            >
-              Default model
-            </p>
-            <div className="grid gap-2 md:grid-cols-2">
-              <label className="space-y-1">
-                <span className="text-xs font-medium" style={mutedStyle}>
-                  Provider
-                </span>
+            <div className="grid w-full gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+              <label className="space-y-1.5">
+                <span className="text-xs text-primary-600">Provider</span>
                 {renderProviderSelect(draftDefaultProvider, (next) => {
                   setDraftDefaultProvider(next)
                   setDraftDefaultModel('')
                 })}
               </label>
-              <label className="space-y-1">
-                <span className="text-xs font-medium" style={mutedStyle}>
-                  Model
-                </span>
+              <label className="space-y-1.5">
+                <span className="text-xs text-primary-600">Model</span>
                 {renderModelSelect(
                   draftDefaultProvider,
                   draftDefaultModel,
@@ -301,10 +286,9 @@ export function ProfileModelSelector({
                   setDraftDefaultModel,
                 )}
               </label>
-            </div>
-            <div className="flex justify-end">
               <Button
                 size="sm"
+                className="sm:mb-0.5"
                 disabled={
                   saving !== null ||
                   !draftDefaultProvider.trim() ||
@@ -324,35 +308,26 @@ export function ProfileModelSelector({
                   })()
                 }}
               >
-                {saving === 'default' ? 'Saving…' : 'Save default'}
+                {saving === 'default' ? 'Saving…' : 'Save'}
               </Button>
             </div>
-          </div>
+          </SettingsRow>
 
-          <div
-            className="space-y-2 rounded-lg p-3"
-            style={{ backgroundColor: 'var(--theme-panel)' }}
+          <SettingsRow
+            stacked
+            label="Fallback"
+            description="Optional · used when the default provider fails."
           >
-            <p
-              className="text-xs font-semibold uppercase tracking-wider"
-              style={mutedStyle}
-            >
-              Fallback model (optional)
-            </p>
-            <div className="grid gap-2 md:grid-cols-2">
-              <label className="space-y-1">
-                <span className="text-xs font-medium" style={mutedStyle}>
-                  Provider
-                </span>
+            <div className="grid w-full gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+              <label className="space-y-1.5">
+                <span className="text-xs text-primary-600">Provider</span>
                 {renderProviderSelect(draftFallbackProvider, (next) => {
                   setDraftFallbackProvider(next)
                   setDraftFallbackModel('')
                 })}
               </label>
-              <label className="space-y-1">
-                <span className="text-xs font-medium" style={mutedStyle}>
-                  Model
-                </span>
+              <label className="space-y-1.5">
+                <span className="text-xs text-primary-600">Model</span>
                 {renderModelSelect(
                   draftFallbackProvider,
                   draftFallbackModel,
@@ -360,57 +335,61 @@ export function ProfileModelSelector({
                   setDraftFallbackModel,
                 )}
               </label>
+              <div className="flex gap-1.5 sm:mb-0.5">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={
+                    saving !== null ||
+                    (!fallbackProvider && !draftFallbackProvider)
+                  }
+                  onClick={() => {
+                    void (async () => {
+                      setSaving('clear')
+                      try {
+                        await onClearFallback()
+                        setDraftFallbackProvider('')
+                        setDraftFallbackModel('')
+                      } finally {
+                        setSaving(null)
+                      }
+                    })()
+                  }}
+                >
+                  {saving === 'clear' ? 'Clearing…' : 'Clear'}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={
+                    saving !== null ||
+                    !draftFallbackProvider.trim() ||
+                    !draftFallbackModel.trim()
+                  }
+                  onClick={() => {
+                    void (async () => {
+                      setSaving('fallback')
+                      try {
+                        await onSaveFallback(
+                          draftFallbackProvider.trim(),
+                          draftFallbackModel.trim(),
+                        )
+                      } finally {
+                        setSaving(null)
+                      }
+                    })()
+                  }}
+                >
+                  {saving === 'fallback' ? 'Saving…' : 'Save'}
+                </Button>
+              </div>
             </div>
-            <div className="flex justify-end gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={
-                  saving !== null ||
-                  (!fallbackProvider && !draftFallbackProvider)
-                }
-                onClick={() => {
-                  void (async () => {
-                    setSaving('clear')
-                    try {
-                      await onClearFallback()
-                      setDraftFallbackProvider('')
-                      setDraftFallbackModel('')
-                    } finally {
-                      setSaving(null)
-                    }
-                  })()
-                }}
-              >
-                {saving === 'clear' ? 'Clearing…' : 'Clear fallback'}
-              </Button>
-              <Button
-                size="sm"
-                disabled={
-                  saving !== null ||
-                  !draftFallbackProvider.trim() ||
-                  !draftFallbackModel.trim()
-                }
-                onClick={() => {
-                  void (async () => {
-                    setSaving('fallback')
-                    try {
-                      await onSaveFallback(
-                        draftFallbackProvider.trim(),
-                        draftFallbackModel.trim(),
-                      )
-                    } finally {
-                      setSaving(null)
-                    }
-                  })()
-                }}
-              >
-                {saving === 'fallback' ? 'Saving…' : 'Save fallback'}
-              </Button>
-            </div>
-          </div>
-        </div>
+          </SettingsRow>
+        </>
       )}
-    </div>
+
+      <p className="text-[11px] font-mono text-primary-600">
+        {profileConfigPathLabel(profileName)}
+      </p>
+    </SettingsSection>
   )
 }

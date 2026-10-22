@@ -219,12 +219,6 @@ function pruneRedundantBuiltinProviderFromAllProfiles(
   }
 }
 
-function pruneAllRedundantBuiltinProvidersFromProfiles(): void {
-  for (const id of BUILTIN_PROVIDER_IDS) {
-    pruneRedundantBuiltinProviderFromAllProfiles(id)
-  }
-}
-
 function syncProviderToAllProfiles(
   entry: CatalogFile['providers'][number],
 ): void {
@@ -532,7 +526,10 @@ function mergeCatalog(): CatalogFile {
   return merged
 }
 
-const PROVIDER_CATALOG_CACHE_TTL_MS = 5_000
+/** Catalog reads should stay cheap — prune mutates every profile and used to
+ *  dominate Model-page cold loads (~2s). Keep a short in-memory cache and
+ *  prune only on write paths (see syncProviderToAllProfiles). */
+const PROVIDER_CATALOG_CACHE_TTL_MS = 60_000
 let providerCatalogCache:
   | { catalog: ProviderCatalog; expiresAt: number }
   | undefined
@@ -542,7 +539,6 @@ export function __resetProviderCatalogCacheForTests(): void {
 }
 
 function buildProviderCatalog(): ProviderCatalog {
-  pruneAllRedundantBuiltinProvidersFromProfiles()
   return {
     providers: mergeCatalog()
       .providers.filter(

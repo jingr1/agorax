@@ -13,19 +13,29 @@ import {
   useProviderCatalog,
 } from '@/components/settings/provider-catalog-panel'
 import { ProfileModelSelector } from '@/components/settings/profile-model-selector'
+import { SettingsSection } from '@/components/settings/settings-section'
+import { CloudIcon } from '@hugeicons/core-free-icons'
+
+export type ModelProviderScopeMode = 'provider' | 'model'
 
 type ModelProviderScopePanelProps = {
+  /** `provider` = shared catalog only; `model` = per-profile/agent model pick. */
+  mode?: ModelProviderScopeMode
   onApplied?: (providerId: string, modelId: string) => void
   /** Controlled profile scope. When provided, the caller owns the selection
    *  (e.g. the Settings page shares it with the Terminal backend config). */
   profileName?: string
   onProfileChange?: (name: string) => void
+  /** When true, hide the profile dropdown (agent already pins the profile). */
+  lockProfile?: boolean
 }
 
 export function ModelProviderScopePanel({
+  mode = 'provider',
   onApplied,
   profileName,
   onProfileChange,
+  lockProfile = false,
 }: ModelProviderScopePanelProps) {
   const queryClient = useQueryClient()
   const { profiles, activeProfileName, isReady } = useProfiles()
@@ -54,20 +64,21 @@ export function ModelProviderScopePanel({
   }, [profiles])
 
   useEffect(() => {
+    if (mode !== 'model') return
     if (!isReady || scope) return
     if (onProfileChange) onProfileChange(activeProfileName || 'default')
     else setInternalScope(activeProfileName || 'default')
-  }, [activeProfileName, isReady, onProfileChange, scope])
+  }, [activeProfileName, isReady, mode, onProfileChange, scope])
 
   const loadScope = useCallback(
-    async (profileName: string) => {
-      if (!profileName) return
+    async (name: string) => {
+      if (!name) return
       setLoaded(false)
       setLoadError(null)
       try {
         const [profileRes, catalogRes] = await Promise.all([
-          fetch(`/api/profiles/read?name=${encodeURIComponent(profileName)}`),
-          refresh(profileName),
+          fetch(`/api/profiles/read?name=${encodeURIComponent(name)}`),
+          refresh(name),
         ])
         const data = (await profileRes.json()) as {
           error?: string
@@ -97,39 +108,24 @@ export function ModelProviderScopePanel({
   )
 
   useEffect(() => {
+    if (mode === 'provider') {
+      void refresh('default')
+      return
+    }
     if (!scope) return
     void loadScope(scope)
-  }, [loadScope, scope])
+  }, [loadScope, mode, refresh, scope])
 
   const catalogProviders = catalog?.providers ?? []
   const catalogKey = catalogProviders.map((provider) => provider.id).join(',')
 
-  return (
-    <div className="space-y-4">
-      <div
-        className="space-y-4 rounded-xl p-4"
-        style={{
-          backgroundColor: 'var(--theme-card)',
-          border: '1px solid var(--theme-border)',
-          color: 'var(--theme-text)',
-        }}
+  if (mode === 'provider') {
+    return (
+      <SettingsSection
+        title="Shared providers"
+        description="URL, keys, and OAuth — reused by every agent."
+        icon={CloudIcon}
       >
-        <div>
-          <p
-            className="text-sm font-semibold"
-            style={{ color: 'var(--theme-text)' }}
-          >
-            Provider configuration
-          </p>
-          <p
-            className="mt-1 text-xs leading-relaxed"
-            style={{ color: 'var(--theme-muted)' }}
-          >
-            Built-in providers and custom_providers share this card grid. URL,
-            keys, and OAuth are copied into every profile.
-          </p>
-        </div>
-
         <ModelProviderPanel
           key={`configure:${catalogKey}`}
           configureOnly
@@ -168,63 +164,66 @@ export function ModelProviderScopePanel({
           onCatalog={setCatalog}
           embedded
         />
-      </div>
+      </SettingsSection>
+    )
+  }
 
-      <ProfileModelSelector
-        profileName={scope}
-        profileNames={profileNames}
-        activeProfileName={activeProfileName}
-        isReady={isReady}
-        defaultProvider={initialProvider}
-        defaultModel={initialModel}
-        fallbackProvider={fallbackProvider}
-        fallbackModel={fallbackModel}
-        catalogProviders={catalogProviders}
-        loaded={loaded}
-        loadError={loadError}
-        message={selectMessage}
-        onProfileChange={handleProfileChange}
-        onSaveDefault={async (providerId, modelId) => {
-          const message = await saveProfileModelProvider(
-            scope,
-            providerId,
-            modelId,
-          )
-          setInitialProvider(providerId)
-          setInitialModel(modelId)
-          onApplied?.(providerId, modelId)
-          setSelectMessage(message || 'Default saved')
-          window.setTimeout(() => setSelectMessage(null), 3000)
-          void queryClient.invalidateQueries({ queryKey: ['profiles', 'chat'] })
-          void queryClient.invalidateQueries({ queryKey: ['claude', 'models'] })
-        }}
-        onSaveFallback={async (providerId, modelId) => {
-          const data = await postCatalog({
-            action: 'select-fallback',
-            name: scope,
-            providerId,
-            modelId,
-          })
-          if (data.catalog) setCatalog(data.catalog)
-          setFallbackProvider(providerId)
-          setFallbackModel(modelId)
-          setSelectMessage(data.message || 'Fallback saved')
-          window.setTimeout(() => setSelectMessage(null), 3000)
-        }}
-        onClearFallback={async () => {
-          const data = await postCatalog({
-            action: 'select-fallback',
-            name: scope,
-            providerId: '',
-            modelId: '',
-          })
-          if (data.catalog) setCatalog(data.catalog)
-          setFallbackProvider('')
-          setFallbackModel('')
-          setSelectMessage(data.message || 'Fallback cleared')
-          window.setTimeout(() => setSelectMessage(null), 3000)
-        }}
-      />
-    </div>
+  return (
+    <ProfileModelSelector
+      profileName={scope}
+      profileNames={profileNames}
+      activeProfileName={activeProfileName}
+      isReady={isReady}
+      defaultProvider={initialProvider}
+      defaultModel={initialModel}
+      fallbackProvider={fallbackProvider}
+      fallbackModel={fallbackModel}
+      catalogProviders={catalogProviders}
+      loaded={loaded}
+      loadError={loadError}
+      message={selectMessage}
+      lockProfile={lockProfile}
+      onProfileChange={handleProfileChange}
+      onSaveDefault={async (providerId, modelId) => {
+        const message = await saveProfileModelProvider(
+          scope,
+          providerId,
+          modelId,
+        )
+        setInitialProvider(providerId)
+        setInitialModel(modelId)
+        onApplied?.(providerId, modelId)
+        setSelectMessage(message || 'Default saved')
+        window.setTimeout(() => setSelectMessage(null), 3000)
+        void queryClient.invalidateQueries({ queryKey: ['profiles', 'chat'] })
+        void queryClient.invalidateQueries({ queryKey: ['claude', 'models'] })
+      }}
+      onSaveFallback={async (providerId, modelId) => {
+        const data = await postCatalog({
+          action: 'select-fallback',
+          name: scope,
+          providerId,
+          modelId,
+        })
+        if (data.catalog) setCatalog(data.catalog)
+        setFallbackProvider(providerId)
+        setFallbackModel(modelId)
+        setSelectMessage(data.message || 'Fallback saved')
+        window.setTimeout(() => setSelectMessage(null), 3000)
+      }}
+      onClearFallback={async () => {
+        const data = await postCatalog({
+          action: 'select-fallback',
+          name: scope,
+          providerId: '',
+          modelId: '',
+        })
+        if (data.catalog) setCatalog(data.catalog)
+        setFallbackProvider('')
+        setFallbackModel('')
+        setSelectMessage(data.message || 'Fallback cleared')
+        window.setTimeout(() => setSelectMessage(null), 3000)
+      }}
+    />
   )
 }

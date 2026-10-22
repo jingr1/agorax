@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { CloudIcon, SourceCodeSquareIcon } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
+import {
+  SETTINGS_CONTROL_CLASS,
+  SettingsRow,
+  SettingsSection,
+} from '@/components/settings/settings-section'
 import { cn } from '@/lib/utils'
 
 type CatalogProviderLite = {
@@ -166,50 +172,31 @@ export function CodexSettingsPanel({ onSaved }: CodexSettingsPanelProps) {
     setSaving(false)
   }
 
-  const cardStyle: React.CSSProperties = {
-    backgroundColor: 'var(--theme-card)',
-    border: '1px solid var(--theme-border)',
-    color: 'var(--theme-text)',
-  }
-  const mutedStyle: React.CSSProperties = { color: 'var(--theme-muted)' }
-  const inputClass =
-    'h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 text-sm text-primary-900 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100'
-
   if (loading) {
-    return (
-      <div
-        className="h-20 animate-pulse rounded-lg"
-        style={{ backgroundColor: 'var(--theme-panel)' }}
-      />
-    )
+    return <div className="h-20 animate-pulse rounded-xl bg-primary-100/70" />
   }
 
   return (
     <div className="space-y-4">
-      {msg && (
+      {msg ? (
         <div
           className={cn(
-            'rounded-lg px-3 py-1.5 text-xs font-medium',
+            'rounded-lg px-3 py-2 text-sm font-medium',
             msg === 'Saved'
-              ? 'bg-green-500/15 text-green-400'
-              : 'bg-red-500/15 text-red-400',
+              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+              : 'bg-red-500/15 text-red-500 dark:text-red-400',
           )}
         >
           {msg}
         </div>
-      )}
+      ) : null}
 
-      <div
-        className="space-y-3 rounded-xl border px-4 py-3 shadow-sm"
-        style={cardStyle}
+      <SettingsSection
+        title="Provider"
+        description="Selecting a Provider copies its base URL and key into ~/.codex/config.toml."
+        icon={CloudIcon}
       >
-        <div>
-          <label
-            className="mb-1 block text-xs font-medium"
-            style={mutedStyle}
-          >
-            Provider
-          </label>
+        <SettingsRow stacked label="Provider">
           <select
             value={provider}
             onChange={(e) => {
@@ -233,7 +220,7 @@ export function CodexSettingsPanel({ onSaved }: CodexSettingsPanelProps) {
                 setCustomModel('')
               }
             }}
-            className={inputClass}
+            className={SETTINGS_CONTROL_CLASS}
           >
             {providerOptions.map((p) => (
               <option key={p.id} value={p.id}>
@@ -241,55 +228,51 @@ export function CodexSettingsPanel({ onSaved }: CodexSettingsPanelProps) {
               </option>
             ))}
           </select>
-          <p className="mt-1 text-[11px]" style={mutedStyle}>
-            Selecting a Hermes Model &amp; Provider entry copies its base URL
-            and API key into ~/.codex/config.toml as a{' '}
-            <code>[model_providers.&lt;id&gt;]</code> block.
-          </p>
-        </div>
+        </SettingsRow>
+      </SettingsSection>
 
-        <div>
-          <label
-            className="mb-1 block text-xs font-medium"
-            style={mutedStyle}
-          >
-            Model
-          </label>
-          <select
-            value={model}
-            onChange={(e) => {
-              const value = e.target.value
-              setModel(value)
-              if (value !== '__custom__') setCustomModel('')
-            }}
-            className={inputClass}
-          >
-            <option value="">— select model —</option>
-            {modelOptions.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
-            <option value="__custom__">Custom</option>
-          </select>
-          {model === '__custom__' && (
-            <input
-              type="text"
-              value={customModel}
-              onChange={(e) => setCustomModel(e.target.value)}
-              placeholder="e.g. gpt-5.6-terra"
-              className={cn(inputClass, 'mt-2')}
-            />
-          )}
-        </div>
-      </div>
+      <SettingsSection
+        title="Model"
+        description="Default Codex model for this agent."
+        icon={SourceCodeSquareIcon}
+      >
+        <SettingsRow stacked label="Model">
+          <div className="space-y-2">
+            <select
+              value={model}
+              onChange={(e) => {
+                const value = e.target.value
+                setModel(value)
+                if (value !== '__custom__') setCustomModel('')
+              }}
+              className={SETTINGS_CONTROL_CLASS}
+            >
+              <option value="">Select model…</option>
+              {modelOptions.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+              <option value="__custom__">Custom</option>
+            </select>
+            {model === '__custom__' ? (
+              <input
+                type="text"
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+                placeholder="e.g. gpt-5.6-terra"
+                className={cn(SETTINGS_CONTROL_CLASS, 'font-mono')}
+              />
+            ) : null}
+          </div>
+        </SettingsRow>
+      </SettingsSection>
 
       <div className="flex justify-end">
         <Button
           size="sm"
           onClick={() => void handleSave()}
           disabled={saving}
-          className="h-9 rounded-lg px-4 text-sm"
         >
           {saving ? 'Saving…' : 'Save'}
         </Button>

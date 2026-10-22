@@ -218,7 +218,7 @@ describe('provider catalog', () => {
     expect(rootEnv).not.toContain('DEEPSEEK_API_KEY=')
   })
 
-  it('prunes redundant builtin provider blocks discovered from config', () => {
+  it('prunes redundant builtin provider blocks on catalog write, not on read', () => {
     seedProfiles()
     fs.writeFileSync(
       path.join(tempHome, '.hermes', 'config.yaml'),
@@ -235,7 +235,18 @@ describe('provider catalog', () => {
       ].join('\n'),
       'utf-8',
     )
+    // Reads must not mutate profiles (Model page cold path).
     getProviderCatalog()
+    expect(readProfile('default').config.providers).toHaveProperty('deepseek')
+
+    // Writes still prune redundant builtin blocks via syncProviderToAllProfiles.
+    upsertCatalogProvider({
+      id: 'deepseek',
+      name: 'DeepSeek',
+      base_url: 'https://api.deepseek.com/v1',
+      key_env: 'DEEPSEEK_API_KEY',
+      models: ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    })
     expect(readProfile('default').config.providers).not.toHaveProperty(
       'deepseek',
     )

@@ -26,10 +26,13 @@ import {
   SettingsMobilePills,
   SettingsSidebar,
 } from '@/components/settings/settings-sidebar'
-import { ModelProviderScopePanel } from '@/components/settings/model-provider-scope'
+import { ModelSettingsPage } from '@/components/settings/model-settings-page'
+import type { ModelSettingsPane } from '@/components/settings/model-settings-page'
+import {
+  SettingsRow,
+  SettingsSection,
+} from '@/components/settings/settings-section'
 import { useProfiles } from '@/screens/chat/hooks/use-profiles'
-import { ClaudeCodeSettingsPanel } from '@/components/settings-dialog'
-import { CodexSettingsPanel } from '@/components/settings-dialog/codex-settings-panel'
 import { UsagePricingPanel } from '@/components/settings-dialog/usage-pricing-panel'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Button } from '@/components/ui/button'
@@ -54,11 +57,16 @@ const VALID_SECTION_IDS: ReadonlyArray<SettingsNavId> = SETTINGS_NAV_ITEMS.map(
   (item) => item.id,
 )
 
+type SettingsSearch = {
+  section?: SettingsNavId
+  provider?: string
+  pane?: ModelSettingsPane
+  agent?: string
+}
+
 export const Route = createFileRoute('/settings/')({
   ssr: false,
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): { section?: SettingsNavId; provider?: string } => {
+  validateSearch: (search: Record<string, unknown>): SettingsSearch => {
     const raw = typeof search.section === 'string' ? search.section : undefined
     // Legacy bookmark: Settings → Agents moved to /agents
     if (raw === 'agents') {
@@ -66,8 +74,41 @@ export const Route = createFileRoute('/settings/')({
     }
     const provider =
       typeof search.provider === 'string' ? search.provider : undefined
+    const agent =
+      typeof search.agent === 'string' && search.agent.trim()
+        ? search.agent.trim()
+        : undefined
+    const rawPane =
+      search.pane === 'provider' || search.pane === 'model'
+        ? search.pane
+        : undefined
+
+    // Legacy bookmarks: Claude Code / Codex were separate sidebar sections
+    if (raw === 'claude-code') {
+      return {
+        section: 'model',
+        pane: 'model',
+        agent: agent || 'cc-impl',
+        provider,
+      }
+    }
+    if (raw === 'codex') {
+      return {
+        section: 'model',
+        pane: 'model',
+        agent: agent || 'codex-impl',
+        provider,
+      }
+    }
+
     if (raw && (VALID_SECTION_IDS as ReadonlyArray<string>).includes(raw)) {
-      return { section: raw as SettingsNavId, provider }
+      const section = raw as SettingsNavId
+      if (section === 'model') {
+        const pane: ModelSettingsPane =
+          rawPane ?? (agent ? 'model' : 'provider')
+        return { section, provider, pane, agent }
+      }
+      return { section, provider }
     }
     return { provider }
   },
@@ -270,56 +311,6 @@ function WorkspaceThemePicker() {
   )
 }
 
-type SectionProps = {
-  title: string
-  description: string
-  icon: React.ComponentProps<typeof HugeiconsIcon>['icon']
-  children: React.ReactNode
-}
-
-function SettingsSection({ title, description, icon, children }: SectionProps) {
-  return (
-    <section className="rounded-2xl border border-primary-200 bg-primary-50/80 p-4 shadow-sm backdrop-blur-xl md:p-5">
-      <div className="mb-4 flex items-start gap-3">
-        <span className="inline-flex size-9 items-center justify-center rounded-xl border border-primary-200 bg-primary-100/70">
-          <HugeiconsIcon icon={icon} size={20} strokeWidth={1.5} />
-        </span>
-        <div className="min-w-0">
-          <h2 className="text-base font-medium text-primary-900 text-balance">
-            {title}
-          </h2>
-          <p className="text-sm text-primary-600 text-pretty">{description}</p>
-        </div>
-      </div>
-      <div className="space-y-4">{children}</div>
-    </section>
-  )
-}
-
-type RowProps = {
-  label: string
-  description?: string
-  children: React.ReactNode
-}
-
-function SettingsRow({ label, description, children }: RowProps) {
-  return (
-    <div className="flex flex-col items-start gap-3 md:flex-row md:items-center md:justify-between">
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-primary-900 text-balance">
-          {label}
-        </p>
-        {description ? (
-          <p className="text-xs text-primary-600 text-pretty">{description}</p>
-        ) : null}
-      </div>
-      <div className="flex w-full items-center gap-2 md:w-auto md:justify-end">
-        {children}
-      </div>
-    </div>
-  )
-}
-
 type SettingsSectionId = SettingsNavId
 
 function SettingsRoute() {
@@ -356,7 +347,12 @@ function SettingsRoute() {
     void fetchModels()
   }, [])
 
-  const { section, provider: highlightProvider } = Route.useSearch()
+  const {
+    section,
+    provider: highlightProvider,
+    pane,
+    agent: searchAgentId,
+  } = Route.useSearch()
   const activeSection: SettingsSectionId = section ?? 'runtimes'
 
   return (
@@ -374,9 +370,18 @@ function SettingsRoute() {
           {/* -- Connection ------------------ */}
           {activeSection === 'connection' && <ConnectionSection />}
 
-          {/* ── Hermes Agent ──────────────────────────────────── */}
+          {/* ── Model & Provider (Provider | Model tabs) ───────── */}
           {activeSection === 'model' && (
-            <AgoraxConfigSection activeView="model" />
+            <ModelSettingsPage
+              pane={pane ?? 'provider'}
+              agentId={searchAgentId}
+              hermesExtras={(profileName) => (
+                <AgoraxConfigSection
+                  activeView="model"
+                  profileName={profileName}
+                />
+              )}
+            />
           )}
           {activeSection === 'agent' && (
             <AgoraxConfigSection activeView="agent" />
@@ -389,28 +394,6 @@ function SettingsRoute() {
           )}
           {activeSection === 'display' && (
             <AgoraxConfigSection activeView="display" />
-          )}
-
-          {/* ── Claude Code ─────────────────────────────────────── */}
-          {activeSection === 'claude-code' && (
-            <SettingsSection
-              title="Claude Code"
-              description="Configure the Claude Code CLI adapter model and provider defaults."
-              icon={SourceCodeSquareIcon}
-            >
-              <ClaudeCodeSettingsPanel />
-            </SettingsSection>
-          )}
-
-          {/* ── Codex ───────────────────────────────────────────── */}
-          {activeSection === 'codex' && (
-            <SettingsSection
-              title="Codex"
-              description="Configure the OpenAI Codex CLI provider and model via Hermes Model & Provider."
-              icon={SourceCodeSquareIcon}
-            >
-              <CodexSettingsPanel />
-            </SettingsSection>
           )}
 
           {/* ── Usage Pricing ───────────────────────────────────── */}
@@ -1198,8 +1181,11 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function AgoraxConfigSection({
   activeView = 'model',
+  profileName: controlledProfile,
 }: {
   activeView?: 'model' | 'agent' | 'routing' | 'voice' | 'display'
+  /** When set (Model tab), Memory/Terminal follow the selected Hermes agent profile. */
+  profileName?: string
 }) {
   const [data, setData] = useState<AgoraxConfigData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1209,10 +1195,11 @@ function AgoraxConfigSection({
   const [availableModels, setAvailableModels] = useState<
     Array<{ id: string; description: string }>
   >([])
-  const { profiles, activeProfileName, isReady } = useProfiles()
-  // Profile scope shared with ModelProviderScopePanel — terminal backend
-  // config is read/written against the same profile.
-  const [scope, setScope] = useState<string>('')
+  const { activeProfileName, isReady } = useProfiles()
+  // Profile scope for Terminal / Memory — controlled when opened from Model tab.
+  const [internalScope, setInternalScope] = useState<string>('')
+  const scope = controlledProfile ?? internalScope
+  const setScope = setInternalScope
 
   // Terminal config is edited locally and written once on "Save", mirroring the
   // Model & Provider panel. Writing per-keystroke thrashes config.yaml.
@@ -1274,15 +1261,17 @@ function AgoraxConfigSection({
 
   useEffect(() => {
     // Initialize the scope from the active profile once useProfiles is ready.
+    // Skip when the parent pins a Hermes agent profile (Model tab).
     if (!isReady) return
-    const target = scope || activeProfileName || 'default'
-    if (!scope) {
-      setScope(target)
+    if (controlledProfile) {
+      // fall through to fetch with controlled profile
+    } else if (!scope) {
+      setScope(activeProfileName || 'default')
       return
     }
+    const target = scope || activeProfileName || 'default'
     // Re-fetch whenever the selected profile changes so the Terminal backend
-    // (and all other config below) reflects the profile picked in the
-    // Model & Provider panel.
+    // (and all other config below) reflects the profile for this agent.
     let cancelled = false
     void fetchConfig(target === 'default' ? undefined : target)
       .then((configData) => {
@@ -1300,6 +1289,7 @@ function AgoraxConfigSection({
     }
   }, [
     activeProfileName,
+    controlledProfile,
     fetchConfig,
     fetchModelsForProvider,
     isReady,
@@ -1444,22 +1434,8 @@ function AgoraxConfigSection({
   const renderModelOverview = () => (
     <>
       <SettingsSection
-        title="Model & Provider"
-        description="Shared providers (URL and keys) live above. Each profile then picks its default and fallback model. The profile selector below also scopes the Terminal backend (SSH) config."
-        icon={SourceCodeSquareIcon}
-      >
-        <ModelProviderScopePanel
-          profileName={scope}
-          onProfileChange={setScope}
-          onApplied={(providerId) => {
-            void fetchModelsForProvider(providerId)
-          }}
-        />
-      </SettingsSection>
-
-      <SettingsSection
         title="Memory"
-        description="Configure Hermes Agent memory and user profiles."
+        description="Configure Hermes Agent memory and user profiles for this agent."
         icon={UserIcon}
       >
         <SettingsRow

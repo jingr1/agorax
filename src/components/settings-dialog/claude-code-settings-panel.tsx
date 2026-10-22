@@ -1,8 +1,19 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  CloudIcon,
+  Settings02Icon,
+  SourceCodeSquareIcon,
+} from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTab } from '@/components/ui/tabs'
+import {
+  SETTINGS_CONTROL_CLASS,
+  SettingsRow,
+  SettingsSection,
+} from '@/components/settings/settings-section'
 import { cn } from '@/lib/utils'
 
 /** Fixed provider id: talk to Anthropic's official API, no base URL override, no catalog key. */
@@ -94,8 +105,15 @@ type CatalogProviderLite = {
   maskedKey: string
 }
 
-/** Sentinel shown in the API key field after reusing a catalog key — never a real secret. */
+/** Sentinel shown in secret fields after a catalog copy — never a real secret. */
 const SECRET_MASK = '••••'
+
+/** Direct Anthropic uses API key; gateways/proxies use auth token. */
+function inferAuthMode(providerId: string): AuthMode {
+  return providerId === DIRECT_ANTHROPIC_ID || providerId === 'anthropic'
+    ? 'api_key'
+    : 'auth_token'
+}
 
 /**
  * Model ids selectable for an alias pin: the selected provider's configured
@@ -121,11 +139,38 @@ export type ClaudeCodeSettingsPanelProps = {
   onSaved?: () => void
 }
 
+export const CLAUDE_CODE_SETTINGS_QUERY_KEY = [
+  'claude-code',
+  'settings',
+] as const
+
+type ClaudeCodeSettingsResponse = {
+  settings?: { model?: string; env?: EnvDraft }
+  currentModel?: string
+  currentProvider?: string
+  catalogProviders?: Array<CatalogProviderLite>
+  error?: string
+}
+
+export async function fetchClaudeCodeSettings(): Promise<ClaudeCodeSettingsResponse> {
+  const res = await fetch('/api/claude-code/settings')
+  const data = (await res.json()) as ClaudeCodeSettingsResponse
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to load settings')
+  }
+  return data
+}
+
 export function ClaudeCodeSettingsPanel({
   agentId,
   onSaved,
 }: ClaudeCodeSettingsPanelProps) {
   const queryClient = useQueryClient()
+  const settingsQuery = useQuery({
+    queryKey: CLAUDE_CODE_SETTINGS_QUERY_KEY,
+    queryFn: fetchClaudeCodeSettings,
+    staleTime: 60_000,
+  })
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null)
   const [selectedModel, setSelectedModel] = useState('')
   const [customModel, setCustomModel] = useState('')
@@ -135,16 +180,19 @@ export function ClaudeCodeSettingsPanel({
   const [catalogProviders, setCatalogProviders] = useState<
     Array<CatalogProviderLite>
   >([])
-  const [loading, setLoading] = useState(true)
+  const [hydrated, setHydrated] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  /** API key (direct Anthropic) vs auth token (proxy/gateway). */
   const [authMode, setAuthMode] = useState<AuthMode>('api_key')
-  const [keyDirty, setKeyDirty] = useState({
-    ANTHROPIC_API_KEY: false,
-    ANTHROPIC_AUTH_TOKEN: false,
-  })
+  /** Only for Direct / Custom — catalog keys are copied server-side on Save. */
+  const [secretDraft, setSecretDraft] = useState('')
+  const [secretDirty, setSecretDirty] = useState(false)
 
   const baseUrlDraft = envDraft.ANTHROPIC_BASE_URL?.trim() || ''
+  const isCatalogProvider =
+    selectedProvider !== DIRECT_ANTHROPIC_ID &&
+    selectedProvider !== CUSTOM_PROVIDER_ID
 
   // "Anthropic" always gets its own top slot — either the Hermes catalog
   // entry (if the user configured a key for it there) or a plain direct
@@ -205,8 +253,11 @@ export function ClaudeCodeSettingsPanel({
     if (!alias) return ''
     for (const { alias: candidate, envKey } of ALIAS_PINS) {
       if (alias === candidate) {
+        const fromPin = customPins[envKey]
+        const fromEnv = envDraft[envKey as keyof EnvDraft]
         const pinned =
-          customPins[envKey]?.trim() || envDraft[envKey as keyof EnvDraft]?.trim()
+          (typeof fromPin === 'string' ? fromPin.trim() : '') ||
+          (typeof fromEnv === 'string' ? fromEnv.trim() : '')
         if (pinned) return pinned
       }
     }
@@ -214,152 +265,83 @@ export function ClaudeCodeSettingsPanel({
   }, [effectiveModel, envDraft, customPins])
 
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-
-    fetch('/api/claude-code/settings')
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return
-        const snapshot = data as {
-          settings?: { model?: string; env?: EnvDraft }
-          currentModel?: string
-          currentProvider?: string
-          catalogProviders?: Array<CatalogProviderLite>
-        }
-        const currentModel = snapshot.settings?.model || ''
-        const env = snapshot.settings?.env ?? {}
-        const baseUrl = normalizeClaudeBaseUrl(env.ANTHROPIC_BASE_URL || '')
-        const catalog = snapshot.catalogProviders ?? []
-
-        setSettings({
-          model: snapshot.settings?.model,
-          currentModel: snapshot.currentModel,
-          currentProvider: snapshot.currentProvider,
-          env,
-        })
-        setEnvDraft(env)
-        setCatalogProviders(catalog)
-
-        // Restore auth mode from saved env: AUTH_TOKEN takes precedence over API_KEY
-        // when both are present, because that's the proxy/gateway pattern.
-        const hasAuthToken = Boolean(env.ANTHROPIC_AUTH_TOKEN?.trim())
-        const hasApiKey = Boolean(env.ANTHROPIC_API_KEY?.trim())
-        setAuthMode(hasAuthToken ? 'auth_token' : hasApiKey ? 'api_key' : 'api_key')
-        setKeyDirty({
-          ANTHROPIC_API_KEY: false,
-          ANTHROPIC_AUTH_TOKEN: false,
-        })
-
-        const anthropicEntry = catalog.find((p) => p.id === 'anthropic')
-        let provider = CUSTOM_PROVIDER_ID
-        if (!baseUrl) {
-          provider = anthropicEntry ? 'anthropic' : DIRECT_ANTHROPIC_ID
-        } else {
-          const match = catalog.find(
-            (p) =>
-              p.baseUrl.trim() &&
-              normalizeClaudeBaseUrl(p.baseUrl) === baseUrl,
-          )
-          if (match) provider = match.id
-        }
-        setSelectedProvider(provider)
-
-        const providerModels =
-          provider === CUSTOM_PROVIDER_ID || provider === DIRECT_ANTHROPIC_ID
-            ? []
-            : catalog.find((p) => p.id === provider)?.models ?? []
-        const custom: Record<string, string> = {}
-        for (const { alias, envKey } of ALIAS_PINS) {
-          const value = env[envKey as keyof EnvDraft]?.trim() || ''
-          const known = pinModelOptions(alias, provider, providerModels)
-          if (value && !known.includes(value)) {
-            custom[envKey] = value
-          }
-        }
-        setCustomPins(custom)
-
-        if (
-          currentModel &&
-          DEFAULT_MODEL_ALIASES.some((a) => a.id === currentModel)
-        ) {
-          setSelectedModel(currentModel)
-          setCustomModel('')
-        } else if (currentModel) {
-          setSelectedModel('__custom__')
-          setCustomModel(currentModel)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setMsg('Failed to load settings')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [agentId])
-
-  const handleReuseCatalogKey = async (providerId: string) => {
-    setSaving(true)
-    setMsg(null)
-    try {
-      const res = await fetch('/api/claude-code/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          copyFromCatalogProvider: providerId,
-          authMode,
-        }),
-      })
-      const data = (await res.json()) as {
-        ok?: boolean
-        error?: string
-        settings?: { env?: EnvDraft }
-        currentModel?: string
-        currentProvider?: string
-      }
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || 'Failed to reuse key')
-      }
-      const nextEnv = data.settings?.env ?? {}
-      setEnvDraft((prev) => ({
-        ...prev,
-        ANTHROPIC_BASE_URL: normalizeClaudeBaseUrl(
-          (nextEnv.ANTHROPIC_BASE_URL as string | undefined) ??
-            prev.ANTHROPIC_BASE_URL ??
-            '',
-        ),
-        ...(authMode === 'auth_token'
-          ? {
-              ANTHROPIC_AUTH_TOKEN: SECRET_MASK,
-              ANTHROPIC_API_KEY: '',
-            }
-          : {
-              ANTHROPIC_API_KEY: SECRET_MASK,
-              ANTHROPIC_AUTH_TOKEN: '',
-            }),
-      }))
-      setSettings((prev) =>
-        prev
-          ? {
-              ...prev,
-              currentModel: data.currentModel,
-              currentProvider: data.currentProvider,
-            }
-          : prev,
+    if (settingsQuery.isError) {
+      setMsg(
+        settingsQuery.error instanceof Error
+          ? settingsQuery.error.message
+          : 'Failed to load settings',
       )
-      setMsg('已从 Hermes Model & Provider 复用 base URL 和 API key')
-      void queryClient.invalidateQueries({
-        queryKey: ['claude-code', 'settings'],
-      })
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'Failed to reuse key')
+      return
     }
-    setSaving(false)
-  }
+    const snapshot = settingsQuery.data
+    if (!snapshot) return
+
+    const currentModel = snapshot.settings?.model || ''
+    const env = snapshot.settings?.env ?? {}
+    const baseUrl = normalizeClaudeBaseUrl(env.ANTHROPIC_BASE_URL || '')
+    const catalog = snapshot.catalogProviders ?? []
+
+    setSettings({
+      model: snapshot.settings?.model,
+      currentModel: snapshot.currentModel,
+      currentProvider: snapshot.currentProvider,
+      env,
+    })
+    setEnvDraft(env)
+    setCatalogProviders(catalog)
+
+    const anthropicEntry = catalog.find((p) => p.id === 'anthropic')
+    let provider = CUSTOM_PROVIDER_ID
+    if (!baseUrl) {
+      provider = anthropicEntry ? 'anthropic' : DIRECT_ANTHROPIC_ID
+    } else {
+      const match = catalog.find(
+        (p) =>
+          p.baseUrl.trim() && normalizeClaudeBaseUrl(p.baseUrl) === baseUrl,
+      )
+      if (match) provider = match.id
+    }
+    setSelectedProvider(provider)
+
+    // AUTH_TOKEN wins when both exist — that's the proxy/gateway pattern.
+    const hasAuthToken = Boolean(env.ANTHROPIC_AUTH_TOKEN?.trim())
+    const hasApiKey = Boolean(env.ANTHROPIC_API_KEY?.trim())
+    setAuthMode(
+      hasAuthToken
+        ? 'auth_token'
+        : hasApiKey
+          ? 'api_key'
+          : inferAuthMode(provider),
+    )
+    setSecretDraft(hasAuthToken || hasApiKey ? SECRET_MASK : '')
+    setSecretDirty(false)
+
+    const providerModels =
+      provider === CUSTOM_PROVIDER_ID || provider === DIRECT_ANTHROPIC_ID
+        ? []
+        : (catalog.find((p) => p.id === provider)?.models ?? [])
+    const custom: Record<string, string> = {}
+    for (const { alias, envKey } of ALIAS_PINS) {
+      const value = env[envKey as keyof EnvDraft]?.trim() || ''
+      const known = pinModelOptions(alias, provider, providerModels)
+      if (value && !known.includes(value)) {
+        custom[envKey] = value
+      }
+    }
+    setCustomPins(custom)
+
+    if (
+      currentModel &&
+      DEFAULT_MODEL_ALIASES.some((a) => a.id === currentModel)
+    ) {
+      setSelectedModel(currentModel)
+      setCustomModel('')
+    } else if (currentModel) {
+      setSelectedModel('__custom__')
+      setCustomModel(currentModel)
+    }
+    setHydrated(true)
+  }, [agentId, settingsQuery.data, settingsQuery.error, settingsQuery.isError])
 
   const handleSave = async () => {
     setSaving(true)
@@ -373,31 +355,7 @@ export function ClaudeCodeSettingsPanel({
         }
       }
 
-      const baseUrlToSave = normalizeClaudeBaseUrl(
-        mergedEnv.ANTHROPIC_BASE_URL?.trim() || '',
-      )
-      const authTokenDraft = mergedEnv.ANTHROPIC_AUTH_TOKEN?.trim() || ''
-      const apiKeyDraft = mergedEnv.ANTHROPIC_API_KEY?.trim() || ''
-
-      // When the key input still contains the mask placeholder the user has
-      // not actually re-typed it; keep the existing secret instead of writing
-      // the placeholder to disk.
-      const activeKeyEnv =
-        authMode === 'auth_token'
-          ? ('ANTHROPIC_AUTH_TOKEN' as const)
-          : ('ANTHROPIC_API_KEY' as const)
-      const activeKeyDirty =
-        authMode === 'auth_token'
-          ? keyDirty.ANTHROPIC_AUTH_TOKEN
-          : keyDirty.ANTHROPIC_API_KEY
-      const activeKeyValue =
-        authMode === 'auth_token' ? authTokenDraft : apiKeyDraft
-
       const envPatch: Record<string, string | null | undefined> = {
-        ANTHROPIC_BASE_URL:
-          selectedProvider === DIRECT_ANTHROPIC_ID
-            ? null
-            : baseUrlToSave || null,
         ANTHROPIC_DEFAULT_OPUS_MODEL:
           mergedEnv.ANTHROPIC_DEFAULT_OPUS_MODEL?.trim() || null,
         ANTHROPIC_DEFAULT_SONNET_MODEL:
@@ -410,30 +368,71 @@ export function ClaudeCodeSettingsPanel({
           mergedEnv.CLAUDE_CODE_SUBAGENT_MODEL?.trim() || null,
       }
 
-      // Only overwrite the active auth key when the user has actually typed
-      // into the input. If the field still shows the masked placeholder, leave
-      // the on-disk secret untouched.
-      if (activeKeyDirty) {
-        envPatch[activeKeyEnv] = activeKeyValue || null
+      const body: {
+        model?: string | null
+        env?: Record<string, string | null | undefined>
+        copyFromCatalogProvider?: string
+        authMode?: AuthMode
+      } = {
+        model: effectiveModel || null,
+        env: envPatch,
+      }
+
+      if (isCatalogProvider) {
+        // Codex-style: pick a catalog entry → Save copies URL + key server-side.
+        // authMode chooses which Claude env slot receives the Hermes secret.
+        body.copyFromCatalogProvider = selectedProvider
+        body.authMode = authMode
+      } else if (selectedProvider === DIRECT_ANTHROPIC_ID) {
+        envPatch.ANTHROPIC_BASE_URL = null
+        if (secretDirty) {
+          if (authMode === 'auth_token') {
+            envPatch.ANTHROPIC_AUTH_TOKEN = secretDraft.trim() || null
+            envPatch.ANTHROPIC_API_KEY = null
+          } else {
+            envPatch.ANTHROPIC_API_KEY = secretDraft.trim() || null
+            envPatch.ANTHROPIC_AUTH_TOKEN = null
+          }
+        }
+      } else {
+        // Custom gateway: freeform base URL + secret.
+        envPatch.ANTHROPIC_BASE_URL =
+          normalizeClaudeBaseUrl(baseUrlDraft) || null
+        if (secretDirty) {
+          if (authMode === 'auth_token') {
+            envPatch.ANTHROPIC_AUTH_TOKEN = secretDraft.trim() || null
+            envPatch.ANTHROPIC_API_KEY = null
+          } else {
+            envPatch.ANTHROPIC_API_KEY = secretDraft.trim() || null
+            envPatch.ANTHROPIC_AUTH_TOKEN = null
+          }
+        }
       }
 
       const res = await fetch('/api/claude-code/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: effectiveModel || null,
-          env: envPatch,
-        }),
+        body: JSON.stringify(body),
       })
       const data = (await res.json()) as {
         ok?: boolean
         error?: string
+        settings?: { env?: EnvDraft }
         currentModel?: string
         currentProvider?: string
       }
       if (!res.ok || !data.ok) {
         throw new Error(data.error || 'Save failed')
       }
+      const nextEnv = data.settings?.env ?? envDraft
+      setEnvDraft(nextEnv)
+      setSecretDraft(
+        nextEnv.ANTHROPIC_AUTH_TOKEN?.trim() ||
+          nextEnv.ANTHROPIC_API_KEY?.trim()
+          ? SECRET_MASK
+          : '',
+      )
+      setSecretDirty(false)
       setSettings((prev) =>
         prev
           ? {
@@ -441,7 +440,7 @@ export function ClaudeCodeSettingsPanel({
               model: effectiveModel,
               currentModel: data.currentModel,
               currentProvider: data.currentProvider,
-              env: { ...envDraft },
+              env: nextEnv,
             }
           : prev,
       )
@@ -450,25 +449,12 @@ export function ClaudeCodeSettingsPanel({
       void queryClient.invalidateQueries({
         queryKey: ['claude-code', 'models'],
       })
-      void queryClient.invalidateQueries({
-        queryKey: ['claude-code', 'settings'],
+      void queryClient.setQueryData(CLAUDE_CODE_SETTINGS_QUERY_KEY, {
+        settings: { model: effectiveModel, env: nextEnv },
+        currentModel: data.currentModel,
+        currentProvider: data.currentProvider,
+        catalogProviders,
       })
-
-      // Re-fetch the canonical masked snapshot so resolved model / provider
-      // readouts always reflect what was actually written to disk.
-      void fetch('/api/claude-code/settings')
-        .then((r) => r.json())
-        .then((fresh: { settings?: { model?: string; env?: EnvDraft }; currentModel?: string; currentProvider?: string }) => {
-          setSettings({
-            model: fresh.settings?.model,
-            currentModel: fresh.currentModel,
-            currentProvider: fresh.currentProvider,
-            env: fresh.settings?.env ?? {},
-          })
-        })
-        .catch(() => {
-          // Non-fatal: the optimistic update above already updated the UI.
-        })
 
       onSaved?.()
     } catch (err) {
@@ -477,78 +463,94 @@ export function ClaudeCodeSettingsPanel({
     setSaving(false)
   }
 
-  const cardStyle: React.CSSProperties = {
-    backgroundColor: 'var(--theme-card)',
-    border: '1px solid var(--theme-border)',
-    color: 'var(--theme-text)',
-  }
-  const mutedStyle: React.CSSProperties = { color: 'var(--theme-muted)' }
-
-  if (loading) {
+  if (!hydrated && (settingsQuery.isLoading || settingsQuery.isFetching)) {
     return (
-      <div
-        className="h-20 animate-pulse rounded-lg"
-        style={{ backgroundColor: 'var(--theme-panel)' }}
-      />
+      <div className="space-y-4">
+        <div className="h-36 animate-pulse rounded-2xl bg-primary-100/70" />
+        <div className="h-28 animate-pulse rounded-2xl bg-primary-100/70" />
+        <div className="h-40 animate-pulse rounded-2xl bg-primary-100/70" />
+      </div>
     )
   }
 
   return (
     <div className="space-y-4">
-      {msg && (
+      {msg ? (
         <div
           className={cn(
             'rounded-lg px-3 py-2 text-sm font-medium',
             msg.includes('Failed') || msg.includes('fail')
-              ? 'bg-red-500/15 text-red-400'
-              : 'bg-green-500/15 text-green-400',
+              ? 'bg-red-500/15 text-red-500 dark:text-red-400'
+              : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
           )}
         >
           {msg}
         </div>
-      )}
+      ) : null}
 
-      <div className="space-y-3 rounded-xl px-3 py-2.5" style={cardStyle}>
-        <p
-          className="text-xs font-semibold uppercase tracking-wider"
-          style={mutedStyle}
-        >
-          Provider
-        </p>
-        <p className="text-[11px]" style={mutedStyle}>
-          从 Hermes Model &amp; Provider 页面已配置的 provider 中选择，或手动填写。API
-          key 和 base URL 保存在 ~/.claude/settings.json 的 <code>env</code> 下。
-        </p>
-        <select
-          value={selectedProvider}
-          onChange={(e) => {
-            const id = e.target.value
-            setSelectedProvider(id)
-            if (id === DIRECT_ANTHROPIC_ID) {
-              setEnvDraft((prev) => ({ ...prev, ANTHROPIC_BASE_URL: '' }))
-            } else if (id !== CUSTOM_PROVIDER_ID) {
-              const entry = catalogProviders.find((p) => p.id === id)
-              setEnvDraft((prev) => ({
-                ...prev,
-                ANTHROPIC_BASE_URL: normalizeClaudeBaseUrl(entry?.baseUrl || ''),
-              }))
-            }
-          }}
-          className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-        >
-          {providerOptions.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-              {p.catalog ? '' : p.id === DIRECT_ANTHROPIC_ID ? '（直连）' : ''}
-            </option>
-          ))}
-        </select>
+      <SettingsSection
+        title="Provider"
+        description="Selecting a Hermes catalog entry copies its base URL and key into ~/.claude/settings.json on Save."
+        icon={CloudIcon}
+      >
+        <SettingsRow stacked label="Provider">
+          <select
+            value={selectedProvider}
+            onChange={(e) => {
+              const id = e.target.value
+              setSelectedProvider(id)
+              setAuthMode(inferAuthMode(id))
+              setSecretDirty(false)
+              if (id === DIRECT_ANTHROPIC_ID) {
+                setEnvDraft((prev) => ({ ...prev, ANTHROPIC_BASE_URL: '' }))
+                setSecretDraft(
+                  envDraft.ANTHROPIC_API_KEY?.trim() ||
+                    envDraft.ANTHROPIC_AUTH_TOKEN?.trim()
+                    ? SECRET_MASK
+                    : '',
+                )
+              } else if (id === CUSTOM_PROVIDER_ID) {
+                setSecretDraft(
+                  envDraft.ANTHROPIC_AUTH_TOKEN?.trim() ||
+                    envDraft.ANTHROPIC_API_KEY?.trim()
+                    ? SECRET_MASK
+                    : '',
+                )
+              } else {
+                const entry = catalogProviders.find((p) => p.id === id)
+                setEnvDraft((prev) => ({
+                  ...prev,
+                  ANTHROPIC_BASE_URL: normalizeClaudeBaseUrl(
+                    entry?.baseUrl || '',
+                  ),
+                }))
+              }
+            }}
+            className={SETTINGS_CONTROL_CLASS}
+          >
+            {providerOptions.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {p.catalog
+                  ? ''
+                  : p.id === DIRECT_ANTHROPIC_ID
+                    ? ' (direct)'
+                    : ''}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
 
-        {selectedProvider === CUSTOM_PROVIDER_ID && (
-          <label className="block space-y-1">
-            <span className="text-xs font-medium" style={mutedStyle}>
-              Base URL
-            </span>
+        {isCatalogProvider && selectedCatalogEntry?.baseUrl ? (
+          <p className="text-xs text-primary-600">
+            {selectedCatalogEntry.keyConfigured
+              ? `Will copy ${selectedCatalogEntry.baseUrl} and key (${selectedCatalogEntry.maskedKey}) into the Auth slot below.`
+              : `Will copy ${selectedCatalogEntry.baseUrl}. Configure the key under Provider first.`}
+          </p>
+        ) : null}
+
+        {selectedProvider === CUSTOM_PROVIDER_ID ? (
+          <SettingsRow stacked label="Base URL">
             <input
               value={baseUrlDraft}
               onChange={(e) =>
@@ -557,183 +559,102 @@ export function ClaudeCodeSettingsPanel({
                   ANTHROPIC_BASE_URL: e.target.value,
                 }))
               }
-              placeholder="https://api.anthropic.com or your gateway"
-              className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 font-mono text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+              placeholder="https://gateway.example.com"
+              className={cn(SETTINGS_CONTROL_CLASS, 'font-mono')}
             />
-          </label>
-        )}
+          </SettingsRow>
+        ) : null}
 
-        {selectedCatalogEntry?.baseUrl && (
-          <p className="text-[11px]" style={mutedStyle}>
-            Base URL（来自 Hermes 配置）：
-            <code>{selectedCatalogEntry.baseUrl}</code>
-          </p>
-        )}
-
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs font-medium" style={mutedStyle}>
-              <input
-                type="radio"
-                name="authMode"
-                value="api_key"
-                checked={authMode === 'api_key'}
-                onChange={() => {
-                  setAuthMode('api_key')
-                  setKeyDirty((prev) => ({ ...prev, ANTHROPIC_API_KEY: false }))
-                }}
-                className="accent-primary-600"
-                />
-                API key（直连 Anthropic）
-            </label>
-            <label className="flex items-center gap-1.5 text-xs font-medium" style={mutedStyle}>
-              <input
-                type="radio"
-                name="authMode"
-                value="auth_token"
-                checked={authMode === 'auth_token'}
-                onChange={() => {
-                  setAuthMode('auth_token')
-                  setKeyDirty((prev) => ({ ...prev, ANTHROPIC_AUTH_TOKEN: false }))
-                }}
-                className="accent-primary-600"
-              />
-              Auth token（代理/网关）
-            </label>
-          </div>
-
-          {authMode === 'api_key' ? (
-            <input
-              type="password"
-              value={envDraft.ANTHROPIC_API_KEY || ''}
-              onChange={(e) => {
-                setEnvDraft((prev) => ({
-                  ...prev,
-                  ANTHROPIC_API_KEY: e.target.value,
-                }))
-                setKeyDirty((prev) => ({ ...prev, ANTHROPIC_API_KEY: true }))
+        <SettingsRow
+          stacked
+          label="Auth"
+          description="API key for direct Anthropic; auth token for a proxy/gateway."
+        >
+          <div className="space-y-3">
+            <Tabs
+              value={authMode}
+              onValueChange={(value) => {
+                setAuthMode(value as AuthMode)
+                setSecretDirty(false)
+                const hasSecret = Boolean(
+                  envDraft.ANTHROPIC_AUTH_TOKEN?.trim() ||
+                    envDraft.ANTHROPIC_API_KEY?.trim(),
+                )
+                setSecretDraft(hasSecret ? SECRET_MASK : '')
               }}
-              placeholder="sk-ant-..."
-              className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 font-mono text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-            />
-          ) : (
-            <input
-              type="password"
-              value={envDraft.ANTHROPIC_AUTH_TOKEN || ''}
-              onChange={(e) => {
-                setEnvDraft((prev) => ({
-                  ...prev,
-                  ANTHROPIC_AUTH_TOKEN: e.target.value,
-                }))
-                setKeyDirty((prev) => ({ ...prev, ANTHROPIC_AUTH_TOKEN: true }))
-              }}
-              placeholder="gateway token..."
-              className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 font-mono text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-            />
-          )}
-        </div>
-
-        {selectedCatalogEntry?.keyConfigured && (
-          <div
-            className="flex items-center justify-between gap-3 rounded-lg px-3 py-2"
-            style={{ backgroundColor: 'var(--theme-panel)' }}
-          >
-            <p className="text-[11px]" style={mutedStyle}>
-              Hermes Model &amp; Provider 页面已配置该 provider 的 key（
-              {selectedCatalogEntry.maskedKey}）。
-            </p>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={saving}
-              onClick={() => void handleReuseCatalogKey(selectedCatalogEntry.id)}
             >
-              复用
-            </Button>
+              <TabsList variant="default" className="w-full justify-start">
+                <TabsTab value="api_key">API key</TabsTab>
+                <TabsTab value="auth_token">Auth token</TabsTab>
+              </TabsList>
+            </Tabs>
+            {!isCatalogProvider ? (
+              <input
+                type="password"
+                value={secretDraft}
+                onChange={(e) => {
+                  setSecretDraft(e.target.value)
+                  setSecretDirty(true)
+                }}
+                placeholder={
+                  authMode === 'auth_token' ? 'gateway token…' : 'sk-ant-…'
+                }
+                className={cn(SETTINGS_CONTROL_CLASS, 'font-mono')}
+              />
+            ) : null}
           </div>
-        )}
-      </div>
+        </SettingsRow>
+      </SettingsSection>
 
-      <div className="space-y-3 rounded-xl px-3 py-2.5" style={cardStyle}>
-        <p
-          className="text-xs font-semibold uppercase tracking-wider"
-          style={mutedStyle}
-        >
-          Default model
-        </p>
-        <p className="text-[11px]" style={mutedStyle}>
-          Saved to ~/.claude/settings.json as the <code>model</code> field.
-        </p>
-        <select
-          value={modelIsCustom ? '__custom__' : selectedModel}
-          onChange={(e) => {
-            const value = e.target.value
-            setSelectedModel(value)
-            if (value !== '__custom__') {
-              setCustomModel('')
-            }
-          }}
-          className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-        >
-          <option value="">Select model…</option>
-          {DEFAULT_MODEL_ALIASES.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.label}
-            </option>
-          ))}
-          <option value="__custom__">Custom…</option>
-        </select>
-        {modelIsCustom && (
-          <input
-            value={customModel}
-            onChange={(e) => setCustomModel(e.target.value)}
-            placeholder="e.g. claude-opus-4-8 or my-deployment-id"
-            className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 font-mono text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-          />
-        )}
+      <SettingsSection
+        title="Default model"
+        description="Saved as the model field in ~/.claude/settings.json."
+        icon={SourceCodeSquareIcon}
+      >
+        <SettingsRow stacked label="Model alias">
+          <div className="space-y-2">
+            <select
+              value={modelIsCustom ? '__custom__' : selectedModel}
+              onChange={(e) => {
+                const value = e.target.value
+                setSelectedModel(value)
+                if (value !== '__custom__') setCustomModel('')
+              }}
+              className={SETTINGS_CONTROL_CLASS}
+            >
+              <option value="">Select model…</option>
+              {DEFAULT_MODEL_ALIASES.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                </option>
+              ))}
+              <option value="__custom__">Custom…</option>
+            </select>
+            {modelIsCustom ? (
+              <input
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+                placeholder="e.g. claude-opus-4-8"
+                className={cn(SETTINGS_CONTROL_CLASS, 'font-mono')}
+              />
+            ) : null}
+            {resolvedModelPreview &&
+            resolvedModelPreview !== effectiveModel ? (
+              <p className="text-xs text-primary-600">
+                Resolves to{' '}
+                <span className="font-mono">{resolvedModelPreview}</span>
+              </p>
+            ) : null}
+          </div>
+        </SettingsRow>
+      </SettingsSection>
 
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block space-y-1">
-            <span className="text-xs font-medium" style={mutedStyle}>
-              Resolved model
-            </span>
-            <input
-              value={resolvedModelPreview || settings?.currentModel || ''}
-              readOnly
-              title={resolvedModelPreview || settings?.currentModel || ''}
-              className="h-9 w-full rounded-lg border border-[var(--theme-border)] bg-[var(--theme-input)] px-3 font-mono text-sm text-[var(--theme-text)] outline-none"
-            />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-xs font-medium" style={mutedStyle}>
-              Provider
-            </span>
-            <input
-              value={
-                providerOptions.find((p) => p.id === selectedProvider)?.name ||
-                settings?.currentProvider ||
-                'claude-code'
-              }
-              readOnly
-              className="h-9 w-full rounded-lg border border-[var(--theme-border)] bg-[var(--theme-input)] px-3 font-mono text-sm text-[var(--theme-text)] outline-none"
-            />
-          </label>
-        </div>
-      </div>
-
-      <div className="space-y-3 rounded-xl px-3 py-2.5" style={cardStyle}>
-        <p
-          className="text-xs font-semibold uppercase tracking-wider"
-          style={mutedStyle}
-        >
-          Pin alias versions
-        </p>
-        <p className="text-[11px]" style={mutedStyle}>
-          Choose which full model id each alias resolves to. Options come from
-          the selected provider&apos;s configured models; pick &quot;Custom&quot;
-          for anything else.
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2">
+      <SettingsSection
+        title="Pin alias versions"
+        description="Map each alias to a concrete model id from the selected provider."
+        icon={Settings02Icon}
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
           {ALIAS_PINS.map(({ alias, envKey, label }) => {
             const known = pinModelOptions(
               alias,
@@ -744,90 +665,85 @@ export function ClaudeCodeSettingsPanel({
             const isCustom =
               value && !known.includes(value) ? '__custom__' : value
             return (
-              <div key={envKey} className="space-y-1">
-                <span className="text-xs font-medium" style={mutedStyle}>
-                  {label}
-                </span>
-                <select
-                  value={isCustom}
-                  onChange={(e) => {
-                    const next = e.target.value
-                    setEnvDraft((prev) => ({
-                      ...prev,
-                      [envKey]: next === '__custom__' ? '' : next,
-                    }))
-                    if (next !== '__custom__') {
-                      setCustomPins((prev) => {
-                        const copy = { ...prev }
-                        delete copy[envKey]
-                        return copy
-                      })
-                    }
-                  }}
-                  className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-                >
-                  <option value="">Default / not pinned</option>
-                  {known.map((id) => (
-                    <option key={id} value={id}>
-                      {id}
-                    </option>
-                  ))}
-                  <option value="__custom__">Custom…</option>
-                </select>
-                {isCustom === '__custom__' && (
-                  <input
-                    value={customPins[envKey] || value}
-                    onChange={(e) =>
-                      setCustomPins((prev) => ({
-                        ...prev,
-                        [envKey]: e.target.value,
-                      }))
-                    }
-                    onBlur={() => {
+              <SettingsRow key={envKey} stacked label={label}>
+                <div className="space-y-2">
+                  <select
+                    value={isCustom}
+                    onChange={(e) => {
+                      const next = e.target.value
                       setEnvDraft((prev) => ({
                         ...prev,
-                        [envKey]: (customPins[envKey] || '').trim() || value,
+                        [envKey]: next === '__custom__' ? '' : next,
                       }))
+                      if (next !== '__custom__') {
+                        setCustomPins((prev) => {
+                          const copy = { ...prev }
+                          delete copy[envKey]
+                          return copy
+                        })
+                      }
                     }}
-                    placeholder={`${alias} deployment id`}
-                    className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 font-mono text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-                  />
-                )}
-              </div>
+                    className={SETTINGS_CONTROL_CLASS}
+                  >
+                    <option value="">Default / not pinned</option>
+                    {known.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                    <option value="__custom__">Custom…</option>
+                  </select>
+                  {isCustom === '__custom__' ? (
+                    <input
+                      value={customPins[envKey] || value}
+                      onChange={(e) =>
+                        setCustomPins((prev) => ({
+                          ...prev,
+                          [envKey]: e.target.value,
+                        }))
+                      }
+                      onBlur={() => {
+                        setEnvDraft((prev) => ({
+                          ...prev,
+                          [envKey]: (customPins[envKey] || '').trim() || value,
+                        }))
+                      }}
+                      placeholder={`${alias} deployment id`}
+                      className={cn(SETTINGS_CONTROL_CLASS, 'font-mono')}
+                    />
+                  ) : null}
+                </div>
+              </SettingsRow>
             )
           })}
         </div>
-      </div>
+      </SettingsSection>
 
-      <div className="space-y-3 rounded-xl px-3 py-2.5" style={cardStyle}>
-        <p
-          className="text-xs font-semibold uppercase tracking-wider"
-          style={mutedStyle}
-        >
-          Subagent / workflow model
-        </p>
-        <p className="text-[11px]" style={mutedStyle}>
-          Saved to <code>CLAUDE_CODE_SUBAGENT_MODEL</code>. Controls subagents,
-          agent teams, and workflow runs.
-        </p>
-        <select
-          value={envDraft.CLAUDE_CODE_SUBAGENT_MODEL?.trim() || ''}
-          onChange={(e) =>
-            setEnvDraft((prev) => ({
-              ...prev,
-              CLAUDE_CODE_SUBAGENT_MODEL: e.target.value,
-            }))
-          }
-          className="h-9 w-full rounded-lg border border-primary-200 bg-primary-50 px-3 text-sm text-primary-900 outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-        >
-          <option value="">Default / not set</option>
-          {SUBAGENT_OPTIONS.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </div>
+      <SettingsSection
+        title="Subagent model"
+        description="CLAUDE_CODE_SUBAGENT_MODEL for subagents, teams, and workflows."
+        icon={SourceCodeSquareIcon}
+      >
+        <SettingsRow stacked label="Subagent / workflow">
+          <select
+            value={envDraft.CLAUDE_CODE_SUBAGENT_MODEL?.trim() || ''}
+            onChange={(e) =>
+              setEnvDraft((prev) => ({
+                ...prev,
+                CLAUDE_CODE_SUBAGENT_MODEL: e.target.value,
+              }))
+            }
+            className={SETTINGS_CONTROL_CLASS}
+          >
+            <option value="">Default / not set</option>
+            {SUBAGENT_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
+      </SettingsSection>
 
       <div className="flex justify-end">
         <Button
@@ -837,20 +753,6 @@ export function ClaudeCodeSettingsPanel({
         >
           {saving ? 'Saving…' : 'Save'}
         </Button>
-      </div>
-
-      <div className="rounded-lg border border-primary-200 bg-primary-50/80 px-3 py-2 text-xs text-primary-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
-        Provider is derived from <code>ANTHROPIC_BASE_URL</code> when set;
-        otherwise requests go directly to Anthropic API. See the{' '}
-        <a
-          href="https://code.claude.com/docs/zh-CN/model-config"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline underline-offset-2"
-        >
-          Claude Code model config docs
-        </a>{' '}
-        for details on aliases, pinned models, and third-party deployments.
       </div>
     </div>
   )

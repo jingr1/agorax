@@ -6,8 +6,6 @@ export type SettingsNavId =
   | 'profile'
   | 'runtimes'
   | 'model'
-  | 'claude-code'
-  | 'codex'
   | 'agent'
   | 'voice'
   | 'display'
@@ -25,8 +23,6 @@ export const SETTINGS_NAV_ITEMS: Array<NavItem> = [
   { id: 'connection', label: 'Connection' },
   { id: 'profile', label: 'Profile' },
   { id: 'model', label: 'Model & Provider' },
-  { id: 'claude-code', label: 'Claude Code' },
-  { id: 'codex', label: 'Codex' },
   { id: 'usage-pricing', label: 'Usage Pricing' },
   { id: 'agent', label: 'Agent Behavior' },
   { id: 'voice', label: 'Voice' },
