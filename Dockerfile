@@ -13,6 +13,11 @@ FROM tianon/gosu:1.17-bookworm AS gosu_source
 
 # ─── managed-agent daemon build stage ─────────────────────────────────────
 FROM golang:1.25-bookworm AS daemon-build
+# Override when proxy.golang.org times out, e.g.:
+#   docker build --build-arg GOPROXY=https://goproxy.cn,direct .
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY} \
+    GOSUMDB=sum.golang.org
 WORKDIR /build
 COPY agorax-agent-daemon/go.work agorax-agent-daemon/go.work.sum ./
 COPY agorax-agent-daemon/packages ./packages
@@ -20,11 +25,26 @@ RUN CGO_ENABLED=0 go build -o /usr/local/bin/agorax-agentd ./packages/agent/daem
 
 # ─── node build stage ─────────────────────────────────────────────────────
 FROM node:22-slim AS build
+# Match package.json#packageManager. Override registry when registry.npmjs.org
+# times out (common on restricted networks), e.g.:
+#   docker build --build-arg NPM_CONFIG_REGISTRY=https://registry.npmmirror.com .
+ARG PNPM_VERSION=12.11.2
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org
+ENV PNPM_VERSION=${PNPM_VERSION} \
+    NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY} \
+    COREPACK_NPM_REGISTRY=${NPM_CONFIG_REGISTRY} \
+    NPM_CONFIG_FETCH_TIMEOUT=300000 \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    ELECTRON_SKIP_BINARY_DOWNLOAD=1
 # python3/make/g++/gcc are required when better-sqlite3 (or other native deps)
 # falls back to node-gyp source compilation.
-RUN corepack enable && apt-get update && apt-get install -y --no-install-recommends \
+# Prepare pnpm before `pnpm install` so Corepack does not lazy-download mid-RUN
+# (that path often hits a 30s timeout on @pnpm/exe.linux-*).
+RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates python3 make g++ gcc \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable \
+    && corepack prepare "pnpm@${PNPM_VERSION}" --activate
 WORKDIR /app
 
 # Install deps (cache-friendly: copy only manifests first)
@@ -33,7 +53,6 @@ WORKDIR /app
 # Electron is a desktop-app dep (electron:build); this image runs node server-entry.js
 # only. Skip the Electron binary download so pnpm 12 allowBuilds does not fail CI
 # when GitHub is unreachable or the binary is unused.
-ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
 RUN pnpm install --frozen-lockfile
 

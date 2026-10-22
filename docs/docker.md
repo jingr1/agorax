@@ -13,6 +13,24 @@ docker compose up -d
 open http://localhost:6734
 ```
 
+### Building the image locally
+
+```bash
+docker build -t agorax:smoke .
+```
+
+If Corepack / pnpm times out on `registry.npmjs.org` (e.g. `@pnpm/exe.linux-x64`
+download), point the build at a mirror:
+
+```bash
+docker build \
+  --build-arg NPM_CONFIG_REGISTRY=https://registry.npmmirror.com \
+  -t agorax:smoke .
+```
+
+For Go module timeouts in the `daemon-build` stage, set `GOPROXY` in the build
+environment (e.g. `GOPROXY=https://goproxy.cn,direct`).
+
 That's it. The repo's `docker-compose.yml` runs:
 
 - `hermes-agent` (port `8642`, internal only)
