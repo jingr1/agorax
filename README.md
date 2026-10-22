@@ -602,7 +602,7 @@ docker compose up
 This pulls pre-built images and starts three services:
 
 - **hermes-agent** → `nousresearch/hermes-agent:latest` on port **8642**
-- **agorax** → `ghcr.io/outsourc-e/agorax:latest` on port **6734**
+- **agorax** → `ghcr.io/jingr1/agorax:latest` on port **6734**
 - **agorax-managed-agent** → same Agorax image, internal port **8788**
 
 No local build. First run takes a minute to pull; subsequent starts are instant.
@@ -720,7 +720,7 @@ docker build --target daemon-build -t agorax-daemon .
 Pull the image directly from GitHub Container Registry:
 
 ```
-ghcr.io/outsourc-e/agorax:latest
+ghcr.io/jingr1/agorax:latest
 ```
 
 Available tags:
@@ -737,7 +737,7 @@ Minimal Coolify / Easypanel config:
 
 ```yaml
 service: agorax
-image: ghcr.io/outsourc-e/agorax:latest
+image: ghcr.io/jingr1/agorax:latest
 port: 6734
 env:
   HERMES_API_URL: http://hermes-agent:8642 # point at your gateway

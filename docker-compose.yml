@@ -15,7 +15,7 @@
 # Images:
 #   This file pulls pre-built images by default — no local build required.
 #     - nousresearch/hermes-agent:latest  (Hermes Agent, Dockerfile upstream)
-#     - ghcr.io/outsourc-e/agorax:latest  (this workspace)
+#     - ghcr.io/jingr1/agorax:latest  (this workspace)
 #
 #   To build from source instead (e.g. for development), use:
 #     docker compose -f docker-compose.yml -f docker-compose.dev.yml up
@@ -93,7 +93,7 @@ services:
   # runtimes for the workspace. It shares the same volumes so provider sessions
   # and workspace files are in the same filesystem namespace.
   agorax-managed-agent:
-    image: ghcr.io/outsourc-e/agorax:latest
+    image: ghcr.io/jingr1/agorax:latest
     restart: unless-stopped
     command: ['/usr/local/bin/agorax-agentd']
     env_file:
@@ -120,7 +120,7 @@ services:
   # The Agorax Web UI
   # Connects to hermes-agent at http://hermes-agent:8642
   agorax:
-    image: ghcr.io/outsourc-e/agorax:latest
+    image: ghcr.io/jingr1/agorax:latest
     restart: unless-stopped
     depends_on:
       hermes-agent:

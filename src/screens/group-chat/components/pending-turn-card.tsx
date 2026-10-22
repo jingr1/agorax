@@ -1,16 +1,16 @@
 import { useState } from 'react'
+import { countRoomAgentProviderSiblings } from '../lib/avatar-utils'
+import { MemberAvatar } from './member-avatar'
+import type { PendingTurn, RoomParticipant } from '@/lib/group-chat-types'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import { MemberAvatar } from './member-avatar'
-import { countRoomAgentProviderSiblings } from '../lib/avatar-utils'
-import type { PendingTurn, RoomParticipant } from '@/lib/group-chat-types'
 
 type PendingTurnCardProps = {
   turn: PendingTurn
   participants: Array<RoomParticipant>
-  onAnswer: (turnId: string, text: string) => void
-  onDismiss: (turnId: string) => void
+  onAnswer: (turnId: string, text: string) => Promise<void>
+  onDismiss: (turnId: string) => Promise<void>
 }
 
 export function PendingTurnCard({
@@ -20,6 +20,7 @@ export function PendingTurnCard({
   onDismiss,
 }: PendingTurnCardProps) {
   const [answer, setAnswer] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const requester = participants.find(
     (p) => p.participantId === turn.requestedBy,
   )
@@ -66,7 +67,16 @@ export function PendingTurnCard({
                   key={opt.id}
                   size="sm"
                   variant="secondary"
-                  onClick={() => onAnswer(turn.id, opt.replyText)}
+                  disabled={isSubmitting}
+                  onClick={async () => {
+                    if (isSubmitting) return
+                    setIsSubmitting(true)
+                    try {
+                      await onAnswer(turn.id, opt.replyText)
+                    } finally {
+                      setIsSubmitting(false)
+                    }
+                  }}
                 >
                   {opt.label}
                 </Button>
@@ -79,26 +89,50 @@ export function PendingTurnCard({
               size="sm"
               placeholder="Reply..."
               value={answer}
+              disabled={isSubmitting}
               onChange={(e) => setAnswer(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && answer.trim()) {
-                  onAnswer(turn.id, answer.trim())
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter' && answer.trim() && !isSubmitting) {
+                  setIsSubmitting(true)
+                  try {
+                    await onAnswer(turn.id, answer.trim())
+                  } finally {
+                    setIsSubmitting(false)
+                  }
                 }
               }}
               className="flex-1"
             />
             <Button
               size="sm"
-              onClick={() => answer.trim() && onAnswer(turn.id, answer.trim())}
+              disabled={isSubmitting || !answer.trim()}
+              onClick={async () => {
+                if (isSubmitting || !answer.trim()) return
+                setIsSubmitting(true)
+                try {
+                  await onAnswer(turn.id, answer.trim())
+                } finally {
+                  setIsSubmitting(false)
+                }
+              }}
             >
-              Answer
+              {isSubmitting ? '…' : 'Answer'}
             </Button>
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => onDismiss(turn.id)}
+              disabled={isSubmitting}
+              onClick={async () => {
+                if (isSubmitting) return
+                setIsSubmitting(true)
+                try {
+                  await onDismiss(turn.id)
+                } finally {
+                  setIsSubmitting(false)
+                }
+              }}
             >
-              Dismiss
+              {isSubmitting ? '…' : 'Dismiss'}
             </Button>
           </div>
         </div>

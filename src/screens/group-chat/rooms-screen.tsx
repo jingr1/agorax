@@ -10,6 +10,15 @@ import {
   countRoomAgentProviderSiblings,
   getMemberColor,
 } from './lib/avatar-utils'
+import {
+  GroupChatMembersContext,
+  GroupChatRoomsContext,
+} from './group-chat-layout'
+import { writeLastRoom } from './last-room'
+import {
+  RoomWorkspaceField,
+  shortPathLabel,
+} from './components/room-workspace-field'
 import type {
   PendingTurn,
   Room,
@@ -28,16 +37,8 @@ import {
   listPendingTurns,
   updateRoom,
 } from '@/lib/group-chat-api'
+import { toast } from '@/components/ui/toast'
 import { useGroupChatEvents } from '@/lib/use-group-chat-events'
-import {
-  GroupChatMembersContext,
-  GroupChatRoomsContext,
-} from './group-chat-layout'
-import { writeLastRoom } from './last-room'
-import {
-  RoomWorkspaceField,
-  shortPathLabel,
-} from './components/room-workspace-field'
 import {
   DialogClose,
   DialogContent,
@@ -103,7 +104,7 @@ export function RoomsScreen() {
     const handled = handledEventIdByRoomRef.current[roomId] ?? 0
     const pending = events.filter((e) => e.id > handled)
     if (pending.length === 0) return
-    handledEventIdByRoomRef.current[roomId] = pending[pending.length - 1]!.id
+    handledEventIdByRoomRef.current[roomId] = pending[pending.length - 1].id
 
     let refreshMessages = false
     let refreshPending = false
@@ -162,26 +163,59 @@ export function RoomsScreen() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const sendingRef = useRef(false)
+
   async function handleSend() {
     if (!roomId || !input.trim()) return
+    if (sendingRef.current) return
+    sendingRef.current = true
     const content = input.trim()
     setInput('')
-    const res = await apiSendMessage(roomId, { content })
-    setMessages((prev) => [...prev, res.message])
-    setActiveRoom(res.room)
+    try {
+      const res = await apiSendMessage(roomId, { content })
+      // Avoid double-append: the SSE listener will refetch messages and replace
+      // the list. Only optimistically insert when the message is not already
+      // present (e.g. slow network where the event has not arrived yet).
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === res.message.id)) return prev
+        return [...prev, res.message]
+      })
+      setActiveRoom(res.room)
+    } finally {
+      sendingRef.current = false
+    }
   }
 
   async function handleAnswerTurn(turnId: string, answerText: string) {
     if (!roomId) return
-    const res = await answerPendingTurn(roomId, turnId, { answerText })
-    setMessages((prev) => [...prev, res.message])
-    setPendingTurns((prev) => prev.filter((t) => t.id !== turnId))
+    try {
+      const res = await answerPendingTurn(roomId, turnId, { answerText })
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === res.message.id)) return prev
+        return [...prev, res.message]
+      })
+      setPendingTurns((prev) => prev.filter((t) => t.id !== turnId))
+    } catch (error) {
+      console.error('[group-chat] answer pending turn failed:', error)
+      toast(error instanceof Error ? error.message : 'Failed to answer', {
+        type: 'error',
+      })
+      throw error
+    }
   }
 
   async function handleDismissTurn(turnId: string) {
     if (!roomId) return
-    await dismissPendingTurn(roomId, turnId)
-    setPendingTurns((prev) => prev.filter((t) => t.id !== turnId))
+    try {
+      await dismissPendingTurn(roomId, turnId)
+      setPendingTurns((prev) => prev.filter((t) => t.id !== turnId))
+    } catch (error) {
+      console.error('[group-chat] dismiss pending turn failed:', error)
+      toast(error instanceof Error ? error.message : 'Failed to dismiss', {
+        type: 'error',
+      })
+      throw error
+    }
   }
 
   async function handleSaveWorkspace() {

@@ -314,6 +314,7 @@ function PromptInputTextarea({
   return (
     <textarea
       ref={handleRef}
+      data-testid="chat-composer-input"
       value={value}
       onChange={handleChange}
       onKeyDown={handleKeyDown}

@@ -24,7 +24,7 @@ export const Route = createFileRoute('/api/rooms/$roomId/pending-turns')({
         return json({
           ok: true,
           room,
-          pendingTurns: listPendingTurns(params.roomId),
+          pendingTurns: listPendingTurns(params.roomId, { status: 'pending' }),
         })
       },
     },

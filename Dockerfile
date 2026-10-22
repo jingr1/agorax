@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1.6
 # Agorax — production Docker image
-# Publishes to ghcr.io/outsourc-e/agorax
+# Publishes to ghcr.io/jingr1/agorax (see .github/workflows/docker-publish.yml)
 #
 # Build locally:
 #   docker build -t agorax .
 # Run:
 #   docker run -p 6734:6734 -e HERMES_API_URL=http://host.docker.internal:8642 agorax
 # Or pull pre-built:
-#   docker pull ghcr.io/outsourc-e/agorax:latest
+#   docker pull ghcr.io/jingr1/agorax:latest
 #
 FROM tianon/gosu:1.17-bookworm AS gosu_source
 

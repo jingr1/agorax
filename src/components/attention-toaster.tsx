@@ -7,9 +7,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from '@tanstack/react-router'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
 import type { PendingTurn } from '@/lib/group-chat-types'
+import { Button } from '@/components/ui/button'
+import { toast } from '@/components/ui/toast'
+import { cn } from '@/lib/utils'
 
 type AttentionTurn = PendingTurn & { missionId?: string | null }
 
@@ -37,8 +38,15 @@ async function answerTurn(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    return res.ok
-  } catch {
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`Answer failed: ${res.status} ${text}`)
+    }
+    return true
+  } catch (reason) {
+    toast(reason instanceof Error ? reason.message : 'Answer failed', {
+      type: 'error',
+    })
     return false
   }
 }
@@ -48,8 +56,15 @@ async function dismissTurn(turnId: string): Promise<boolean> {
     const res = await fetch(`/api/pending-turns/${turnId}/dismiss`, {
       method: 'POST',
     })
-    return res.ok
-  } catch {
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`Dismiss failed: ${res.status} ${text}`)
+    }
+    return true
+  } catch (reason) {
+    toast(reason instanceof Error ? reason.message : 'Dismiss failed', {
+      type: 'error',
+    })
     return false
   }
 }

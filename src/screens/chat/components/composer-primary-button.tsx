@@ -142,6 +142,7 @@ function ComposerPrimaryButtonComponent({
       disabled={isDisabled}
       aria-label={label}
       title={label}
+      data-testid="chat-composer-send-button"
       data-action={action}
       className={cn(
         'relative z-[1] inline-flex shrink-0 touch-manipulation items-center justify-center rounded-full border-0 text-white transition-all duration-150',
