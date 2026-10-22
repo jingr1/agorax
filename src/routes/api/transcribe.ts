@@ -61,7 +61,13 @@ export const Route = createFileRoute('/api/transcribe')({
             )
           }
 
-          const paths = resolveHermesConfigPaths()
+          const profileField = form.get('profile')
+          const profile =
+            typeof profileField === 'string' && profileField.trim()
+              ? profileField.trim()
+              : new URL(request.url).searchParams.get('profile')?.trim() ||
+                undefined
+          const paths = resolveHermesConfigPaths(profile)
           const { config } = readHermesConfigFiles(paths)
           const target = resolveTranscriptionTarget(config)
           if (target.ok === false) {

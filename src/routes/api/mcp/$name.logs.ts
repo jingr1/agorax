@@ -2,12 +2,12 @@ import { createFileRoute } from '@tanstack/react-router'
 import { json } from '@tanstack/react-start'
 import { isAuthenticated } from '../../../server/auth-middleware'
 import {
-  BEARER_TOKEN,
-  HERMES_API,
-  CLAUDE_UPGRADE_INSTRUCTIONS,
+  HERMES_UPGRADE_INSTRUCTIONS,
   ensureGatewayEnhancedProbed,
 } from '../../../server/gateway-capabilities'
+import { resolveChatGateway } from '../../../server/chat-gateway'
 import { createCapabilityUnavailablePayload } from '@/lib/feature-gates'
+import { resolveMcpProfileName } from '../../../server/mcp-profile-config'
 
 /**
  * SSE proxy for per-server MCP logs. The agent serves
@@ -42,7 +42,7 @@ export const Route = createFileRoute('/api/mcp/$name/logs')({
         if (!capabilities.mcp) {
           return json(
             createCapabilityUnavailablePayload('mcp', {
-              error: `Gateway does not support /api/mcp. ${CLAUDE_UPGRADE_INSTRUCTIONS}`,
+              error: `Gateway does not support /api/mcp. ${HERMES_UPGRADE_INSTRUCTIONS}`,
             }),
             { status: 503 },
           )
@@ -54,12 +54,16 @@ export const Route = createFileRoute('/api/mcp/$name/logs')({
 
         let upstream: Response
         try {
+          const url = new URL(request.url)
+          const profile =
+            resolveMcpProfileName(url.searchParams.get('profile')) ?? undefined
+          const gateway = resolveChatGateway(profile)
           const headers = new Headers()
-          if (BEARER_TOKEN) {
-            headers.set('Authorization', `Bearer ${BEARER_TOKEN}`)
+          if (gateway.token) {
+            headers.set('Authorization', `Bearer ${gateway.token}`)
           }
           upstream = await fetch(
-            `${HERMES_API}/api/mcp/${encodeURIComponent(name)}/logs`,
+            `${gateway.url}/api/mcp/${encodeURIComponent(name)}/logs`,
             {
               method: 'GET',
               headers,

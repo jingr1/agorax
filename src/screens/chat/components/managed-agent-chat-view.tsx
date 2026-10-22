@@ -136,7 +136,7 @@ export function ManagedAgentChatView({
         onModel: () => {
           window.dispatchEvent(
             new CustomEvent(CHAT_OPEN_SETTINGS_EVENT, {
-              detail: { section: 'claude' },
+              detail: { section: 'model' },
             }),
           )
           openModelPickerRef.current?.()

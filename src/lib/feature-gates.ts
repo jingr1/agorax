@@ -25,10 +25,10 @@ const FEATURE_LABELS: Record<EnhancedFeature, string> = {
 
 const FEATURE_PROBES: Record<EnhancedFeature, Array<string>> = {
   sessions: ['/api/sessions'],
-  skills: ['/api/gateway-status', '/api/skills'],
+  skills: ['/api/gateway-status', '/api/platform-skills'],
   memory: ['/api/gateway-status', '/api/memory/list'],
   config: ['/api/gateway-status', '/api/hermes-config'],
-  jobs: ['/api/gateway-status', '/api/claude-jobs'],
+  jobs: ['/api/gateway-status', '/api/hermes-jobs'],
   mcp: ['/api/gateway-status', '/api/mcp'],
   mcpFallback: ['/api/gateway-status', '/api/mcp'],
   kanban: ['/api/gateway-status', '/api/swarm-kanban'],

@@ -33,8 +33,10 @@ import type { ThemeId } from '@/lib/theme'
 import type { LocaleId } from '@/lib/i18n'
 import type { AgentWithStatus } from '@/lib/agent-types'
 import { GROQ_STT_MODELS, STT_PROVIDER_OPTIONS } from '@/lib/stt-config'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsList, TabsTab } from '@/components/ui/tabs'
 import { applyTheme, useSettings } from '@/hooks/use-settings'
 import {
   THEMES,
@@ -43,20 +45,21 @@ import {
   isDarkTheme,
   setTheme,
 } from '@/lib/theme'
+import {
+  hermesConfigUrl,
+  withHermesConfigProfile,
+} from '@/lib/hermes-config-client'
 import { cn } from '@/lib/utils'
 import {
   getChatProfileDisplayName,
   useChatSettingsStore,
 } from '@/hooks/use-chat-settings'
-import { UserAvatar } from '@/components/avatars'
+import { AssistantAvatar, UserAvatar } from '@/components/avatars'
 import { Input } from '@/components/ui/input'
 import { LogoLoader } from '@/components/logo-loader'
 import { BrailleSpinner } from '@/components/ui/braille-spinner'
 import { ThreeDotsSpinner } from '@/components/ui/three-dots-spinner'
-import BackendUnavailableState from '@/components/backend-unavailable-state'
 import { applyAccentColor } from '@/lib/accent-colors'
-import { getUnavailableReason } from '@/lib/feature-gates'
-import { useFeatureAvailable } from '@/hooks/use-feature-available'
 import { useProfiles } from '@/screens/chat/hooks/use-profiles'
 import {
   profileConfigPathLabel,
@@ -85,7 +88,7 @@ export {
 
 type SectionId =
   | 'profile'
-  | 'claude'
+  | 'model'
   | 'agent'
   | 'voice'
   | 'display'
@@ -97,7 +100,7 @@ type SectionId =
 
 const SECTIONS: Array<{ id: SectionId; label: string; icon: any }> = [
   { id: 'profile', label: 'Profile', icon: UserIcon },
-  { id: 'claude', label: 'Model & Provider', icon: CloudIcon },
+  { id: 'model', label: 'Model', icon: CloudIcon },
   { id: 'usage_pricing', label: 'Usage Pricing', icon: CoinsDollarIcon },
   { id: 'agent', label: 'Agent', icon: Settings02Icon },
   { id: 'voice', label: 'Voice', icon: VolumeHighIcon },
@@ -177,7 +180,6 @@ const SETTINGS_CARD_CLASS =
 // ── Section components ──────────────────────────────────────────────────
 
 function HermesContent({ profileName }: { profileName?: string }) {
-  const configAvailable = useFeatureAvailable('config')
   const queryClient = useQueryClient()
   const { activeProfileName, isReady } = useProfiles()
   const { catalog } = useProviderCatalog()
@@ -211,7 +213,7 @@ function HermesContent({ profileName }: { profileName?: string }) {
   }, [targetProfileName, isReady])
 
   useEffect(() => {
-    fetch('/api/hermes-config')
+    fetch(hermesConfigUrl(targetProfileName))
       .then((r) => r.json())
       .then((d: { config?: { memory?: Record<string, unknown> } }) => {
         const mem = d.config?.memory ?? {}
@@ -219,27 +221,22 @@ function HermesContent({ profileName }: { profileName?: string }) {
         setUserProfileEnabled(mem.user_profile_enabled !== false)
       })
       .catch(() => {})
-  }, [])
+  }, [targetProfileName])
 
   const saveMemory = async (patch: Record<string, unknown>) => {
     try {
-      await fetch('/api/hermes-config', {
+      await fetch(hermesConfigUrl(targetProfileName), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: { memory: patch } }),
+        body: JSON.stringify(
+          withHermesConfigProfile(targetProfileName, {
+            config: { memory: patch },
+          }),
+        ),
       })
     } catch {
-      // Memory remains a global toggle; ignore network errors after optimistic UI.
+      // Ignore network errors after optimistic UI.
     }
-  }
-
-  if (!configAvailable) {
-    return (
-      <BackendUnavailableState
-        feature="Hermes Agent Settings"
-        description={getUnavailableReason('config')}
-      />
-    )
   }
 
   const cardStyle: React.CSSProperties = {
@@ -252,12 +249,13 @@ function HermesContent({ profileName }: { profileName?: string }) {
   return (
     <div className="space-y-5">
       <SectionHeader
-        title="Model & Provider"
+        title="Model"
         description={`Active profile: ${targetProfileName}. Changes apply only to this profile.`}
       />
       {loaded ? (
         <ModelProviderPanel
           key={`${targetProfileName}:${catalog?.providers.map((p) => p.id).join(',')}`}
+          profileName={targetProfileName}
           initialProvider={initialProvider}
           initialModel={initialModel}
           banner={`Editing profile ${targetProfileName}. Use All settings for global or other profiles.`}
@@ -1211,26 +1209,32 @@ class SettingsErrorBoundary extends Component<
 
 // ── Agent Behavior ──────────────────────────────────────────────────────
 
-function AgentBehaviorContent() {
+function AgentBehaviorContent({ profileName }: { profileName?: string }) {
+  const { activeProfileName } = useProfiles()
+  const targetProfile = profileName || activeProfileName
   const [config, setConfig] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/hermes-config')
+    fetch(hermesConfigUrl(targetProfile))
       .then((r) => r.json())
       .then((d: any) => {
         setConfig((d.config?.agent as Record<string, unknown>) || {})
       })
       .catch(() => {})
-  }, [])
+  }, [targetProfile])
 
   const save = async (key: string, value: unknown) => {
     setMsg(null)
     try {
-      await fetch('/api/hermes-config', {
+      await fetch(hermesConfigUrl(targetProfile), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: { agent: { [key]: value } } }),
+        body: JSON.stringify(
+          withHermesConfigProfile(targetProfile, {
+            config: { agent: { [key]: value } },
+          }),
+        ),
       })
       setConfig((prev) => ({ ...prev, [key]: value }))
       setMsg('Saved')
@@ -1244,7 +1248,7 @@ function AgentBehaviorContent() {
     <div className="space-y-4">
       <SectionHeader
         title="Agent Behavior"
-        description="Execution limits and tool access."
+        description={`Execution limits and tool access for ${targetProfile}.`}
       />
       {msg && (
         <div
@@ -1300,28 +1304,34 @@ function AgentBehaviorContent() {
 
 // ── Voice (TTS + STT) ──────────────────────────────────────────────────
 
-function VoiceContent() {
+function VoiceContent({ profileName }: { profileName?: string }) {
+  const { activeProfileName } = useProfiles()
+  const targetProfile = profileName || activeProfileName
   const [tts, setTts] = useState<Record<string, unknown>>({})
   const [stt, setStt] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/hermes-config')
+    fetch(hermesConfigUrl(targetProfile))
       .then((r) => r.json())
       .then((d: any) => {
         setTts((d.config?.tts as Record<string, unknown>) || {})
         setStt((d.config?.stt as Record<string, unknown>) || {})
       })
       .catch(() => {})
-  }, [])
+  }, [targetProfile])
 
   const saveTts = async (key: string, value: unknown) => {
     setMsg(null)
     try {
-      await fetch('/api/hermes-config', {
+      await fetch(hermesConfigUrl(targetProfile), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: { tts: { [key]: value } } }),
+        body: JSON.stringify(
+          withHermesConfigProfile(targetProfile, {
+            config: { tts: { [key]: value } },
+          }),
+        ),
       })
       setTts((prev) => ({ ...prev, [key]: value }))
       setMsg('Saved')
@@ -1334,10 +1344,14 @@ function VoiceContent() {
   const saveStt = async (key: string, value: unknown) => {
     setMsg(null)
     try {
-      await fetch('/api/hermes-config', {
+      await fetch(hermesConfigUrl(targetProfile), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: { stt: { [key]: value } } }),
+        body: JSON.stringify(
+          withHermesConfigProfile(targetProfile, {
+            config: { stt: { [key]: value } },
+          }),
+        ),
       })
       setStt((prev) => ({ ...prev, [key]: value }))
       setMsg('Saved')
@@ -1473,26 +1487,32 @@ function VoiceContent() {
 
 // ── Display ─────────────────────────────────────────────────────────────
 
-function DisplayContent() {
+function DisplayContent({ profileName }: { profileName?: string }) {
+  const { activeProfileName } = useProfiles()
+  const targetProfile = profileName || activeProfileName
   const [config, setConfig] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/hermes-config')
+    fetch(hermesConfigUrl(targetProfile))
       .then((r) => r.json())
       .then((d: any) => {
         setConfig((d.config?.display as Record<string, unknown>) || {})
       })
       .catch(() => {})
-  }, [])
+  }, [targetProfile])
 
   const save = async (key: string, value: unknown) => {
     setMsg(null)
     try {
-      await fetch('/api/hermes-config', {
+      await fetch(hermesConfigUrl(targetProfile), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: { display: { [key]: value } } }),
+        body: JSON.stringify(
+          withHermesConfigProfile(targetProfile, {
+            config: { display: { [key]: value } },
+          }),
+        ),
       })
       setConfig((prev) => ({ ...prev, [key]: value }))
       setMsg('Saved')
@@ -1506,7 +1526,7 @@ function DisplayContent() {
     <div className="space-y-4">
       <SectionHeader
         title="Display"
-        description="Agent response style and output preferences."
+        description={`Agent response style for ${targetProfile}.`}
       />
       {msg && (
         <div
@@ -1602,31 +1622,32 @@ function LanguageContent() {
 
 function AgentInfo({ agent }: { agent: AgentWithStatus }) {
   return (
-    <div className="mb-5 rounded-xl border border-primary-200 bg-primary-50/80 p-4 dark:border-primary-800 dark:bg-neutral-900">
-      <div className="mb-3 flex items-center gap-3">
-        <div className="flex size-10 items-center justify-center rounded-lg bg-primary-100 dark:bg-neutral-800">
-          <span className="text-sm font-semibold text-primary-700 dark:text-neutral-200">
-            {agent.name.slice(0, 2).toUpperCase()}
-          </span>
-        </div>
+    <div className={cn(SETTINGS_CARD_CLASS, 'mb-5 space-y-3')}>
+      <div className="flex items-center gap-3">
+        <AssistantAvatar
+          name={agent.name}
+          runtime={agent.runtime}
+          size={40}
+          showInitials
+          alt={agent.name}
+        />
         <div className="min-w-0 flex-1">
-          <h4 className="truncate text-sm font-semibold text-primary-900 dark:text-neutral-100">
-            {agent.name}
-          </h4>
-          <p className="text-xs text-primary-500 dark:text-neutral-400">
-            {agentRuntimeLabel(agent.runtime)}
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="truncate text-sm font-semibold text-primary-900 dark:text-neutral-100">
+              {agent.name}
+            </h4>
+            <Badge variant="secondary" className="rounded-md font-normal">
+              {agentRuntimeLabel(agent.runtime)}
+            </Badge>
+          </div>
+          <p className="mt-0.5 font-mono text-xs text-primary-500 dark:text-neutral-400">
+            {agent.agentId}
           </p>
         </div>
       </div>
-      <dl className="space-y-1.5 text-xs">
-        <div className="flex justify-between gap-4">
-          <dt className="text-primary-500 dark:text-neutral-400">Agent ID</dt>
-          <dd className="font-mono text-primary-900 dark:text-neutral-200">
-            {agent.agentId}
-          </dd>
-        </div>
+      <dl className="grid gap-1.5 text-xs sm:grid-cols-2">
         {agent.runtimeConfig.profile ? (
-          <div className="flex justify-between gap-4">
+          <div className="flex items-baseline justify-between gap-2 sm:col-span-1">
             <dt className="text-primary-500 dark:text-neutral-400">Profile</dt>
             <dd className="font-mono text-primary-900 dark:text-neutral-200">
               {agent.runtimeConfig.profile}
@@ -1634,43 +1655,63 @@ function AgentInfo({ agent }: { agent: AgentWithStatus }) {
           </div>
         ) : null}
         {agent.runtimeConfig.command ? (
-          <div className="flex justify-between gap-4">
+          <div className="flex items-baseline justify-between gap-2 sm:col-span-1">
             <dt className="text-primary-500 dark:text-neutral-400">Command</dt>
-            <dd className="font-mono text-primary-900 dark:text-neutral-200">
+            <dd className="truncate font-mono text-primary-900 dark:text-neutral-200">
               {agent.runtimeConfig.command}
             </dd>
           </div>
         ) : null}
-        {agent.runtimeConfig.capabilities.length > 0 ? (
-          <div className="flex justify-between gap-4">
-            <dt className="text-primary-500 dark:text-neutral-400">Capabilities</dt>
-            <dd className="text-right text-primary-900 dark:text-neutral-200">
-              {agent.runtimeConfig.capabilities.join(', ')}
-            </dd>
-          </div>
-        ) : null}
       </dl>
+      {agent.runtimeConfig.capabilities.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {agent.runtimeConfig.capabilities.map((cap) => (
+            <Badge
+              key={cap}
+              variant="outline"
+              className="rounded-md font-normal"
+            >
+              {cap}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }
 
 // ── Main Dialog ─────────────────────────────────────────────────────────
 
-function DefaultHermesContent() {
-  return <HermesContent />
+function DefaultHermesContent({ profileName }: { profileName?: string }) {
+  return <HermesContent profileName={profileName} />
 }
 
-const CONTENT_MAP: Record<SectionId, () => React.JSX.Element> = {
-  profile: ProfileContent,
-  claude: DefaultHermesContent,
-  usage_pricing: UsagePricingPanel,
-  agent: AgentBehaviorContent,
-  voice: VoiceContent,
-  display: DisplayContent,
-  appearance: AppearanceContent,
-  chat: ChatContent,
-  notifications: NotificationsContent,
-  language: LanguageContent,
+function renderSettingsSection(
+  section: SectionId,
+  profileName?: string,
+): React.JSX.Element {
+  switch (section) {
+    case 'profile':
+      return <ProfileContent />
+    case 'model':
+      return <DefaultHermesContent profileName={profileName} />
+    case 'usage_pricing':
+      return <UsagePricingPanel />
+    case 'agent':
+      return <AgentBehaviorContent profileName={profileName} />
+    case 'voice':
+      return <VoiceContent profileName={profileName} />
+    case 'display':
+      return <DisplayContent profileName={profileName} />
+    case 'appearance':
+      return <AppearanceContent />
+    case 'chat':
+      return <ChatContent />
+    case 'notifications':
+      return <NotificationsContent />
+    case 'language':
+      return <LanguageContent />
+  }
 }
 
 type SettingsDialogProps = {
@@ -1684,7 +1725,7 @@ type SettingsDialogProps = {
 export function SettingsDialog({
   open,
   onOpenChange,
-  initialSection = 'claude',
+  initialSection = 'model',
   agentId,
 }: SettingsDialogProps) {
   const [active, setActive] = useState<SectionId>(initialSection)
@@ -1719,33 +1760,36 @@ export function SettingsDialog({
     setMobileView('content')
   }
 
-  const ActiveContent = CONTENT_MAP[active]
+  const hermesProfileName =
+    agent?.runtime === 'hermes'
+      ? agent.runtimeConfig.profile || agent.agentId
+      : undefined
 
   function renderContent() {
-    if (active !== 'claude' || !agentId) {
-      return <ActiveContent />
+    if (active === 'model' && agentId) {
+      if (agentLoading) {
+        return (
+          <div className="h-20 animate-pulse rounded-lg bg-primary-100/70 dark:bg-neutral-800" />
+        )
+      }
+      if (!agent) {
+        return (
+          <div className="rounded-lg bg-red-500/15 px-3 py-2 text-sm text-red-400">
+            Agent not found
+          </div>
+        )
+      }
+      if (agent.runtime === 'hermes') {
+        return <HermesContent profileName={hermesProfileName} />
+      }
+      if (agent.runtime === 'codex') {
+        return <CodexSettingsPanel agentId={agent.agentId} />
+      }
+      // Generic managed-runtime settings for every other non-hermes runtime
+      // (claude-code, opencode, cursor, kimi, and future managed backends).
+      return <ClaudeCodeSettingsPanel agentId={agent.agentId} />
     }
-    if (agentLoading) {
-      return (
-        <div className="h-20 animate-pulse rounded-lg bg-primary-100/70 dark:bg-neutral-800" />
-      )
-    }
-    if (!agent) {
-      return (
-        <div className="rounded-lg bg-red-500/15 px-3 py-2 text-sm text-red-400">
-          Agent not found
-        </div>
-      )
-    }
-    if (agent.runtime === 'hermes') {
-      return <HermesContent profileName={agent.runtimeConfig.profile} />
-    }
-    if (agent.runtime === 'codex') {
-      return <CodexSettingsPanel agentId={agent.agentId} />
-    }
-    // Generic managed-runtime settings for every other non-hermes runtime
-    // (claude-code, opencode, cursor, kimi, and future managed backends).
-    return <ClaudeCodeSettingsPanel agentId={agent.agentId} />
+    return renderSettingsSection(active, hermesProfileName)
   }
 
   return (
@@ -1780,24 +1824,31 @@ export function SettingsDialog({
           </div>
 
           <SettingsErrorBoundary>
-            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+            <Tabs
+              value={active}
+              onValueChange={(next) => {
+                if (typeof next === 'string') {
+                  handleSectionSelect(next as SectionId)
+                }
+              }}
+              orientation="vertical"
+              className="flex min-h-0 flex-1 flex-col gap-0 md:flex-row"
+            >
               <aside
                 className={cn(
                   'w-full bg-primary-50/60 p-2 md:w-44 md:shrink-0 md:border-r md:border-primary-200',
                   mobileView === 'content' && 'hidden md:block',
                 )}
               >
-                <nav className="space-y-1">
+                <TabsList
+                  variant="default"
+                  className="w-full flex-col items-stretch gap-0.5 rounded-lg border border-primary-200/80 bg-primary-100/40 p-1 dark:border-neutral-700 dark:bg-neutral-900/40"
+                >
                   {SECTIONS.map((s) => (
-                    <button
+                    <TabsTab
                       key={s.id}
-                      type="button"
-                      onClick={() => handleSectionSelect(s.id)}
-                      className={cn(
-                        'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-primary-600 transition-colors hover:bg-primary-100',
-                        active === s.id &&
-                          'bg-accent-50 font-medium text-accent-700',
-                      )}
+                      value={s.id}
+                      className="h-9 justify-start gap-2.5 px-3"
                     >
                       <HugeiconsIcon
                         icon={s.icon}
@@ -1805,9 +1856,9 @@ export function SettingsDialog({
                         strokeWidth={1.5}
                       />
                       {s.label}
-                    </button>
+                    </TabsTab>
                   ))}
-                </nav>
+                </TabsList>
               </aside>
               <div
                 className={cn(
@@ -1834,7 +1885,7 @@ export function SettingsDialog({
                 {agent && <AgentInfo agent={agent} />}
                 {renderContent()}
               </div>
-            </div>
+            </Tabs>
           </SettingsErrorBoundary>
 
           <div className="sticky bottom-0 z-10 border-t border-primary-200 bg-primary-50/60 px-4 py-3 text-xs text-primary-500 dark:text-neutral-400 md:rounded-b-2xl md:px-5">

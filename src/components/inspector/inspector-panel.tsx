@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { create } from 'zustand'
 import { useActivityStore } from './activity-store'
 import type { ActivityEvent } from './activity-store'
-import { getUnavailableReason } from '@/lib/feature-gates'
-import { useFeatureAvailable } from '@/hooks/use-feature-available'
 import { cn } from '@/lib/utils'
+import { useAgentStore } from '@/stores/agent-store'
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
@@ -34,13 +33,12 @@ type TabId =
 const TABS: Array<{
   id: TabId
   label: string
-  feature?: 'memory' | 'skills'
 }> = [
   { id: 'activity', label: 'Activity' },
   { id: 'artifacts', label: 'Artifacts' },
   { id: 'files', label: 'Files' },
-  { id: 'memory', label: 'Memory', feature: 'memory' },
-  { id: 'skills', label: 'Skills', feature: 'skills' },
+  { id: 'memory', label: 'Memory' },
+  { id: 'skills', label: 'Skills' },
   { id: 'mcp', label: 'MCP' },
   { id: 'logs', label: 'Logs' },
 ]
@@ -293,14 +291,13 @@ function SkillsTab() {
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/skills')
+    fetch('/api/platform-skills')
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json()
       })
       .then((json) => {
         if (!cancelled) {
-          // Handle array of skills or object with skills property
           const list = Array.isArray(json)
             ? json
             : json.skills || json.data || []
@@ -391,58 +388,101 @@ type McpInspectorServer = {
 }
 
 function McpTab() {
+  const activeAgentId = useAgentStore((s) => s.activeAgentId)
+  const agents = useAgentStore((s) => s.agents)
+  const activeAgent = agents.find((a) => a.agentId === activeAgentId)
+  const isHermes =
+    Boolean(activeAgent) &&
+    (activeAgent!.runtime === 'hermes' || !activeAgent!.runtime)
+  const hermesProfile = isHermes
+    ? activeAgent?.runtimeConfig?.profile?.trim() ||
+      activeAgentId?.trim() ||
+      undefined
+    : undefined
+
   const [servers, setServers] = useState<Array<McpInspectorServer> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [scopeLabel, setScopeLabel] = useState<string>('')
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/mcp')
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
-      .then((json) => {
-        if (cancelled) return
-        const list = Array.isArray(json?.servers) ? json.servers : []
-        setServers(
-          list.map((entry: Record<string, unknown>) => ({
-            id: String(entry?.id || entry?.name || ''),
-            name: String(entry?.name || ''),
-            enabled: Boolean(entry?.enabled),
-            status:
-              typeof entry?.status === 'string' ? entry.status : undefined,
-            discoveredToolsCount:
-              typeof entry?.discoveredToolsCount === 'number'
-                ? entry.discoveredToolsCount
-                : undefined,
-          })),
-        )
-        setLoading(false)
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setError(err.message || 'Failed to load MCP servers')
-        setLoading(false)
-      })
+    setLoading(true)
+    setError(null)
+    setServers(null)
+
+    const agentId = activeAgentId?.trim()
+    if (!agentId) {
+      setServers([])
+      setScopeLabel('')
+      setLoading(false)
+      return
+    }
+
+    async function load() {
+      // Hermes: pin profile so we never fall through to active/default.
+      // Managed: platform bindings are the truth (no Hermes config.yaml).
+      const url =
+        hermesProfile != null
+          ? `/api/mcp?profile=${encodeURIComponent(hermesProfile)}`
+          : `/api/agents/${encodeURIComponent(agentId!)}/mcp`
+      setScopeLabel(
+        hermesProfile != null
+          ? `profile ${hermesProfile}`
+          : `agent ${agentId} (bindings)`,
+      )
+
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const json = (await res.json()) as {
+        servers?: Array<Record<string, unknown>>
+      }
+      if (cancelled) return
+      const list = Array.isArray(json?.servers) ? json.servers : []
+      setServers(
+        list.map((entry) => ({
+          id: String(entry?.id || entry?.serverId || entry?.name || ''),
+          name: String(entry?.name || ''),
+          enabled: Boolean(entry?.enabled),
+          status:
+            typeof entry?.status === 'string' ? entry.status : undefined,
+          discoveredToolsCount:
+            typeof entry?.discoveredToolsCount === 'number'
+              ? entry.discoveredToolsCount
+              : undefined,
+        })),
+      )
+      setLoading(false)
+    }
+
+    load().catch((err: unknown) => {
+      if (cancelled) return
+      setError(err instanceof Error ? err.message : 'Failed to load MCP servers')
+      setLoading(false)
+    })
+
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [activeAgentId, hermesProfile])
 
+  if (!activeAgentId) {
+    return <EmptyState text="Select an agent to view MCP servers" />
+  }
   if (loading) return <LoadingState text="Loading MCP servers…" />
   if (error) return <ErrorState text={`MCP: ${error}`} />
   if (!servers || servers.length === 0)
-    return <EmptyState text="No MCP servers configured" />
+    return <EmptyState text="No MCP servers for this agent" />
 
   return (
     <div className="space-y-2 p-3 overflow-auto max-h-[calc(100vh-140px)]">
       <p className="mb-1 text-xs" style={{ color: 'var(--theme-muted)' }}>
         {servers.length} MCP server{servers.length === 1 ? '' : 's'}
+        {scopeLabel ? ` · ${scopeLabel}` : ''}
       </p>
       {servers.map((server) => (
         <div
-          key={server.id}
+          key={server.id || server.name}
           className="rounded-lg px-3 py-2 text-xs leading-relaxed"
           style={{
             backgroundColor: 'var(--theme-card)',
@@ -513,18 +553,7 @@ export function InspectorPanel({
   embedded = false,
 }: { embedded?: boolean } = {}) {
   const isOpen = useInspectorStore((s) => s.isOpen)
-  const memoryAvailable = useFeatureAvailable('memory')
-  const skillsAvailable = useFeatureAvailable('skills')
   const [activeTab, setActiveTab] = useState<TabId>('activity')
-
-  useEffect(() => {
-    if (activeTab === 'memory' && !memoryAvailable) {
-      setActiveTab('activity')
-    }
-    if (activeTab === 'skills' && !skillsAvailable) {
-      setActiveTab('activity')
-    }
-  }, [activeTab, memoryAvailable, skillsAvailable])
 
   if (embedded && !isOpen) return null
 
@@ -575,54 +604,29 @@ export function InspectorPanel({
             className="flex shrink-0 overflow-x-auto"
             style={{ borderBottom: '1px solid var(--theme-border)' }}
           >
-            {TABS.map((tab) =>
-              (() => {
-                const available =
-                  tab.feature === 'memory'
-                    ? memoryAvailable
-                    : tab.feature === 'skills'
-                      ? skillsAvailable
-                      : true
-
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => {
-                      if (available) setActiveTab(tab.id)
-                    }}
-                    disabled={!available}
-                    className={cn(
-                      'px-3 py-2 text-xs font-medium shrink-0 transition-colors',
-                      activeTab === tab.id ? 'border-b-2' : 'hover:opacity-80',
-                      !available && 'cursor-not-allowed opacity-50',
-                    )}
-                    style={{
-                      color:
-                        activeTab === tab.id
-                          ? 'var(--theme-accent)'
-                          : 'var(--theme-muted)',
-                      borderBottomColor:
-                        activeTab === tab.id
-                          ? 'var(--theme-accent)'
-                          : 'transparent',
-                    }}
-                    title={
-                      !available && tab.feature
-                        ? getUnavailableReason(tab.feature)
-                        : undefined
-                    }
-                  >
-                    <span>{tab.label}</span>
-                    {!available ? (
-                      <span className="ml-1 rounded-full border border-amber-300 bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-amber-700">
-                        Gate
-                      </span>
-                    ) : null}
-                  </button>
-                )
-              })(),
-            )}
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  'px-3 py-2 text-xs font-medium shrink-0 transition-colors',
+                  activeTab === tab.id ? 'border-b-2' : 'hover:opacity-80',
+                )}
+                style={{
+                  color:
+                    activeTab === tab.id
+                      ? 'var(--theme-accent)'
+                      : 'var(--theme-muted)',
+                  borderBottomColor:
+                    activeTab === tab.id
+                      ? 'var(--theme-accent)'
+                      : 'transparent',
+                }}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
 
           {/* Content */}

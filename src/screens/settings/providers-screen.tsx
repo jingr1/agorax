@@ -12,14 +12,16 @@ import { ProviderIcon } from './components/provider-icon'
 import { ProviderWizard } from './components/provider-wizard'
 import type { ModelCatalogEntry } from '@/lib/model-types'
 import type { ProviderSummaryForEdit } from './components/provider-wizard'
-import BackendUnavailableState from '@/components/backend-unavailable-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from '@/components/ui/toast'
-import { getUnavailableReason } from '@/lib/feature-gates'
-import { useFeatureAvailable } from '@/hooks/use-feature-available'
+import {
+  hermesConfigUrl,
+  withHermesConfigProfile,
+} from '@/lib/hermes-config-client'
+import { useProfiles } from '@/screens/chat/hooks/use-profiles'
 import {
   getProviderDisplayName,
   getProviderInfo,
@@ -29,8 +31,11 @@ import { cn } from '@/lib/utils'
 
 // FIX: replaced direct server module imports with workspace API calls to avoid
 // bundling Node.js-only modules (node:sqlite, node:fs) into the client bundle.
-async function getConfig(): Promise<Record<string, unknown>> {
-  const res = await fetch('/api/hermes-config')
+async function getConfig(
+  profile?: string,
+): Promise<Record<string, unknown>> {
+  const { hermesConfigUrl } = await import('@/lib/hermes-config-client')
+  const res = await fetch(hermesConfigUrl(profile))
   if (!res.ok) throw new Error(`Failed to load config: HTTP ${res.status}`)
   const data = (await res.json()) as { config?: Record<string, unknown> }
   return data.config ?? {}
@@ -38,11 +43,17 @@ async function getConfig(): Promise<Record<string, unknown>> {
 
 async function patchConfig(
   patch: Record<string, unknown>,
+  profile?: string,
 ): Promise<Record<string, unknown>> {
-  const res = await fetch('/api/hermes-config', {
+  const { hermesConfigUrl, withHermesConfigProfile } = await import(
+    '@/lib/hermes-config-client'
+  )
+  const res = await fetch(hermesConfigUrl(profile), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ config: patch }),
+    body: JSON.stringify(
+      withHermesConfigProfile(profile, { config: patch }),
+    ),
   })
   if (!res.ok) throw new Error(`Failed to save config: HTTP ${res.status}`)
   return res.json() as Promise<Record<string, unknown>>
@@ -1016,6 +1027,8 @@ function ActiveModelCard({
   modelOptions: Array<SelectOption>
 }) {
   const queryClient = useQueryClient()
+  const { activeProfileName } = useProfiles()
+  const profile = activeProfileName || 'default'
   const [primaryConfig, setPrimaryConfig] = useState<ModelConfigDraft>({
     provider: 'custom',
     model: '',
@@ -1033,8 +1046,8 @@ function ActiveModelCard({
   const [showFallback, setShowFallback] = useState(false)
 
   const configQuery = useQuery({
-    queryKey: ['claude', 'active-config'],
-    queryFn: getConfig,
+    queryKey: ['claude', 'active-config', profile],
+    queryFn: () => getConfig(profile),
   })
 
   const saveMutation = useMutation({
@@ -1074,7 +1087,7 @@ function ActiveModelCard({
           }
         : null
 
-      await patchConfig(patch)
+      await patchConfig(patch, profile)
     },
     onSuccess: async () => {
       await Promise.all([
@@ -1421,7 +1434,6 @@ function ProviderManagementSection(props: {
 
 export function ProvidersScreen({ embedded = false }: ProvidersScreenProps) {
   const queryClient = useQueryClient()
-  const configAvailable = useFeatureAvailable('config')
   const [activeTab, setActiveTab] = useState<SettingsTabId>('providers')
   const [search, setSearch] = useState('')
   const [draftValues, setDraftValues] = useState<Record<string, string>>({})
@@ -1435,7 +1447,6 @@ export function ProvidersScreen({ embedded = false }: ProvidersScreenProps) {
     queryFn: fetchModels,
     refetchInterval: 60_000,
     retry: false,
-    enabled: configAvailable,
   })
 
   const configQuery = useQuery({
@@ -1451,7 +1462,6 @@ export function ProvidersScreen({ embedded = false }: ProvidersScreenProps) {
       return payload.payload ?? {}
     },
     retry: 1,
-    enabled: configAvailable,
   })
 
   const saveMutation = useMutation({
@@ -1550,13 +1560,15 @@ export function ProvidersScreen({ embedded = false }: ProvidersScreenProps) {
 
     setDeletingId(provider.id)
     try {
-      const res = await fetch('/api/hermes-config', {
+      const res = await fetch(hermesConfigUrl('default'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          action: 'remove-provider',
-          provider: provider.id,
-        }),
+        body: JSON.stringify(
+          withHermesConfigProfile('default', {
+            action: 'remove-provider',
+            provider: provider.id,
+          }),
+        ),
       })
       const data = (await res.json()) as { ok: boolean; error?: string }
       if (!data.ok) {
@@ -1588,21 +1600,6 @@ export function ProvidersScreen({ embedded = false }: ProvidersScreenProps) {
   }
 
   const totalSearchMatches = filteredSettings.length
-
-  if (!configAvailable) {
-    return (
-      <div
-        className={cn(
-          embedded ? 'h-full bg-primary-50' : 'min-h-full bg-surface',
-        )}
-      >
-        <BackendUnavailableState
-          feature="Provider Setup"
-          description={getUnavailableReason('config')}
-        />
-      </div>
-    )
-  }
 
   return (
     <div

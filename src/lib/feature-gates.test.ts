@@ -11,7 +11,7 @@ describe('getUnavailableReason', () => {
 
   it('uses real Workspace API routes for non-session features', () => {
     expect(getUnavailableReason('config')).toContain('/api/hermes-config')
-    expect(getUnavailableReason('jobs')).toContain('/api/claude-jobs')
+    expect(getUnavailableReason('jobs')).toContain('/api/hermes-jobs')
     expect(getUnavailableReason('memory')).toContain('/api/memory/list')
   })
 })

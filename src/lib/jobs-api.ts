@@ -2,7 +2,7 @@
  * Jobs API client — talks to Hermes Agent FastAPI /api/jobs endpoints.
  */
 
-const JOBS_API = '/api/claude-jobs'
+const JOBS_API = '/api/hermes-jobs'
 
 export type JobProfileOption = {
   name: string

@@ -16,6 +16,7 @@ import {
   normalizeMcpServerFromConfig,
 } from './mcp-normalize'
 import type { McpServer } from '../types/mcp'
+import { workspaceProfileScope } from './workspace-profile'
 
 /** Marker written into materialized platform MCP entries. */
 export const AGORAX_PLATFORM_MCP_MARKER = '_agorax_platform'
@@ -50,13 +51,37 @@ export function toConfigEntry(input: McpServerInput): Record<string, unknown> {
   return out
 }
 
-export function resolveMcpProfileName(requested?: string | null): string {
+/**
+ * Resolve a Hermes profile for `config.yaml` mcp_servers.
+ *
+ * Registry agent ids are accepted only when `runtime === hermes`. Managed
+ * companions (cc-impl, codex-impl, …) must not be treated as profile names —
+ * that previously threw "Profile not found" and blanked the MCP UI.
+ *
+ * Returns `null` when the requested id is managed/unknown (caller should
+ * show an empty profile snapshot, not 500).
+ */
+export function resolveMcpProfileName(requested?: string | null): string | null {
   const trimmed = (requested || '').trim()
-  if (trimmed) return trimmed
+  if (!trimmed) {
+    try {
+      return getActiveProfileName() || 'default'
+    } catch {
+      return 'default'
+    }
+  }
   try {
-    return getActiveProfileName()
+    const scope = workspaceProfileScope(trimmed)
+    if (scope.runtime === 'hermes' && scope.profileHome) {
+      return scope.profileName
+    }
+    if (scope.runtime === 'hermes') {
+      // Declared Hermes agent whose home is not on disk yet.
+      return scope.profileName
+    }
+    return null
   } catch {
-    return 'default'
+    return null
   }
 }
 

@@ -710,20 +710,6 @@ export async function getMemory(): Promise<unknown> {
   return hermesGet('/api/memory')
 }
 
-// ── Skills ───────────────────────────────────────────────────────
-
-export async function listSkills(): Promise<unknown> {
-  return hermesGet('/api/skills')
-}
-
-export async function getSkill(name: string): Promise<unknown> {
-  return hermesGet(`/api/skills/${encodeURIComponent(name)}`)
-}
-
-export async function getSkillCategories(): Promise<unknown> {
-  return hermesGet('/api/skills/categories')
-}
-
 // ── Config ───────────────────────────────────────────────────────
 
 export async function getConfig(): Promise<HermesConfig> {

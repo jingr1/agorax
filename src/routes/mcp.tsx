@@ -1,8 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import BackendUnavailableState from '@/components/backend-unavailable-state'
 import { usePageTitle } from '@/hooks/use-page-title'
-import { getUnavailableReason } from '@/lib/feature-gates'
-import { useFeatureAvailable } from '@/hooks/use-feature-available'
 import { McpScreen } from '@/screens/mcp/mcp-screen'
 
 export const Route = createFileRoute('/mcp')({
@@ -12,15 +9,7 @@ export const Route = createFileRoute('/mcp')({
 
 function McpRoute() {
   usePageTitle('MCP Servers')
-  const native = useFeatureAvailable('mcp')
-  const fallback = useFeatureAvailable('mcpFallback')
-  if (!native && !fallback) {
-    return (
-      <BackendUnavailableState
-        feature="MCP Servers"
-        description={getUnavailableReason('mcp')}
-      />
-    )
-  }
+  // Platform MCP library + profile/config fallback are local control-plane.
+  // Do not gate the page on Hermes native `/api/mcp` capability.
   return <McpScreen />
 }

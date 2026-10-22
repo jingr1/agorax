@@ -71,7 +71,6 @@ import { Route as ApiSwarmChatRouteImport } from './routes/api/swarm-chat'
 import { Route as ApiSttStatusRouteImport } from './routes/api/stt-status'
 import { Route as ApiStartGatewayRouteImport } from './routes/api/start-gateway'
 import { Route as ApiStartAgentRouteImport } from './routes/api/start-agent'
-import { Route as ApiSkillsRouteImport } from './routes/api/skills'
 import { Route as ApiSessionsRouteImport } from './routes/api/sessions'
 import { Route as ApiSessionStatusRouteImport } from './routes/api/session-status'
 import { Route as ApiSessionSendRouteImport } from './routes/api/session-send'
@@ -104,6 +103,7 @@ import { Route as ApiIntegrationsRouteImport } from './routes/api/integrations'
 import { Route as ApiHistoryRouteImport } from './routes/api/history'
 import { Route as ApiHermesTasksAssigneesRouteImport } from './routes/api/hermes-tasks-assignees'
 import { Route as ApiHermesTasksRouteImport } from './routes/api/hermes-tasks'
+import { Route as ApiHermesJobsRouteImport } from './routes/api/hermes-jobs'
 import { Route as ApiHermesConfigRouteImport } from './routes/api/hermes-config'
 import { Route as ApiGatewayStatusRouteImport } from './routes/api/gateway-status'
 import { Route as ApiGatewayReprobeRouteImport } from './routes/api/gateway-reprobe'
@@ -117,7 +117,6 @@ import { Route as ApiConnectionSettingsRouteImport } from './routes/api/connecti
 import { Route as ApiConfigPatchRouteImport } from './routes/api/config-patch'
 import { Route as ApiCommandsRouteImport } from './routes/api/commands'
 import { Route as ApiCollabEventsRouteImport } from './routes/api/collab-events'
-import { Route as ApiClaudeJobsRouteImport } from './routes/api/claude-jobs'
 import { Route as ApiChatEventsRouteImport } from './routes/api/chat-events'
 import { Route as ApiBtwRouteImport } from './routes/api/btw'
 import { Route as ApiBackgroundRouteImport } from './routes/api/background'
@@ -153,11 +152,6 @@ import { Route as ApiSwarmLanggraphRunRouteImport } from './routes/api/swarm-lan
 import { Route as ApiSwarmLanggraphResumeRouteImport } from './routes/api/swarm-langgraph/resume'
 import { Route as ApiSwarmLanggraphMissionEventRouteImport } from './routes/api/swarm-langgraph/mission-event'
 import { Route as ApiSwarmLanggraphCancelRouteImport } from './routes/api/swarm-langgraph/cancel'
-import { Route as ApiSkillsUninstallRouteImport } from './routes/api/skills/uninstall'
-import { Route as ApiSkillsToggleRouteImport } from './routes/api/skills/toggle'
-import { Route as ApiSkillsInstallRouteImport } from './routes/api/skills/install'
-import { Route as ApiSkillsHubSearchRouteImport } from './routes/api/skills/hub-search'
-import { Route as ApiSkillsContentRouteImport } from './routes/api/skills/content'
 import { Route as ApiSessionsSendRouteImport } from './routes/api/sessions/send'
 import { Route as ApiSessionsSearchRouteImport } from './routes/api/sessions/search'
 import { Route as ApiRuntimeConnectRouteImport } from './routes/api/runtime/connect'
@@ -204,12 +198,12 @@ import { Route as ApiKnowledgeGraphRouteImport } from './routes/api/knowledge/gr
 import { Route as ApiKnowledgeConfigRouteImport } from './routes/api/knowledge/config'
 import { Route as ApiHermesTasksTaskIdRouteImport } from './routes/api/hermes-tasks.$taskId'
 import { Route as ApiHermesProxySplatRouteImport } from './routes/api/hermes-proxy/$'
+import { Route as ApiHermesJobsJobIdRouteImport } from './routes/api/hermes-jobs.$jobId'
 import { Route as ApiGitDiffRouteImport } from './routes/api/git/diff'
 import { Route as ApiExternalMemorySearchRouteImport } from './routes/api/external-memory/search'
 import { Route as ApiExternalMemoryProvidersRouteImport } from './routes/api/external-memory/providers'
 import { Route as ApiExternalMemoryCandidatesRouteImport } from './routes/api/external-memory/candidates'
 import { Route as ApiDashboardOverviewRouteImport } from './routes/api/dashboard/overview'
-import { Route as ApiClaudeJobsJobIdRouteImport } from './routes/api/claude-jobs.$jobId'
 import { Route as ApiClaudeCodeSettingsRouteImport } from './routes/api/claude-code/settings'
 import { Route as ApiAuthCodexRouteImport } from './routes/api/auth.codex'
 import { Route as ApiAuthAnthropicRouteImport } from './routes/api/auth.anthropic'
@@ -586,11 +580,6 @@ const ApiStartAgentRoute = ApiStartAgentRouteImport.update({
   path: '/api/start-agent',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiSkillsRoute = ApiSkillsRouteImport.update({
-  id: '/api/skills',
-  path: '/api/skills',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiSessionsRoute = ApiSessionsRouteImport.update({
   id: '/api/sessions',
   path: '/api/sessions',
@@ -752,6 +741,11 @@ const ApiHermesTasksRoute = ApiHermesTasksRouteImport.update({
   path: '/api/hermes-tasks',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHermesJobsRoute = ApiHermesJobsRouteImport.update({
+  id: '/api/hermes-jobs',
+  path: '/api/hermes-jobs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiHermesConfigRoute = ApiHermesConfigRouteImport.update({
   id: '/api/hermes-config',
   path: '/api/hermes-config',
@@ -815,11 +809,6 @@ const ApiCommandsRoute = ApiCommandsRouteImport.update({
 const ApiCollabEventsRoute = ApiCollabEventsRouteImport.update({
   id: '/api/collab-events',
   path: '/api/collab-events',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiClaudeJobsRoute = ApiClaudeJobsRouteImport.update({
-  id: '/api/claude-jobs',
-  path: '/api/claude-jobs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiChatEventsRoute = ApiChatEventsRouteImport.update({
@@ -997,31 +986,6 @@ const ApiSwarmLanggraphCancelRoute = ApiSwarmLanggraphCancelRouteImport.update({
   id: '/api/swarm-langgraph/cancel',
   path: '/api/swarm-langgraph/cancel',
   getParentRoute: () => rootRouteImport,
-} as any)
-const ApiSkillsUninstallRoute = ApiSkillsUninstallRouteImport.update({
-  id: '/uninstall',
-  path: '/uninstall',
-  getParentRoute: () => ApiSkillsRoute,
-} as any)
-const ApiSkillsToggleRoute = ApiSkillsToggleRouteImport.update({
-  id: '/toggle',
-  path: '/toggle',
-  getParentRoute: () => ApiSkillsRoute,
-} as any)
-const ApiSkillsInstallRoute = ApiSkillsInstallRouteImport.update({
-  id: '/install',
-  path: '/install',
-  getParentRoute: () => ApiSkillsRoute,
-} as any)
-const ApiSkillsHubSearchRoute = ApiSkillsHubSearchRouteImport.update({
-  id: '/hub-search',
-  path: '/hub-search',
-  getParentRoute: () => ApiSkillsRoute,
-} as any)
-const ApiSkillsContentRoute = ApiSkillsContentRouteImport.update({
-  id: '/content',
-  path: '/content',
-  getParentRoute: () => ApiSkillsRoute,
 } as any)
 const ApiSessionsSendRoute = ApiSessionsSendRouteImport.update({
   id: '/send',
@@ -1256,6 +1220,11 @@ const ApiHermesProxySplatRoute = ApiHermesProxySplatRouteImport.update({
   path: '/api/hermes-proxy/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHermesJobsJobIdRoute = ApiHermesJobsJobIdRouteImport.update({
+  id: '/$jobId',
+  path: '/$jobId',
+  getParentRoute: () => ApiHermesJobsRoute,
+} as any)
 const ApiGitDiffRoute = ApiGitDiffRouteImport.update({
   id: '/api/git/diff',
   path: '/api/git/diff',
@@ -1282,11 +1251,6 @@ const ApiDashboardOverviewRoute = ApiDashboardOverviewRouteImport.update({
   id: '/api/dashboard/overview',
   path: '/api/dashboard/overview',
   getParentRoute: () => rootRouteImport,
-} as any)
-const ApiClaudeJobsJobIdRoute = ApiClaudeJobsJobIdRouteImport.update({
-  id: '/$jobId',
-  path: '/$jobId',
-  getParentRoute: () => ApiClaudeJobsRoute,
 } as any)
 const ApiClaudeCodeSettingsRoute = ApiClaudeCodeSettingsRouteImport.update({
   id: '/api/claude-code/settings',
@@ -1683,7 +1647,6 @@ export interface FileRoutesByFullPath {
   '/api/background': typeof ApiBackgroundRoute
   '/api/btw': typeof ApiBtwRoute
   '/api/chat-events': typeof ApiChatEventsRoute
-  '/api/claude-jobs': typeof ApiClaudeJobsRouteWithChildren
   '/api/collab-events': typeof ApiCollabEventsRoute
   '/api/commands': typeof ApiCommandsRoute
   '/api/config-patch': typeof ApiConfigPatchRoute
@@ -1697,6 +1660,7 @@ export interface FileRoutesByFullPath {
   '/api/gateway-reprobe': typeof ApiGatewayReprobeRoute
   '/api/gateway-status': typeof ApiGatewayStatusRoute
   '/api/hermes-config': typeof ApiHermesConfigRoute
+  '/api/hermes-jobs': typeof ApiHermesJobsRouteWithChildren
   '/api/hermes-tasks': typeof ApiHermesTasksRouteWithChildren
   '/api/hermes-tasks-assignees': typeof ApiHermesTasksAssigneesRoute
   '/api/history': typeof ApiHistoryRoute
@@ -1729,7 +1693,6 @@ export interface FileRoutesByFullPath {
   '/api/session-send': typeof ApiSessionSendRoute
   '/api/session-status': typeof ApiSessionStatusRoute
   '/api/sessions': typeof ApiSessionsRouteWithChildren
-  '/api/skills': typeof ApiSkillsRouteWithChildren
   '/api/start-agent': typeof ApiStartAgentRoute
   '/api/start-gateway': typeof ApiStartGatewayRoute
   '/api/stt-status': typeof ApiSttStatusRoute
@@ -1779,12 +1742,12 @@ export interface FileRoutesByFullPath {
   '/api/auth/anthropic': typeof ApiAuthAnthropicRoute
   '/api/auth/codex': typeof ApiAuthCodexRoute
   '/api/claude-code/settings': typeof ApiClaudeCodeSettingsRoute
-  '/api/claude-jobs/$jobId': typeof ApiClaudeJobsJobIdRoute
   '/api/dashboard/overview': typeof ApiDashboardOverviewRoute
   '/api/external-memory/candidates': typeof ApiExternalMemoryCandidatesRoute
   '/api/external-memory/providers': typeof ApiExternalMemoryProvidersRoute
   '/api/external-memory/search': typeof ApiExternalMemorySearchRoute
   '/api/git/diff': typeof ApiGitDiffRoute
+  '/api/hermes-jobs/$jobId': typeof ApiHermesJobsJobIdRoute
   '/api/hermes-proxy/$': typeof ApiHermesProxySplatRoute
   '/api/hermes-tasks/$taskId': typeof ApiHermesTasksTaskIdRoute
   '/api/knowledge/config': typeof ApiKnowledgeConfigRoute
@@ -1831,11 +1794,6 @@ export interface FileRoutesByFullPath {
   '/api/runtime/connect': typeof ApiRuntimeConnectRoute
   '/api/sessions/search': typeof ApiSessionsSearchRoute
   '/api/sessions/send': typeof ApiSessionsSendRoute
-  '/api/skills/content': typeof ApiSkillsContentRoute
-  '/api/skills/hub-search': typeof ApiSkillsHubSearchRoute
-  '/api/skills/install': typeof ApiSkillsInstallRoute
-  '/api/skills/toggle': typeof ApiSkillsToggleRoute
-  '/api/skills/uninstall': typeof ApiSkillsUninstallRoute
   '/api/swarm-langgraph/cancel': typeof ApiSwarmLanggraphCancelRoute
   '/api/swarm-langgraph/mission-event': typeof ApiSwarmLanggraphMissionEventRoute
   '/api/swarm-langgraph/resume': typeof ApiSwarmLanggraphResumeRoute
@@ -1946,7 +1904,6 @@ export interface FileRoutesByTo {
   '/api/background': typeof ApiBackgroundRoute
   '/api/btw': typeof ApiBtwRoute
   '/api/chat-events': typeof ApiChatEventsRoute
-  '/api/claude-jobs': typeof ApiClaudeJobsRouteWithChildren
   '/api/collab-events': typeof ApiCollabEventsRoute
   '/api/commands': typeof ApiCommandsRoute
   '/api/config-patch': typeof ApiConfigPatchRoute
@@ -1960,6 +1917,7 @@ export interface FileRoutesByTo {
   '/api/gateway-reprobe': typeof ApiGatewayReprobeRoute
   '/api/gateway-status': typeof ApiGatewayStatusRoute
   '/api/hermes-config': typeof ApiHermesConfigRoute
+  '/api/hermes-jobs': typeof ApiHermesJobsRouteWithChildren
   '/api/hermes-tasks': typeof ApiHermesTasksRouteWithChildren
   '/api/hermes-tasks-assignees': typeof ApiHermesTasksAssigneesRoute
   '/api/history': typeof ApiHistoryRoute
@@ -1992,7 +1950,6 @@ export interface FileRoutesByTo {
   '/api/session-send': typeof ApiSessionSendRoute
   '/api/session-status': typeof ApiSessionStatusRoute
   '/api/sessions': typeof ApiSessionsRouteWithChildren
-  '/api/skills': typeof ApiSkillsRouteWithChildren
   '/api/start-agent': typeof ApiStartAgentRoute
   '/api/start-gateway': typeof ApiStartGatewayRoute
   '/api/stt-status': typeof ApiSttStatusRoute
@@ -2042,12 +1999,12 @@ export interface FileRoutesByTo {
   '/api/auth/anthropic': typeof ApiAuthAnthropicRoute
   '/api/auth/codex': typeof ApiAuthCodexRoute
   '/api/claude-code/settings': typeof ApiClaudeCodeSettingsRoute
-  '/api/claude-jobs/$jobId': typeof ApiClaudeJobsJobIdRoute
   '/api/dashboard/overview': typeof ApiDashboardOverviewRoute
   '/api/external-memory/candidates': typeof ApiExternalMemoryCandidatesRoute
   '/api/external-memory/providers': typeof ApiExternalMemoryProvidersRoute
   '/api/external-memory/search': typeof ApiExternalMemorySearchRoute
   '/api/git/diff': typeof ApiGitDiffRoute
+  '/api/hermes-jobs/$jobId': typeof ApiHermesJobsJobIdRoute
   '/api/hermes-proxy/$': typeof ApiHermesProxySplatRoute
   '/api/hermes-tasks/$taskId': typeof ApiHermesTasksTaskIdRoute
   '/api/knowledge/config': typeof ApiKnowledgeConfigRoute
@@ -2094,11 +2051,6 @@ export interface FileRoutesByTo {
   '/api/runtime/connect': typeof ApiRuntimeConnectRoute
   '/api/sessions/search': typeof ApiSessionsSearchRoute
   '/api/sessions/send': typeof ApiSessionsSendRoute
-  '/api/skills/content': typeof ApiSkillsContentRoute
-  '/api/skills/hub-search': typeof ApiSkillsHubSearchRoute
-  '/api/skills/install': typeof ApiSkillsInstallRoute
-  '/api/skills/toggle': typeof ApiSkillsToggleRoute
-  '/api/skills/uninstall': typeof ApiSkillsUninstallRoute
   '/api/swarm-langgraph/cancel': typeof ApiSwarmLanggraphCancelRoute
   '/api/swarm-langgraph/mission-event': typeof ApiSwarmLanggraphMissionEventRoute
   '/api/swarm-langgraph/resume': typeof ApiSwarmLanggraphResumeRoute
@@ -2213,7 +2165,6 @@ export interface FileRoutesById {
   '/api/background': typeof ApiBackgroundRoute
   '/api/btw': typeof ApiBtwRoute
   '/api/chat-events': typeof ApiChatEventsRoute
-  '/api/claude-jobs': typeof ApiClaudeJobsRouteWithChildren
   '/api/collab-events': typeof ApiCollabEventsRoute
   '/api/commands': typeof ApiCommandsRoute
   '/api/config-patch': typeof ApiConfigPatchRoute
@@ -2227,6 +2178,7 @@ export interface FileRoutesById {
   '/api/gateway-reprobe': typeof ApiGatewayReprobeRoute
   '/api/gateway-status': typeof ApiGatewayStatusRoute
   '/api/hermes-config': typeof ApiHermesConfigRoute
+  '/api/hermes-jobs': typeof ApiHermesJobsRouteWithChildren
   '/api/hermes-tasks': typeof ApiHermesTasksRouteWithChildren
   '/api/hermes-tasks-assignees': typeof ApiHermesTasksAssigneesRoute
   '/api/history': typeof ApiHistoryRoute
@@ -2259,7 +2211,6 @@ export interface FileRoutesById {
   '/api/session-send': typeof ApiSessionSendRoute
   '/api/session-status': typeof ApiSessionStatusRoute
   '/api/sessions': typeof ApiSessionsRouteWithChildren
-  '/api/skills': typeof ApiSkillsRouteWithChildren
   '/api/start-agent': typeof ApiStartAgentRoute
   '/api/start-gateway': typeof ApiStartGatewayRoute
   '/api/stt-status': typeof ApiSttStatusRoute
@@ -2309,12 +2260,12 @@ export interface FileRoutesById {
   '/api/auth/anthropic': typeof ApiAuthAnthropicRoute
   '/api/auth/codex': typeof ApiAuthCodexRoute
   '/api/claude-code/settings': typeof ApiClaudeCodeSettingsRoute
-  '/api/claude-jobs/$jobId': typeof ApiClaudeJobsJobIdRoute
   '/api/dashboard/overview': typeof ApiDashboardOverviewRoute
   '/api/external-memory/candidates': typeof ApiExternalMemoryCandidatesRoute
   '/api/external-memory/providers': typeof ApiExternalMemoryProvidersRoute
   '/api/external-memory/search': typeof ApiExternalMemorySearchRoute
   '/api/git/diff': typeof ApiGitDiffRoute
+  '/api/hermes-jobs/$jobId': typeof ApiHermesJobsJobIdRoute
   '/api/hermes-proxy/$': typeof ApiHermesProxySplatRoute
   '/api/hermes-tasks/$taskId': typeof ApiHermesTasksTaskIdRoute
   '/api/knowledge/config': typeof ApiKnowledgeConfigRoute
@@ -2361,11 +2312,6 @@ export interface FileRoutesById {
   '/api/runtime/connect': typeof ApiRuntimeConnectRoute
   '/api/sessions/search': typeof ApiSessionsSearchRoute
   '/api/sessions/send': typeof ApiSessionsSendRoute
-  '/api/skills/content': typeof ApiSkillsContentRoute
-  '/api/skills/hub-search': typeof ApiSkillsHubSearchRoute
-  '/api/skills/install': typeof ApiSkillsInstallRoute
-  '/api/skills/toggle': typeof ApiSkillsToggleRoute
-  '/api/skills/uninstall': typeof ApiSkillsUninstallRoute
   '/api/swarm-langgraph/cancel': typeof ApiSwarmLanggraphCancelRoute
   '/api/swarm-langgraph/mission-event': typeof ApiSwarmLanggraphMissionEventRoute
   '/api/swarm-langgraph/resume': typeof ApiSwarmLanggraphResumeRoute
@@ -2481,7 +2427,6 @@ export interface FileRouteTypes {
     | '/api/background'
     | '/api/btw'
     | '/api/chat-events'
-    | '/api/claude-jobs'
     | '/api/collab-events'
     | '/api/commands'
     | '/api/config-patch'
@@ -2495,6 +2440,7 @@ export interface FileRouteTypes {
     | '/api/gateway-reprobe'
     | '/api/gateway-status'
     | '/api/hermes-config'
+    | '/api/hermes-jobs'
     | '/api/hermes-tasks'
     | '/api/hermes-tasks-assignees'
     | '/api/history'
@@ -2527,7 +2473,6 @@ export interface FileRouteTypes {
     | '/api/session-send'
     | '/api/session-status'
     | '/api/sessions'
-    | '/api/skills'
     | '/api/start-agent'
     | '/api/start-gateway'
     | '/api/stt-status'
@@ -2577,12 +2522,12 @@ export interface FileRouteTypes {
     | '/api/auth/anthropic'
     | '/api/auth/codex'
     | '/api/claude-code/settings'
-    | '/api/claude-jobs/$jobId'
     | '/api/dashboard/overview'
     | '/api/external-memory/candidates'
     | '/api/external-memory/providers'
     | '/api/external-memory/search'
     | '/api/git/diff'
+    | '/api/hermes-jobs/$jobId'
     | '/api/hermes-proxy/$'
     | '/api/hermes-tasks/$taskId'
     | '/api/knowledge/config'
@@ -2629,11 +2574,6 @@ export interface FileRouteTypes {
     | '/api/runtime/connect'
     | '/api/sessions/search'
     | '/api/sessions/send'
-    | '/api/skills/content'
-    | '/api/skills/hub-search'
-    | '/api/skills/install'
-    | '/api/skills/toggle'
-    | '/api/skills/uninstall'
     | '/api/swarm-langgraph/cancel'
     | '/api/swarm-langgraph/mission-event'
     | '/api/swarm-langgraph/resume'
@@ -2744,7 +2684,6 @@ export interface FileRouteTypes {
     | '/api/background'
     | '/api/btw'
     | '/api/chat-events'
-    | '/api/claude-jobs'
     | '/api/collab-events'
     | '/api/commands'
     | '/api/config-patch'
@@ -2758,6 +2697,7 @@ export interface FileRouteTypes {
     | '/api/gateway-reprobe'
     | '/api/gateway-status'
     | '/api/hermes-config'
+    | '/api/hermes-jobs'
     | '/api/hermes-tasks'
     | '/api/hermes-tasks-assignees'
     | '/api/history'
@@ -2790,7 +2730,6 @@ export interface FileRouteTypes {
     | '/api/session-send'
     | '/api/session-status'
     | '/api/sessions'
-    | '/api/skills'
     | '/api/start-agent'
     | '/api/start-gateway'
     | '/api/stt-status'
@@ -2840,12 +2779,12 @@ export interface FileRouteTypes {
     | '/api/auth/anthropic'
     | '/api/auth/codex'
     | '/api/claude-code/settings'
-    | '/api/claude-jobs/$jobId'
     | '/api/dashboard/overview'
     | '/api/external-memory/candidates'
     | '/api/external-memory/providers'
     | '/api/external-memory/search'
     | '/api/git/diff'
+    | '/api/hermes-jobs/$jobId'
     | '/api/hermes-proxy/$'
     | '/api/hermes-tasks/$taskId'
     | '/api/knowledge/config'
@@ -2892,11 +2831,6 @@ export interface FileRouteTypes {
     | '/api/runtime/connect'
     | '/api/sessions/search'
     | '/api/sessions/send'
-    | '/api/skills/content'
-    | '/api/skills/hub-search'
-    | '/api/skills/install'
-    | '/api/skills/toggle'
-    | '/api/skills/uninstall'
     | '/api/swarm-langgraph/cancel'
     | '/api/swarm-langgraph/mission-event'
     | '/api/swarm-langgraph/resume'
@@ -3010,7 +2944,6 @@ export interface FileRouteTypes {
     | '/api/background'
     | '/api/btw'
     | '/api/chat-events'
-    | '/api/claude-jobs'
     | '/api/collab-events'
     | '/api/commands'
     | '/api/config-patch'
@@ -3024,6 +2957,7 @@ export interface FileRouteTypes {
     | '/api/gateway-reprobe'
     | '/api/gateway-status'
     | '/api/hermes-config'
+    | '/api/hermes-jobs'
     | '/api/hermes-tasks'
     | '/api/hermes-tasks-assignees'
     | '/api/history'
@@ -3056,7 +2990,6 @@ export interface FileRouteTypes {
     | '/api/session-send'
     | '/api/session-status'
     | '/api/sessions'
-    | '/api/skills'
     | '/api/start-agent'
     | '/api/start-gateway'
     | '/api/stt-status'
@@ -3106,12 +3039,12 @@ export interface FileRouteTypes {
     | '/api/auth/anthropic'
     | '/api/auth/codex'
     | '/api/claude-code/settings'
-    | '/api/claude-jobs/$jobId'
     | '/api/dashboard/overview'
     | '/api/external-memory/candidates'
     | '/api/external-memory/providers'
     | '/api/external-memory/search'
     | '/api/git/diff'
+    | '/api/hermes-jobs/$jobId'
     | '/api/hermes-proxy/$'
     | '/api/hermes-tasks/$taskId'
     | '/api/knowledge/config'
@@ -3158,11 +3091,6 @@ export interface FileRouteTypes {
     | '/api/runtime/connect'
     | '/api/sessions/search'
     | '/api/sessions/send'
-    | '/api/skills/content'
-    | '/api/skills/hub-search'
-    | '/api/skills/install'
-    | '/api/skills/toggle'
-    | '/api/skills/uninstall'
     | '/api/swarm-langgraph/cancel'
     | '/api/swarm-langgraph/mission-event'
     | '/api/swarm-langgraph/resume'
@@ -3277,7 +3205,6 @@ export interface RootRouteChildren {
   ApiBackgroundRoute: typeof ApiBackgroundRoute
   ApiBtwRoute: typeof ApiBtwRoute
   ApiChatEventsRoute: typeof ApiChatEventsRoute
-  ApiClaudeJobsRoute: typeof ApiClaudeJobsRouteWithChildren
   ApiCollabEventsRoute: typeof ApiCollabEventsRoute
   ApiCommandsRoute: typeof ApiCommandsRoute
   ApiConfigPatchRoute: typeof ApiConfigPatchRoute
@@ -3291,6 +3218,7 @@ export interface RootRouteChildren {
   ApiGatewayReprobeRoute: typeof ApiGatewayReprobeRoute
   ApiGatewayStatusRoute: typeof ApiGatewayStatusRoute
   ApiHermesConfigRoute: typeof ApiHermesConfigRoute
+  ApiHermesJobsRoute: typeof ApiHermesJobsRouteWithChildren
   ApiHermesTasksRoute: typeof ApiHermesTasksRouteWithChildren
   ApiHermesTasksAssigneesRoute: typeof ApiHermesTasksAssigneesRoute
   ApiHistoryRoute: typeof ApiHistoryRoute
@@ -3323,7 +3251,6 @@ export interface RootRouteChildren {
   ApiSessionSendRoute: typeof ApiSessionSendRoute
   ApiSessionStatusRoute: typeof ApiSessionStatusRoute
   ApiSessionsRoute: typeof ApiSessionsRouteWithChildren
-  ApiSkillsRoute: typeof ApiSkillsRouteWithChildren
   ApiStartAgentRoute: typeof ApiStartAgentRoute
   ApiStartGatewayRoute: typeof ApiStartGatewayRoute
   ApiSttStatusRoute: typeof ApiSttStatusRoute
@@ -3877,13 +3804,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiStartAgentRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/skills': {
-      id: '/api/skills'
-      path: '/api/skills'
-      fullPath: '/api/skills'
-      preLoaderRoute: typeof ApiSkillsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/sessions': {
       id: '/api/sessions'
       path: '/api/sessions'
@@ -4108,6 +4028,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHermesTasksRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/hermes-jobs': {
+      id: '/api/hermes-jobs'
+      path: '/api/hermes-jobs'
+      fullPath: '/api/hermes-jobs'
+      preLoaderRoute: typeof ApiHermesJobsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/hermes-config': {
       id: '/api/hermes-config'
       path: '/api/hermes-config'
@@ -4197,13 +4124,6 @@ declare module '@tanstack/react-router' {
       path: '/api/collab-events'
       fullPath: '/api/collab-events'
       preLoaderRoute: typeof ApiCollabEventsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/claude-jobs': {
-      id: '/api/claude-jobs'
-      path: '/api/claude-jobs'
-      fullPath: '/api/claude-jobs'
-      preLoaderRoute: typeof ApiClaudeJobsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/chat-events': {
@@ -4450,41 +4370,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/swarm-langgraph/cancel'
       preLoaderRoute: typeof ApiSwarmLanggraphCancelRouteImport
       parentRoute: typeof rootRouteImport
-    }
-    '/api/skills/uninstall': {
-      id: '/api/skills/uninstall'
-      path: '/uninstall'
-      fullPath: '/api/skills/uninstall'
-      preLoaderRoute: typeof ApiSkillsUninstallRouteImport
-      parentRoute: typeof ApiSkillsRoute
-    }
-    '/api/skills/toggle': {
-      id: '/api/skills/toggle'
-      path: '/toggle'
-      fullPath: '/api/skills/toggle'
-      preLoaderRoute: typeof ApiSkillsToggleRouteImport
-      parentRoute: typeof ApiSkillsRoute
-    }
-    '/api/skills/install': {
-      id: '/api/skills/install'
-      path: '/install'
-      fullPath: '/api/skills/install'
-      preLoaderRoute: typeof ApiSkillsInstallRouteImport
-      parentRoute: typeof ApiSkillsRoute
-    }
-    '/api/skills/hub-search': {
-      id: '/api/skills/hub-search'
-      path: '/hub-search'
-      fullPath: '/api/skills/hub-search'
-      preLoaderRoute: typeof ApiSkillsHubSearchRouteImport
-      parentRoute: typeof ApiSkillsRoute
-    }
-    '/api/skills/content': {
-      id: '/api/skills/content'
-      path: '/content'
-      fullPath: '/api/skills/content'
-      preLoaderRoute: typeof ApiSkillsContentRouteImport
-      parentRoute: typeof ApiSkillsRoute
     }
     '/api/sessions/send': {
       id: '/api/sessions/send'
@@ -4808,6 +4693,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHermesProxySplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/hermes-jobs/$jobId': {
+      id: '/api/hermes-jobs/$jobId'
+      path: '/$jobId'
+      fullPath: '/api/hermes-jobs/$jobId'
+      preLoaderRoute: typeof ApiHermesJobsJobIdRouteImport
+      parentRoute: typeof ApiHermesJobsRoute
+    }
     '/api/git/diff': {
       id: '/api/git/diff'
       path: '/api/git/diff'
@@ -4842,13 +4734,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/dashboard/overview'
       preLoaderRoute: typeof ApiDashboardOverviewRouteImport
       parentRoute: typeof rootRouteImport
-    }
-    '/api/claude-jobs/$jobId': {
-      id: '/api/claude-jobs/$jobId'
-      path: '/$jobId'
-      fullPath: '/api/claude-jobs/$jobId'
-      preLoaderRoute: typeof ApiClaudeJobsJobIdRouteImport
-      parentRoute: typeof ApiClaudeJobsRoute
     }
     '/api/claude-code/settings': {
       id: '/api/claude-code/settings'
@@ -5362,16 +5247,16 @@ const ApiAuthRouteChildren: ApiAuthRouteChildren = {
 const ApiAuthRouteWithChildren =
   ApiAuthRoute._addFileChildren(ApiAuthRouteChildren)
 
-interface ApiClaudeJobsRouteChildren {
-  ApiClaudeJobsJobIdRoute: typeof ApiClaudeJobsJobIdRoute
+interface ApiHermesJobsRouteChildren {
+  ApiHermesJobsJobIdRoute: typeof ApiHermesJobsJobIdRoute
 }
 
-const ApiClaudeJobsRouteChildren: ApiClaudeJobsRouteChildren = {
-  ApiClaudeJobsJobIdRoute: ApiClaudeJobsJobIdRoute,
+const ApiHermesJobsRouteChildren: ApiHermesJobsRouteChildren = {
+  ApiHermesJobsJobIdRoute: ApiHermesJobsJobIdRoute,
 }
 
-const ApiClaudeJobsRouteWithChildren = ApiClaudeJobsRoute._addFileChildren(
-  ApiClaudeJobsRouteChildren,
+const ApiHermesJobsRouteWithChildren = ApiHermesJobsRoute._addFileChildren(
+  ApiHermesJobsRouteChildren,
 )
 
 interface ApiHermesTasksRouteChildren {
@@ -5593,26 +5478,6 @@ const ApiSessionsRouteWithChildren = ApiSessionsRoute._addFileChildren(
   ApiSessionsRouteChildren,
 )
 
-interface ApiSkillsRouteChildren {
-  ApiSkillsContentRoute: typeof ApiSkillsContentRoute
-  ApiSkillsHubSearchRoute: typeof ApiSkillsHubSearchRoute
-  ApiSkillsInstallRoute: typeof ApiSkillsInstallRoute
-  ApiSkillsToggleRoute: typeof ApiSkillsToggleRoute
-  ApiSkillsUninstallRoute: typeof ApiSkillsUninstallRoute
-}
-
-const ApiSkillsRouteChildren: ApiSkillsRouteChildren = {
-  ApiSkillsContentRoute: ApiSkillsContentRoute,
-  ApiSkillsHubSearchRoute: ApiSkillsHubSearchRoute,
-  ApiSkillsInstallRoute: ApiSkillsInstallRoute,
-  ApiSkillsToggleRoute: ApiSkillsToggleRoute,
-  ApiSkillsUninstallRoute: ApiSkillsUninstallRoute,
-}
-
-const ApiSkillsRouteWithChildren = ApiSkillsRoute._addFileChildren(
-  ApiSkillsRouteChildren,
-)
-
 interface ApiSwarmMemoryRouteChildren {
   ApiSwarmMemorySearchRoute: typeof ApiSwarmMemorySearchRoute
 }
@@ -5779,7 +5644,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiBackgroundRoute: ApiBackgroundRoute,
   ApiBtwRoute: ApiBtwRoute,
   ApiChatEventsRoute: ApiChatEventsRoute,
-  ApiClaudeJobsRoute: ApiClaudeJobsRouteWithChildren,
   ApiCollabEventsRoute: ApiCollabEventsRoute,
   ApiCommandsRoute: ApiCommandsRoute,
   ApiConfigPatchRoute: ApiConfigPatchRoute,
@@ -5793,6 +5657,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiGatewayReprobeRoute: ApiGatewayReprobeRoute,
   ApiGatewayStatusRoute: ApiGatewayStatusRoute,
   ApiHermesConfigRoute: ApiHermesConfigRoute,
+  ApiHermesJobsRoute: ApiHermesJobsRouteWithChildren,
   ApiHermesTasksRoute: ApiHermesTasksRouteWithChildren,
   ApiHermesTasksAssigneesRoute: ApiHermesTasksAssigneesRoute,
   ApiHistoryRoute: ApiHistoryRoute,
@@ -5825,7 +5690,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSessionSendRoute: ApiSessionSendRoute,
   ApiSessionStatusRoute: ApiSessionStatusRoute,
   ApiSessionsRoute: ApiSessionsRouteWithChildren,
-  ApiSkillsRoute: ApiSkillsRouteWithChildren,
   ApiStartAgentRoute: ApiStartAgentRoute,
   ApiStartGatewayRoute: ApiStartGatewayRoute,
   ApiSttStatusRoute: ApiSttStatusRoute,

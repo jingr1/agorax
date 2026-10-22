@@ -15,7 +15,11 @@ export const Route = createFileRoute('/api/stt-status')({
           return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
         }
 
-        const paths = resolveHermesConfigPaths()
+        const profile =
+          new URL(request.url).searchParams.get('profile')?.trim() ||
+          new URL(request.url).searchParams.get('agent')?.trim() ||
+          undefined
+        const paths = resolveHermesConfigPaths(profile)
         const { config } = readHermesConfigFiles(paths)
         const stt =
           config.stt &&

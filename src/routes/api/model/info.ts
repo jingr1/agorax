@@ -41,9 +41,16 @@ export const Route = createFileRoute('/api/model/info')({
           }
         }
 
+        const url = new URL(request.url)
+        const profileParam =
+          url.searchParams.get('profile')?.trim() ||
+          url.searchParams.get('agent')?.trim() ||
+          getActiveProfileName() ||
+          'default'
+
         if (!rawPayload) {
           try {
-            const profile = readProfile(getActiveProfileName() || 'default')
+            const profile = readProfile(profileParam)
             const { model, provider } = readModelProviderFromConfig(
               profile.config,
             )

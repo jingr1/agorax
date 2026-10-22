@@ -99,7 +99,7 @@ describe('gateway-capabilities', () => {
           ['sessions', 'skills', 'config'],
         ),
       ).toBe(
-        `[gateway] Missing Hermes APIs detected. ${mod.CLAUDE_UPGRADE_INSTRUCTIONS}`,
+        `[gateway] Missing Hermes APIs detected. ${mod.HERMES_UPGRADE_INSTRUCTIONS}`,
       )
     })
 
@@ -133,7 +133,7 @@ describe('gateway-capabilities', () => {
           ['health', 'sessions'],
         ),
       ).toBe(
-        `[gateway] Missing Hermes APIs detected. ${mod.CLAUDE_UPGRADE_INSTRUCTIONS}`,
+        `[gateway] Missing Hermes APIs detected. ${mod.HERMES_UPGRADE_INSTRUCTIONS}`,
       )
     })
   })

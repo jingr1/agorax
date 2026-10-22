@@ -64,7 +64,11 @@ function readPercent(value: unknown): number {
   return 0
 }
 
-export function useContextAlert(): {
+export function useContextAlert(options?: {
+  sessionId?: string
+  profile?: string
+  model?: string
+}): {
   alertOpen: boolean
   alertThreshold: number
   alertPercent: number
@@ -74,6 +78,9 @@ export function useContextAlert(): {
   const [alertOpen, setAlertOpen] = useState(false)
   const [alertThreshold, setAlertThreshold] = useState<number>(0)
   const [alertPercent, setAlertPercent] = useState<number>(0)
+  const sessionId = options?.sessionId?.trim() || ''
+  const profile = options?.profile?.trim() || ''
+  const model = options?.model?.trim() || ''
 
   const dismissAlert = useCallback(() => {
     setAlertOpen(false)
@@ -81,7 +88,12 @@ export function useContextAlert(): {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch('/api/context-usage')
+      const params = new URLSearchParams()
+      if (sessionId) params.set('sessionId', sessionId)
+      if (profile) params.set('profile', profile)
+      if (model) params.set('model', model)
+      const qs = params.toString()
+      const res = await fetch(`/api/context-usage${qs ? `?${qs}` : ''}`)
       if (!res.ok) return
       const data = (await res.json()) as {
         ok?: boolean
@@ -118,7 +130,7 @@ export function useContextAlert(): {
     } catch {
       /* ignore */
     }
-  }, [alertOpen])
+  }, [alertOpen, model, profile, sessionId])
 
   useEffect(() => {
     if (typeof window === 'undefined') return

@@ -1,6 +1,31 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { BEARER_TOKEN, HERMES_API } from '../../../server/gateway-capabilities'
+import { BEARER_TOKEN } from '../../../server/gateway-capabilities'
+import { resolveChatGateway } from '../../../server/chat-gateway'
 import { isAuthenticated } from '../../../server/auth-middleware'
+import { workspaceProfileScope } from '../../../server/workspace-profile'
+
+/**
+ * Only Hermes profiles may pin the proxy. Managed agent ids (cc-impl…) must
+ * not become `/p/<id>` multiplex paths — fall back to the active Hermes
+ * gateway instead.
+ */
+function resolveProxyProfile(request: Request, incomingUrl: URL): string | undefined {
+  const requested =
+    incomingUrl.searchParams.get('profile')?.trim() ||
+    request.headers.get('x-hermes-profile')?.trim() ||
+    incomingUrl.searchParams.get('agent')?.trim() ||
+    undefined
+  if (!requested) return undefined
+  try {
+    const scope = workspaceProfileScope(requested)
+    if (scope.runtime === 'hermes' && scope.profileHome) {
+      return scope.profileName
+    }
+  } catch {
+    // Unknown scope — do not invent a multiplex path.
+  }
+  return undefined
+}
 
 /**
  * Vanilla hermes-agent (any version through 2026-05) does not expose
@@ -10,11 +35,12 @@ import { isAuthenticated } from '../../../server/auth-middleware'
  * silently break for users on vanilla agent.
  */
 async function fallbackAvailableModels(
+  gatewayUrl: string,
   provider: string,
   authHeaders: Record<string, string>,
 ): Promise<Response> {
   try {
-    const res = await fetch(`${HERMES_API}/v1/models`, { headers: authHeaders })
+    const res = await fetch(`${gatewayUrl}/v1/models`, { headers: authHeaders })
     if (!res.ok) {
       return new Response(JSON.stringify({ models: [] }), {
         status: 200,
@@ -51,16 +77,26 @@ async function fallbackAvailableModels(
 
 async function proxyRequest(request: Request, splat: string) {
   const incomingUrl = new URL(request.url)
+  const profile = resolveProxyProfile(request, incomingUrl)
+  const gateway = resolveChatGateway(profile)
   const targetPath = splat.startsWith('/') ? splat : `/${splat}`
-  const targetUrl = new URL(`${HERMES_API}${targetPath}`)
-  targetUrl.search = incomingUrl.search
+  const targetUrl = new URL(`${gateway.url}${targetPath}`)
+  // Strip Agorax-only routing params before forwarding.
+  const forwardSearch = new URLSearchParams(incomingUrl.search)
+  forwardSearch.delete('profile')
+  forwardSearch.delete('agent')
+  targetUrl.search = forwardSearch.toString()
 
   const headers = new Headers(request.headers)
   headers.delete('host')
   headers.delete('content-length')
-  // Read at request time — follows the same fix as PR #234.
+  headers.delete('x-hermes-profile')
+  // Prefer the profile gateway token; fall back to process env / BEARER_TOKEN.
   const bearer =
-    process.env.HERMES_API_TOKEN || process.env.CLAUDE_API_TOKEN || BEARER_TOKEN
+    gateway.token ||
+    process.env.HERMES_API_TOKEN ||
+    process.env.CLAUDE_API_TOKEN ||
+    BEARER_TOKEN
   if (bearer) headers.set('Authorization', `Bearer ${bearer}`)
 
   const init: RequestInit = {
@@ -84,7 +120,7 @@ async function proxyRequest(request: Request, splat: string) {
     const authHeaders: Record<string, string> = bearer
       ? { Authorization: `Bearer ${bearer}` }
       : {}
-    return fallbackAvailableModels(provider, authHeaders)
+    return fallbackAvailableModels(gateway.url, provider, authHeaders)
   }
 
   const body = await upstream.text()

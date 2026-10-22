@@ -188,9 +188,9 @@
 
 | Endpoint                  | Method                | Description                                    |
 | ------------------------- | --------------------- | ---------------------------------------------- |
-| `/api/claude-jobs`        | GET                   | List all jobs                                  |
-| `/api/claude-jobs`        | POST                  | Create new job                                 |
-| `/api/claude-jobs/$jobId` | GET/POST/PATCH/DELETE | Job CRUD and actions (pause/resume/run/output) |
+| `/api/hermes-jobs`        | GET                   | List all jobs                                  |
+| `/api/hermes-jobs`        | POST                  | Create new job                                 |
+| `/api/hermes-jobs/$jobId` | GET/POST/PATCH/DELETE | Job CRUD and actions (pause/resume/run/output) |
 
 ### 2.8 Terminal
 

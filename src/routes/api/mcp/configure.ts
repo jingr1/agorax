@@ -2,11 +2,10 @@ import { createFileRoute } from '@tanstack/react-router'
 import { json } from '@tanstack/react-start'
 import { isAuthenticated } from '../../../server/auth-middleware'
 import {
-  BEARER_TOKEN,
-  HERMES_API,
-  CLAUDE_UPGRADE_INSTRUCTIONS,
+  HERMES_UPGRADE_INSTRUCTIONS,
   ensureGatewayEnhancedProbed,
 } from '../../../server/gateway-capabilities'
+import { resolveChatGateway } from '../../../server/chat-gateway'
 import {
   requireJsonContentType,
   safeErrorMessage,
@@ -24,12 +23,17 @@ import {
 
 const REQUEST_TIMEOUT_MS = 30_000
 
-async function mcpFetch(path: string, init: RequestInit): Promise<Response> {
+async function mcpFetch(
+  path: string,
+  init: RequestInit,
+  profileName?: string,
+): Promise<Response> {
+  const gateway = resolveChatGateway(profileName)
   const headers = new Headers(init.headers)
-  if (BEARER_TOKEN && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${BEARER_TOKEN}`)
+  if (gateway.token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${gateway.token}`)
   }
-  return fetch(`${HERMES_API}${path}`, { ...init, headers })
+  return fetch(`${gateway.url}${path}`, { ...init, headers })
 }
 
 function readConfigure(raw: unknown): McpConfigureInput | null {
@@ -68,7 +72,7 @@ export const Route = createFileRoute('/api/mcp/configure')({
         if (!capabilities.mcp && !capabilities.mcpFallback) {
           return json(
             createCapabilityUnavailablePayload('mcp', {
-              error: `Gateway does not support /api/mcp. ${CLAUDE_UPGRADE_INSTRUCTIONS}`,
+              error: `Gateway does not support /api/mcp. ${HERMES_UPGRADE_INSTRUCTIONS}`,
             }),
             { status: 503 },
           )
@@ -82,13 +86,34 @@ export const Route = createFileRoute('/api/mcp/configure')({
               { status: 400 },
             )
           }
+          const url = new URL(request.url)
+          const profile = resolveMcpProfileName(
+            url.searchParams.get('profile') ||
+              (typeof (raw as Record<string, unknown>).profile === 'string'
+                ? ((raw as Record<string, unknown>).profile as string)
+                : null),
+          )
+          if (!profile) {
+            return json(
+              {
+                ok: false,
+                error:
+                  'MCP profile config applies to Hermes agents only. Use Library + Agents for managed runtimes.',
+              },
+              { status: 400 },
+            )
+          }
           if (capabilities.mcp) {
-            const response = await mcpFetch('/api/mcp/configure', {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(input),
-              signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-            })
+            const response = await mcpFetch(
+              '/api/mcp/configure',
+              {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(input),
+                signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+              },
+              profile,
+            )
             const body = (await response.json().catch(() => ({}))) as unknown
             const server = normalizeMcpServer(
               (body as Record<string, unknown>).server ?? body,
@@ -105,13 +130,6 @@ export const Route = createFileRoute('/api/mcp/configure')({
             }
             return json({ ok: true, server: maskSecretsInPlace(server) })
           }
-          const url = new URL(request.url)
-          const profile = resolveMcpProfileName(
-            url.searchParams.get('profile') ||
-              (typeof (raw as Record<string, unknown>).profile === 'string'
-                ? ((raw as Record<string, unknown>).profile as string)
-                : null),
-          )
           const written = patchProfileMcpServer(profile, input.name, {
             enabled: input.enabled,
             toolMode: input.toolMode,

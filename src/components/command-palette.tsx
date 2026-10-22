@@ -132,7 +132,7 @@ export function CommandPalette({ pathname, sessions }: CommandPaletteProps) {
     }
 
     if (command === '/model' || command === '/skin') {
-      const section = command === '/skin' ? 'appearance' : 'claude'
+      const section = command === '/skin' ? 'appearance' : 'model'
       if (pathname.startsWith('/chat') || pathname === '/') {
         window.dispatchEvent(
           new CustomEvent(CHAT_OPEN_SETTINGS_EVENT, {

@@ -5,16 +5,25 @@ export interface UseMcpServersParams {
   tab: 'installed' | 'catalog' | 'all'
   category: string
   search: string
+  /** Hermes agent/profile id for per-profile mcp_servers. */
+  profile?: string
+  /** Skip fetch when Agents tab is not showing a Hermes profile. */
+  enabled?: boolean
 }
 
 export function useMcpServers(params: UseMcpServersParams) {
+  const { enabled = true, ...queryParams } = params
   return useQuery({
-    queryKey: ['mcp', 'servers', params],
+    queryKey: ['mcp', 'servers', queryParams],
+    enabled: enabled && Boolean(queryParams.profile?.trim()),
     queryFn: async (): Promise<McpListResponse> => {
       const url = new URL('/api/mcp', window.location.origin)
-      if (params.search) url.searchParams.set('search', params.search)
-      if (params.category && params.category !== 'All') {
-        url.searchParams.set('category', params.category)
+      if (queryParams.search) url.searchParams.set('search', queryParams.search)
+      if (queryParams.category && queryParams.category !== 'All') {
+        url.searchParams.set('category', queryParams.category)
+      }
+      if (queryParams.profile?.trim()) {
+        url.searchParams.set('profile', queryParams.profile.trim())
       }
       const res = await fetch(
         url.toString().replace(window.location.origin, ''),

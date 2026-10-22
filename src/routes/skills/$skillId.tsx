@@ -1,8 +1,5 @@
 import { createFileRoute, useParams } from '@tanstack/react-router'
-import BackendUnavailableState from '@/components/backend-unavailable-state'
 import { usePageTitle } from '@/hooks/use-page-title'
-import { getUnavailableReason } from '@/lib/feature-gates'
-import { useFeatureAvailable } from '@/hooks/use-feature-available'
 import { PlatformSkillDetailScreen } from '@/screens/skills/platform-skill-detail-screen'
 
 export const Route = createFileRoute('/skills/$skillId')({
@@ -13,13 +10,7 @@ export const Route = createFileRoute('/skills/$skillId')({
 function SkillDetailRoute() {
   const { skillId } = useParams({ from: '/skills/$skillId' })
   usePageTitle('Skill detail')
-  if (!useFeatureAvailable('skills')) {
-    return (
-      <BackendUnavailableState
-        feature="Skills"
-        description={getUnavailableReason('Skills')}
-      />
-    )
-  }
+  // Detail/edit/bind use `/api/platform-skills` — available without gateway
+  // skills capability (Hermes + managed agents).
   return <PlatformSkillDetailScreen skillId={skillId} />
 }

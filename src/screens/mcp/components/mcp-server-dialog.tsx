@@ -25,6 +25,8 @@ interface Props {
   initial?: McpServer | McpClientInput | null
   /** Where to persist new servers. Library = platform catalog (default). */
   target?: 'library' | 'profile'
+  /** Hermes agent/profile id when target is profile. */
+  profile?: string
   onClose: () => void
 }
 
@@ -70,11 +72,12 @@ export function McpServerDialog({
   open,
   initial,
   target = 'library',
+  profile,
   onClose,
 }: Props) {
-  const upsert = useUpsertMcpServer()
+  const upsert = useUpsertMcpServer(profile)
   const createLibrary = useCreatePlatformMcp()
-  const discover = useDiscoverMcpTools()
+  const discover = useDiscoverMcpTools(profile)
   const { mode: capabilityMode } = useMcpCapabilityMode()
   const saving = upsert.isPending || createLibrary.isPending
   const [draft, setDraft] = useState<McpClientInput>(EMPTY)

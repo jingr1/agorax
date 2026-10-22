@@ -85,8 +85,10 @@ export function ProfileModelSelector({
       if (!providerId) return [] as Array<string>
       const catalogEntry = catalog.find((entry) => entry.id === providerId)
       try {
+        const params = new URLSearchParams({ provider: providerId })
+        if (profileName?.trim()) params.set('profile', profileName.trim())
         const res = await fetch(
-          `/api/hermes-proxy/api/available-models?provider=${encodeURIComponent(providerId)}`,
+          `/api/hermes-proxy/api/available-models?${params.toString()}`,
         )
         if (res.ok) {
           const data = (await res.json()) as { models?: Array<{ id: string }> }
@@ -122,7 +124,7 @@ export function ProfileModelSelector({
         ...new Set([...(catalogEntry?.models || []), ...(card?.models || [])]),
       ]
     },
-    [],
+    [profileName],
   )
 
   useEffect(() => {

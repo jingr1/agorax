@@ -147,7 +147,6 @@ import { ModelSuggestionToast } from '@/components/model-suggestion-toast'
 import { MobileSessionsPanel } from '@/components/mobile-sessions-panel'
 import { ContextAlertModal } from '@/components/usage-meter/context-alert-modal'
 import { ErrorToastContainer, showErrorToast } from '@/components/error-toast'
-// ContextMeter removed — ContextIndicator in composer replaces top ContextBar
 import { persistRecoveryMessage, useChatStore } from '@/stores/chat-store'
 import {
   pendingSessionModelKey,
@@ -644,9 +643,6 @@ export function ChatScreen({
     thinkingInitializedByUserRef.current =
       window.sessionStorage.getItem(key) !== null
   }, [activeFriendlyId])
-  const { alertOpen, alertThreshold, alertPercent, dismissAlert } =
-    useContextAlert()
-
   const pendingStartRef = useRef(false)
   const composerHandleRef = useRef<ChatComposerHandle | null>(null)
   const agentChatFrameRef = useRef<AgentChatFrameHandle | null>(null)
@@ -1260,6 +1256,11 @@ export function ChatScreen({
     workspaceProfileName ||
     activeProfileName ||
     'default'
+  const { alertOpen, alertThreshold, alertPercent, dismissAlert } =
+    useContextAlert({
+      sessionId: resolvedSessionKey || activeFriendlyId || undefined,
+      profile: modelsAgentId,
+    })
   const resolvedModelsEndpoint =
     modelsEndpoint?.trim() ||
     `/api/agents/${encodeURIComponent(modelsAgentId)}/models`
@@ -1280,7 +1281,7 @@ export function ChatScreen({
       'claude',
       'session-status-model',
       resolvedSessionKey || activeFriendlyId || 'main',
-      activeProfileName || 'default',
+      modelsAgentId,
     ],
     queryFn: async () => {
       try {
@@ -1288,7 +1289,7 @@ export function ChatScreen({
           resolvedSessionKey || activeFriendlyId || 'main'
         const params = new URLSearchParams()
         if (statusSessionKey) params.set('sessionKey', statusSessionKey)
-        if (activeProfileName) params.set('profile', activeProfileName)
+        if (modelsAgentId) params.set('profile', modelsAgentId)
         const query = params.toString() ? `?${params.toString()}` : ''
         const res = await fetch(`/api/session-status${query}`)
         if (!res.ok) return ''
@@ -1314,10 +1315,11 @@ export function ChatScreen({
   // Fetch the configured reasoning effort so the Chat Controls default matches
   // what Hermes actually uses instead of hardcoding 'medium'.
   const reasoningEffortQuery = useQuery({
-    queryKey: ['hermes-config', 'reasoning-effort'],
+    queryKey: ['hermes-config', 'reasoning-effort', modelsAgentId],
     queryFn: async () => {
       try {
-        const res = await fetch('/api/hermes-config')
+        const { hermesConfigUrl } = await import('@/lib/hermes-config-client')
+        const res = await fetch(hermesConfigUrl(modelsAgentId))
         if (!res.ok) return 'medium'
         const data = (await res.json()) as { config?: Record<string, unknown> }
         const agentSection = data?.config?.agent
@@ -3086,7 +3088,7 @@ export function ChatScreen({
         window.dispatchEvent(
           new CustomEvent(CHAT_OPEN_SETTINGS_EVENT, {
             detail: {
-              section: trimmedCommand === '/skin' ? 'appearance' : 'claude',
+              section: trimmedCommand === '/skin' ? 'appearance' : 'model',
             },
           }),
         )

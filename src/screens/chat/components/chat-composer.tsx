@@ -452,12 +452,15 @@ async function fetchModels(endpoint = '/api/models'): Promise<{
 
 async function fetchModelsForProvider(
   provider: string,
+  profile?: string,
 ): Promise<Array<ModelCatalogEntry>> {
   const normalizedProvider = provider.trim()
   if (!normalizedProvider) return []
 
+  const params = new URLSearchParams({ provider: normalizedProvider })
+  if (profile?.trim()) params.set('profile', profile.trim())
   const response = await fetch(
-    `/api/hermes-proxy/api/available-models?provider=${encodeURIComponent(normalizedProvider)}`,
+    `/api/hermes-proxy/api/available-models?${params.toString()}`,
   )
   if (!response.ok) {
     throw new Error(`Hermes models request failed (${response.status})`)
@@ -477,6 +480,7 @@ async function switchModel(
   model: string,
   provider?: string,
   _sessionKey?: string,
+  profile?: string,
 ): Promise<ModelSwitchResponse> {
   const modelId = model.trim()
   const modelProvider =
@@ -501,11 +505,14 @@ async function switchModel(
   // Switching to a cloud model — clear any local override
   setLocalModelOverride('')
 
-  // Write the model change to ~/.hermes/config.yaml via the webapi
+  // Write the model change to the profile config via the gateway proxy
   const patch: Record<string, string> = { model: modelId }
   if (modelProvider) patch.provider = modelProvider
 
-  const response = await fetch('/api/hermes-proxy/api/config', {
+  const configUrl = profile?.trim()
+    ? `/api/hermes-proxy/api/config?profile=${encodeURIComponent(profile.trim())}`
+    : '/api/hermes-proxy/api/config'
+  const response = await fetch(configUrl, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -930,8 +937,13 @@ async function fetchGatewayMode(): Promise<string | null> {
   return typeof payload.mode === 'string' ? payload.mode : null
 }
 
-async function fetchModelInfo(): Promise<ModelInfoApiResponse | null> {
-  const response = await fetch('/api/model/info')
+async function fetchModelInfo(
+  profile?: string,
+): Promise<ModelInfoApiResponse | null> {
+  const params = profile?.trim()
+    ? `?profile=${encodeURIComponent(profile.trim())}`
+    : ''
+  const response = await fetch(`/api/model/info${params}`)
   if (!response.ok) {
     throw new Error(await readResponseError(response))
   }
@@ -1008,11 +1020,16 @@ function ChatComposerComponent({
 }: ChatComposerProps) {
   const { activeProfileName, activeProfile, workspaceProfileName } =
     useProfiles()
+  const contextProfile =
+    skillsAgentId?.trim() ||
+    workspaceProfileName ||
+    activeProfileName ||
+    ''
   // Prefer caller endpoint; otherwise agent/profile catalog — never global
   // `/api/models` (gateway-pool 401 → empty picker / "⚕ Hermes Agent").
   const resolvedModelsEndpoint =
     modelsEndpoint?.trim() ||
-    `/api/agents/${encodeURIComponent(skillsAgentId?.trim() || workspaceProfileName || activeProfileName || 'default')}/models`
+    `/api/agents/${encodeURIComponent(contextProfile || 'default')}/models`
   const useCustomModelsEndpoint = Boolean(modelsEndpoint?.trim())
   // Catalog fetch must not wait on history/gateway deferral — otherwise the
   // picker stays empty while the button falls back to "⚕ Hermes Agent".
@@ -1129,6 +1146,7 @@ function ChatComposerComponent({
       'claude',
       'models',
       'other-providers',
+      contextProfile || 'default',
       otherProviders
         .map((provider) => provider.id)
         .sort()
@@ -1143,7 +1161,10 @@ function ChatComposerComponent({
       const modelEntries = await Promise.all(
         otherProviders.map(async (provider) => ({
           providerId: provider.id,
-          models: await fetchModelsForProvider(provider.id),
+          models: await fetchModelsForProvider(
+            provider.id,
+            contextProfile || undefined,
+          ),
         })),
       )
 
@@ -1173,9 +1194,10 @@ function ChatComposerComponent({
     retry: false,
   })
   const sttConfigQuery = useQuery({
-    queryKey: ['claude', 'config', 'stt'],
+    queryKey: ['claude', 'config', 'stt', contextProfile || 'default'],
     queryFn: async () => {
-      const response = await fetch('/api/hermes-config')
+      const { hermesConfigUrl } = await import('@/lib/hermes-config-client')
+      const response = await fetch(hermesConfigUrl(contextProfile || undefined))
       if (!response.ok) {
         throw new Error(`Config request failed (${response.status})`)
       }
@@ -1185,9 +1207,12 @@ function ChatComposerComponent({
     retry: false,
   })
   const sttStatusQuery = useQuery({
-    queryKey: ['claude', 'stt-status'],
+    queryKey: ['claude', 'stt-status', contextProfile || 'default'],
     queryFn: async () => {
-      const response = await fetch('/api/stt-status')
+      const params = contextProfile
+        ? `?profile=${encodeURIComponent(contextProfile)}`
+        : ''
+      const response = await fetch(`/api/stt-status${params}`)
       if (!response.ok) {
         throw new Error(`STT status request failed (${response.status})`)
       }
@@ -1208,8 +1233,8 @@ function ChatComposerComponent({
     retry: false,
   })
   const modelInfoQuery = useQuery({
-    queryKey: ['dashboard', 'model-info'],
-    queryFn: fetchModelInfo,
+    queryKey: ['dashboard', 'model-info', contextProfile || 'default'],
+    queryFn: () => fetchModelInfo(contextProfile || undefined),
     enabled: gatewayQueriesEnabled,
     staleTime: 30_000,
     retry: false,
@@ -1507,11 +1532,6 @@ function ChatComposerComponent({
     'Workspace'
 
   const currentModel = currentModelQuery.data ?? ''
-  const contextProfile =
-    skillsAgentId?.trim() ||
-    workspaceProfileName ||
-    activeProfileName ||
-    ''
 
   // Auto-switch to hermes-agent model on mount (Agorax uses the Hermes Agent runtime)
   // Removed: auto-switch to hermes-agent. The workspace respects the

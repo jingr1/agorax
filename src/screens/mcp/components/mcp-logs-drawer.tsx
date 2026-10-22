@@ -5,6 +5,8 @@ interface Props {
   server: McpServer | null
   open: boolean
   onClose: () => void
+  /** Hermes profile pin for gateway-scoped log streams. */
+  profile?: string
 }
 
 interface LogLine {
@@ -15,7 +17,7 @@ interface LogLine {
 
 const MAX_LINES = 500
 
-export function McpLogsDrawer({ server, open, onClose }: Props) {
+export function McpLogsDrawer({ server, open, onClose, profile }: Props) {
   const [lines, setLines] = useState<Array<LogLine>>([])
   const [status, setStatus] = useState<
     'idle' | 'connecting' | 'open' | 'error' | 'closed'
@@ -33,7 +35,12 @@ export function McpLogsDrawer({ server, open, onClose }: Props) {
 
     let es: EventSource
     try {
-      es = new EventSource(`/api/mcp/${encodeURIComponent(server.name)}/logs`)
+      const url = new URL(
+        `/api/mcp/${encodeURIComponent(server.name)}/logs`,
+        window.location.origin,
+      )
+      if (profile?.trim()) url.searchParams.set('profile', profile.trim())
+      es = new EventSource(`${url.pathname}${url.search}`)
     } catch (err) {
       setStatus('error')
 
@@ -87,7 +94,7 @@ export function McpLogsDrawer({ server, open, onClose }: Props) {
       }
       setStatus('closed')
     }
-  }, [open, server])
+  }, [open, server, profile])
 
   useEffect(() => {
     if (!autoScroll) return

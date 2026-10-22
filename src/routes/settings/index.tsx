@@ -375,20 +375,20 @@ function SettingsRoute() {
           {activeSection === 'connection' && <ConnectionSection />}
 
           {/* ── Hermes Agent ──────────────────────────────────── */}
-          {activeSection === 'claude' && (
-            <ClaudeConfigSection activeView="claude" />
+          {activeSection === 'model' && (
+            <AgoraxConfigSection activeView="model" />
           )}
           {activeSection === 'agent' && (
-            <ClaudeConfigSection activeView="agent" />
+            <AgoraxConfigSection activeView="agent" />
           )}
           {activeSection === 'routing' && (
-            <ClaudeConfigSection activeView="routing" />
+            <AgoraxConfigSection activeView="routing" />
           )}
           {activeSection === 'voice' && (
-            <ClaudeConfigSection activeView="voice" />
+            <AgoraxConfigSection activeView="voice" />
           )}
           {activeSection === 'display' && (
-            <ClaudeConfigSection activeView="display" />
+            <AgoraxConfigSection activeView="display" />
           )}
 
           {/* ── Claude Code ─────────────────────────────────────── */}
@@ -1173,7 +1173,7 @@ type ClaudeProvider = {
   maskedKeys: Record<string, string>
 }
 
-type ClaudeConfigData = {
+type AgoraxConfigData = {
   config: Record<string, unknown>
   providers: Array<ClaudeProvider>
   activeProvider: string
@@ -1196,12 +1196,12 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {}
 }
 
-function ClaudeConfigSection({
-  activeView = 'claude',
+function AgoraxConfigSection({
+  activeView = 'model',
 }: {
-  activeView?: 'claude' | 'agent' | 'routing' | 'voice' | 'display'
+  activeView?: 'model' | 'agent' | 'routing' | 'voice' | 'display'
 }) {
-  const [data, setData] = useState<ClaudeConfigData | null>(null)
+  const [data, setData] = useState<AgoraxConfigData | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
@@ -1224,47 +1224,53 @@ function ClaudeConfigSection({
         ? `?profile=${encodeURIComponent(profileName)}`
         : ''
     const res = await fetch(`/api/hermes-config${params}`)
-    const configData = (await res.json()) as ClaudeConfigData
+    const configData = (await res.json()) as AgoraxConfigData
     setData(configData)
     return configData
   }, [])
 
-  const fetchModelsForProvider = useCallback(async (provider: string) => {
-    if (!provider) {
-      setAvailableModels([])
-      return
-    }
-    try {
-      const res = await fetch(
-        `/api/hermes-proxy/api/available-models?provider=${encodeURIComponent(provider)}`,
-      )
-      if (res.ok) {
-        const result = (await res.json()) as AvailableModelsResponse
-        if (result.models.length > 0) {
-          setAvailableModels(result.models)
-          return
-        }
+  const fetchModelsForProvider = useCallback(
+    async (provider: string, profileName?: string) => {
+      if (!provider) {
+        setAvailableModels([])
+        return
       }
-    } catch {
-      // fall through to /api/models
-    }
-    try {
-      const res = await fetch('/api/models')
-      if (res.ok) {
-        const data = (await res.json()) as {
-          models?: Array<{ id: string; provider?: string }>
+      try {
+        const params = new URLSearchParams({ provider })
+        const pin = profileName?.trim() || scope.trim()
+        if (pin) params.set('profile', pin)
+        const res = await fetch(
+          `/api/hermes-proxy/api/available-models?${params.toString()}`,
+        )
+        if (res.ok) {
+          const result = (await res.json()) as AvailableModelsResponse
+          if (result.models.length > 0) {
+            setAvailableModels(result.models)
+            return
+          }
         }
-        const filtered = (data.models || [])
-          .filter((m) => m.provider === provider)
-          .map((m) => ({ id: m.id, description: '' }))
-        if (filtered.length > 0) {
-          setAvailableModels(filtered)
-        }
+      } catch {
+        // fall through to /api/models
       }
-    } catch {
-      // ignore
-    }
-  }, [])
+      try {
+        const res = await fetch('/api/models')
+        if (res.ok) {
+          const data = (await res.json()) as {
+            models?: Array<{ id: string; provider?: string }>
+          }
+          const filtered = (data.models || [])
+            .filter((m) => m.provider === provider)
+            .map((m) => ({ id: m.id, description: '' }))
+          if (filtered.length > 0) {
+            setAvailableModels(filtered)
+          }
+        }
+      } catch {
+        // ignore
+      }
+    },
+    [scope],
+  )
 
   useEffect(() => {
     // Initialize the scope from the active profile once useProfiles is ready.
@@ -1435,7 +1441,7 @@ function ClaudeConfigSection({
   const sttLocal = asRecord(sttConfig.local)
   const sttGroq = asRecord(sttConfig.groq)
 
-  const renderClaudeOverview = () => (
+  const renderModelOverview = () => (
     <>
       <SettingsSection
         title="Model & Provider"
@@ -2055,7 +2061,7 @@ function ClaudeConfigSection({
   )
 
   const sectionContent = {
-    claude: renderClaudeOverview(),
+    model: renderModelOverview(),
     agent: renderAgentBehavior(),
     routing: renderSmartRouting(),
     voice: renderVoice(),

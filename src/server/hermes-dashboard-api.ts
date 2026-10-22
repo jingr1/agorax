@@ -46,13 +46,6 @@ export type SessionSearchResponse = {
   }>
 }
 
-export type SkillInfo = {
-  name: string
-  description: string
-  category?: string
-  enabled: boolean
-}
-
 export type EnvVarInfo = {
   has_value?: boolean
   masked_value?: string | null
@@ -174,21 +167,6 @@ export async function forkSession(
 ): Promise<{ session: DashboardSession; forked_from: string }> {
   return dashboardJson(`/api/sessions/${encodeURIComponent(id)}/fork`, {
     method: 'POST',
-  })
-}
-
-export async function getSkills(): Promise<SkillInfo[]> {
-  return dashboardJson('/api/skills')
-}
-
-export async function toggleSkill(
-  name: string,
-  enabled: boolean,
-): Promise<{ ok: boolean }> {
-  return dashboardJson('/api/skills/toggle', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, enabled }),
   })
 }
 

@@ -14,7 +14,19 @@ import type { McpServer, McpTestResult } from '@/types/mcp'
 
 interface Props {
   server: McpServer
+  /** Hermes agent/profile id for per-profile mcp_servers writes. */
+  profile?: string
   onEdit: (server: McpServer) => void
+  /** When set, replaces built-in profile DELETE (e.g. unbind platform entry). */
+  onRemove?: (server: McpServer) => void | Promise<void>
+  /** When set, replaces built-in configure enabled toggle. */
+  onEnabledChange?: (
+    server: McpServer,
+    enabled: boolean,
+  ) => void | Promise<void>
+  /** Open SSE logs drawer (native /api/mcp only). */
+  onOpenLogs?: (server: McpServer) => void
+  removePending?: boolean
 }
 
 const STATUS_COLORS: Record<McpServer['status'], string> = {
@@ -41,10 +53,18 @@ function Badge({
   )
 }
 
-export function McpServerCard({ server, onEdit }: Props) {
-  const test = useTestMcpServer()
-  const configure = useConfigureMcpServer()
-  const remove = useDeleteMcpServer()
+export function McpServerCard({
+  server,
+  profile,
+  onEdit,
+  onRemove,
+  onEnabledChange,
+  onOpenLogs,
+  removePending = false,
+}: Props) {
+  const test = useTestMcpServer(profile)
+  const configure = useConfigureMcpServer(profile)
+  const remove = useDeleteMcpServer(profile)
   const oauth = useMcpOauth()
   const { mode: capabilityMode } = useMcpCapabilityMode()
   const fallbackMode = capabilityMode === 'fallback'
@@ -57,6 +77,8 @@ export function McpServerCard({ server, onEdit }: Props) {
   const qc = useQueryClient()
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [testResult, setTestResult] = useState<McpTestResult | null>(null)
+  const [togglePending, setTogglePending] = useState(false)
+  const deleting = removePending || remove.isPending
 
   return (
     <article className="flex flex-col gap-3 rounded-xl border border-primary-200 bg-primary-50/85 p-4">
@@ -79,10 +101,20 @@ export function McpServerCard({ server, onEdit }: Props) {
         </div>
         <Switch
           checked={server.enabled}
-          disabled={configure.isPending}
-          onCheckedChange={(checked) =>
-            configure.mutate({ name: server.name, enabled: checked })
-          }
+          disabled={configure.isPending || togglePending}
+          onCheckedChange={async (checked) => {
+            const enabled = Boolean(checked)
+            if (onEnabledChange) {
+              setTogglePending(true)
+              try {
+                await onEnabledChange(server, enabled)
+              } finally {
+                setTogglePending(false)
+              }
+              return
+            }
+            configure.mutate({ name: server.name, enabled })
+          }}
           aria-label={server.enabled ? 'Disable server' : 'Enable server'}
         />
       </header>
@@ -132,10 +164,17 @@ export function McpServerCard({ server, onEdit }: Props) {
             {oauth.isPending ? 'Reauth…' : 'Reauth'}
           </Button>
         ) : null}
-        {/* Logs button hidden until hermes-agent dashboard exposes the
-            /api/mcp/{name}/logs SSE endpoint. Re-enable when the runtime
-            endpoint is available; the McpLogsDrawer component is still
-            available at ./mcp-logs-drawer. */}
+        {onOpenLogs ? (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={fallbackMode}
+            title={liveOnlyTitle || undefined}
+            onClick={() => onOpenLogs(server)}
+          >
+            Logs
+          </Button>
+        ) : null}
         <Button variant="outline" size="sm" onClick={() => onEdit(server)}>
           Edit
         </Button>
@@ -144,10 +183,17 @@ export function McpServerCard({ server, onEdit }: Props) {
             <Button
               variant="destructive"
               size="sm"
-              disabled={remove.isPending}
-              onClick={() => remove.mutate({ name: server.name })}
+              disabled={deleting}
+              onClick={async () => {
+                if (onRemove) {
+                  await onRemove(server)
+                  setConfirmDelete(false)
+                  return
+                }
+                remove.mutate({ name: server.name })
+              }}
             >
-              Confirm Delete
+              {onRemove ? 'Confirm Remove' : 'Confirm Delete'}
             </Button>
             <Button
               variant="ghost"
@@ -164,7 +210,7 @@ export function McpServerCard({ server, onEdit }: Props) {
             className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-950/40"
             onClick={() => setConfirmDelete(true)}
           >
-            Delete
+            {onRemove ? 'Remove' : 'Delete'}
           </Button>
         )}
       </div>

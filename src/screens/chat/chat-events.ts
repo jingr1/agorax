@@ -20,5 +20,5 @@ export type ChatSubmitSelectionDetail = {
 export const CHAT_OPEN_SETTINGS_EVENT = 'claude:chat-open-settings'
 
 export type ChatOpenSettingsDetail = {
-  section: 'claude' | 'appearance'
+  section: 'model' | 'appearance'
 }

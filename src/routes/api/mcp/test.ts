@@ -2,11 +2,10 @@ import { createFileRoute } from '@tanstack/react-router'
 import { json } from '@tanstack/react-start'
 import { isAuthenticated } from '../../../server/auth-middleware'
 import {
-  BEARER_TOKEN,
-  HERMES_API,
-  CLAUDE_UPGRADE_INSTRUCTIONS,
+  HERMES_UPGRADE_INSTRUCTIONS,
   ensureGatewayEnhancedProbed,
 } from '../../../server/gateway-capabilities'
+import { resolveChatGateway } from '../../../server/chat-gateway'
 import {
   requireJsonContentType,
   safeErrorMessage,
@@ -16,15 +15,21 @@ import { runHermesMcpTest } from '../../../server/mcp-cli-bridge'
 import { setProbe } from '../../../server/mcp-tools-cache'
 import { parseMcpServerInput } from '../../../server/mcp-input-validate'
 import { createCapabilityUnavailablePayload } from '@/lib/feature-gates'
+import { resolveMcpProfileName } from '../../../server/mcp-profile-config'
 
 const TEST_TIMEOUT_MS = 30_000
 
-async function mcpFetch(path: string, init: RequestInit): Promise<Response> {
+async function mcpFetch(
+  path: string,
+  init: RequestInit,
+  profileName?: string,
+): Promise<Response> {
+  const gateway = resolveChatGateway(profileName)
   const headers = new Headers(init.headers)
-  if (BEARER_TOKEN && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${BEARER_TOKEN}`)
+  if (gateway.token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${gateway.token}`)
   }
-  return fetch(`${HERMES_API}${path}`, { ...init, headers })
+  return fetch(`${gateway.url}${path}`, { ...init, headers })
 }
 
 export const Route = createFileRoute('/api/mcp/test')({
@@ -81,13 +86,21 @@ export const Route = createFileRoute('/api/mcp/test')({
         if (!capabilities.mcp) {
           return json(
             createCapabilityUnavailablePayload('mcp', {
-              error: `Gateway does not support /api/mcp. ${CLAUDE_UPGRADE_INSTRUCTIONS}`,
+              error: `Gateway does not support /api/mcp. ${HERMES_UPGRADE_INSTRUCTIONS}`,
             }),
             { status: 503 },
           )
         }
         try {
           const raw = (await request.json()) as Record<string, unknown>
+          const url = new URL(request.url)
+          // Managed agent ids → undefined → active Hermes gateway (test still
+          // hits native /api/mcp when available; CLI fallback uses process home).
+          const profile =
+            resolveMcpProfileName(
+              url.searchParams.get('profile') ||
+                (typeof raw.profile === 'string' ? raw.profile : null),
+            ) ?? undefined
           let body: Record<string, unknown>
           if (typeof raw.name === 'string' && Object.keys(raw).length === 1) {
             body = { name: raw.name }
@@ -105,12 +118,16 @@ export const Route = createFileRoute('/api/mcp/test')({
             }
             body = parsed.value as unknown as Record<string, unknown>
           }
-          const response = await mcpFetch('/api/mcp/test', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
-          })
+          const response = await mcpFetch(
+            '/api/mcp/test',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+              signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
+            },
+            profile,
+          )
           const payload = (await response.json().catch(() => ({}))) as unknown
           const result = normalizeTestResult(payload)
           return json(result, {

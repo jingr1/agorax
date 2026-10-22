@@ -166,13 +166,13 @@ export function getResolvedUrls(): {
   return { gateway: HERMES_API, dashboard: CLAUDE_DASHBOARD_URL, source }
 }
 
-export const CLAUDE_UPGRADE_INSTRUCTIONS =
+export const HERMES_UPGRADE_INSTRUCTIONS =
   'For full features, install Hermes Agent from source (`git clone https://github.com/NousResearch/hermes-agent && cd hermes-agent && pip install -e .`), then start the gateway on :8642 (`hermes gateway run`). Sessions, skills, config, and jobs are read from the local profile directory.'
 
 export const DASHBOARD_REQUIRED_INSTRUCTIONS =
   'Hermes gateway core APIs are healthy. Sessions, skills, config, and jobs are served from the local profile directory. The optional Agent Dashboard (:9119) can be started separately for analytics.'
 
-export const SESSIONS_API_UNAVAILABLE_MESSAGE = `Your Hermes backend does not support the sessions API. ${CLAUDE_UPGRADE_INSTRUCTIONS}`
+export const SESSIONS_API_UNAVAILABLE_MESSAGE = `Your Hermes backend does not support the sessions API. ${HERMES_UPGRADE_INSTRUCTIONS}`
 
 const PROBE_TIMEOUT_MS = 3_000
 const LOCAL_PROBE_TIMEOUT_MS = 2_000
@@ -993,7 +993,7 @@ export function getCapabilityWarningMessage(
     return null
   }
 
-  return `[gateway] Missing Hermes APIs detected. ${CLAUDE_UPGRADE_INSTRUCTIONS}`
+  return `[gateway] Missing Hermes APIs detected. ${HERMES_UPGRADE_INSTRUCTIONS}`
 }
 
 function logCapabilities(next: GatewayCapabilities): void {
@@ -1187,7 +1187,6 @@ export async function probeGateway(options?: {
         models,
         sessionsFirst,
         enhancedChat,
-        legacySkills,
         legacyConfig,
         legacyJobs,
         dashboard,
@@ -1198,7 +1197,6 @@ export async function probeGateway(options?: {
         probeBooleanWithRetry(() => probe('/v1/models')),
         probe('/api/sessions'),
         probeEnhancedChatStream(),
-        probe('/api/skills'),
         probe('/api/config'),
         probe('/api/jobs'),
         localControlPlane
@@ -1216,9 +1214,10 @@ export async function probeGateway(options?: {
         legacySessions = await probe('/api/sessions')
       }
 
-      // Control-plane refactor: sessions, skills, config, jobs are satisfied
-      // by the local profile directory (state.db, skills/, config.yaml,
-      // cron/jobs.json). Gateway probes serve as fallback, not primary.
+      // Control-plane refactor: sessions, config, jobs are satisfied by the
+      // local profile directory (state.db, config.yaml, cron/jobs.json).
+      // Skills live in the Agorax platform catalog (collab.db) — always on.
+      // Gateway probes serve as fallback, not primary.
       // Dashboard availability is informational only — not a capability gate.
       capabilities = preserveCoreCapabilitiesOnTransientFailure(
         previousCapabilities,
@@ -1230,7 +1229,8 @@ export async function probeGateway(options?: {
           probed: true,
           sessions: localControlPlane || legacySessions,
           enhancedChat,
-          skills: localControlPlane || legacySkills,
+          // Platform skills catalog — no Hermes /api/skills proxy.
+          skills: true,
           // Memory is always available: workspace reads $HERMES_HOME/MEMORY.md +
           // memory/*.md + memories/*.md directly from the local filesystem.
           // No remote gateway endpoint is required.

@@ -91,7 +91,9 @@ export const Route = createFileRoute('/api/session-status')({
           let sessionKey = requestedKey || 'main'
 
           if (sessionKey === 'new') {
-            const contextUsage = await readContextUsage('new')
+            const contextUsage = await readContextUsage('new', {
+              profile: profileParam,
+            })
             return json({
               ok: true,
               payload: {
@@ -131,7 +133,9 @@ export const Route = createFileRoute('/api/session-status')({
 
           const localSession = getLocalSession(sessionKey)
           if (localSession) {
-            const contextUsage = await readContextUsage(sessionKey)
+            const contextUsage = await readContextUsage(sessionKey, {
+              profile: profileParam,
+            })
             const activeRun = await getActiveRunForSession(sessionKey)
             const outputTokens = estimateTokensFromText(
               activeRun?.assistantText ?? '',
@@ -156,7 +160,9 @@ export const Route = createFileRoute('/api/session-status')({
           }
 
           if (isSyntheticSessionKey(sessionKey)) {
-            const contextUsage = await readContextUsage(sessionKey)
+            const contextUsage = await readContextUsage(sessionKey, {
+              profile: profileParam,
+            })
             return json({
               ok: true,
               payload: {
@@ -184,7 +190,9 @@ export const Route = createFileRoute('/api/session-status')({
 
             const inputTokens = session.input_tokens ?? 0
             const outputTokens = session.output_tokens ?? 0
-            const contextUsage = await readContextUsage(session.id)
+            const contextUsage = await readContextUsage(session.id, {
+              profile: profileParam,
+            })
 
             return json({
               ok: true,

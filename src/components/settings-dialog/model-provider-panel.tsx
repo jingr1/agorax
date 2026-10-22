@@ -6,6 +6,10 @@ import { Button } from '@/components/ui/button'
 import { ProviderLogo } from '@/components/provider-logo'
 import { CodexLoginModal } from '@/components/settings-dialog/codex-login-modal'
 import { AnthropicLoginModal } from '@/components/settings-dialog/anthropic-login-modal'
+import {
+  hermesConfigUrl,
+  withHermesConfigProfile,
+} from '@/lib/hermes-config-client'
 import { cn } from '@/lib/utils'
 
 export const PROVIDER_CARDS: Array<{
@@ -270,6 +274,8 @@ type OAuthPollResponse = {
 }
 
 export type ModelProviderPanelProps = {
+  /** Hermes profile to read/write (default → ~/.hermes). */
+  profileName?: string
   initialProvider?: string
   initialModel?: string
   banner?: string
@@ -298,6 +304,7 @@ export type ModelProviderPanelProps = {
 }
 
 export function ModelProviderPanel({
+  profileName,
   initialProvider = '',
   initialModel = '',
   banner,
@@ -386,9 +393,9 @@ export function ModelProviderPanel({
           .catch(() => setAvailableModels(fallbackModels))
       }
 
-      fetch(
-        `/api/hermes-proxy/api/available-models?provider=${encodeURIComponent(providerId)}`,
-      )
+      const params = new URLSearchParams({ provider: providerId })
+      if (profileName?.trim()) params.set('profile', profileName.trim())
+      fetch(`/api/hermes-proxy/api/available-models?${params.toString()}`)
         .then((r) => r.json())
         .then((d: { models?: Array<{ id: string }> }) => {
           const models = (d.models || []).map((m) => m.id)
@@ -400,7 +407,7 @@ export function ModelProviderPanel({
         })
         .catch(() => tryModelsEndpoint())
     },
-    [extraProviders, localDiscovery],
+    [extraProviders, localDiscovery, profileName],
   )
 
   useEffect(() => {
@@ -432,8 +439,8 @@ export function ModelProviderPanel({
       .catch(() => {})
   }, [])
 
-  const refreshKeys = async () => {
-    const ref = await fetch('/api/hermes-config')
+  const refreshKeys = useCallback(async () => {
+    const ref = await fetch(hermesConfigUrl(profileName))
     const d = await ref.json()
     const providers = Array.isArray(d.providers) ? d.providers : []
     const keys: Record<string, string> = {}
@@ -451,11 +458,11 @@ export function ModelProviderPanel({
       }
     }
     setConfiguredKeys(keys)
-  }
+  }, [profileName])
 
   useEffect(() => {
     void refreshKeys().catch(() => {})
-  }, [])
+  }, [refreshKeys])
 
   useEffect(() => {
     setConfiguredKeys((prev) => {
@@ -480,10 +487,10 @@ export function ModelProviderPanel({
     setSaving(true)
     setMsg(null)
     try {
-      const res = await fetch('/api/hermes-config', {
+      const res = await fetch(hermesConfigUrl(profileName), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates),
+        body: JSON.stringify(withHermesConfigProfile(profileName, updates)),
       })
       const r = (await res.json()) as { message?: string }
       setMsg(r.message || 'Saved')

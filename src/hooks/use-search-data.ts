@@ -276,20 +276,22 @@ async function fetchSkills(
   querySignal?: AbortSignal,
 ): Promise<Array<SearchSkill>> {
   const data = await fetchJsonWithTimeout<SkillsApiResponse>(
-    '/api/skills?summary=search&limit=120',
+    '/api/platform-skills',
     querySignal,
   )
   if (!data) return []
   if (typeof data.ok === 'boolean' && !data.ok) return []
   const skills = Array.isArray(data.skills) ? data.skills : []
 
-  return skills.map((skill: Record<string, unknown>) => {
+  return skills.slice(0, 120).map((skill: Record<string, unknown>) => {
     const name = String(skill.name || 'Unknown Skill')
+    const bound = Number(skill.boundAgentCount ?? 0)
     return {
       id: String(skill.id || name.toLowerCase().replaceAll(' ', '-')),
       name,
       description: String(skill.description || ''),
-      installed: Boolean(skill.installed),
+      // Platform catalog row; treat as installed when bound to ≥1 agent.
+      installed: bound > 0 || Boolean(skill.installed),
     }
   })
 }
@@ -367,7 +369,6 @@ export function useSearchData(
   enabled = true,
 ) {
   const sessionsAvailable = useFeatureAvailable('sessions')
-  const skillsAvailable = useFeatureAvailable('skills')
   const trimmedQuery = query.trim()
   const workspaceQuery = useActiveWorkspace()
   const workspacePath = workspaceQuery.data?.path ?? ''
@@ -415,12 +416,11 @@ export function useSearchData(
     refetchOnReconnect: false,
   })
 
-  // Skills
+  // Skills — platform catalog (local control plane; no gateway skills probe).
   const skillsQuery = useQuery({
     queryKey: ['search', 'skills'],
     queryFn: ({ signal }) => fetchSkills(signal),
-    enabled:
-      enabled && skillsAvailable && (scope === 'all' || scope === 'skills'),
+    enabled: enabled && (scope === 'all' || scope === 'skills'),
     staleTime: SKILLS_STALE_TIME_MS,
     gcTime: SEARCH_QUERY_GC_TIME_MS,
     retry: false,

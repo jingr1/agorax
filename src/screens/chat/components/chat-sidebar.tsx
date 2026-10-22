@@ -374,7 +374,7 @@ function ChatSidebarComponent({
     function handleOpenSettingsEvent(event: Event) {
       const detail = (event as CustomEvent<ChatOpenSettingsDetail>).detail
       handleOpenSettings(
-        detail.section === 'appearance' ? 'appearance' : 'claude',
+        detail.section === 'appearance' ? 'appearance' : 'model',
       )
     }
 

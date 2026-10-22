@@ -14,7 +14,7 @@ vi.mock('../../server/auth-middleware', () => ({
   isAuthenticated: vi.fn(),
 }))
 vi.mock('../../server/gateway-capabilities', () => ({
-  CLAUDE_UPGRADE_INSTRUCTIONS: 'Upgrade your Claude agent.',
+  HERMES_UPGRADE_INSTRUCTIONS: 'Upgrade your Hermes agent.',
   dashboardFetch: vi.fn(),
   ensureGatewayProbed: vi.fn(),
   ensureGatewayEnhancedProbed: vi.fn(),

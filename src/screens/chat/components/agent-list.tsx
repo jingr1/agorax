@@ -360,7 +360,7 @@ export function AgentList({
         if (!open) setSettingsAgentId(null)
       }}
       agentId={settingsAgentId ?? undefined}
-      initialSection="claude"
+      initialSection="model"
     />
   )
 

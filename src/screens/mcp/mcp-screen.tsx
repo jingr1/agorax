@@ -4,8 +4,13 @@ import { AnimatePresence, motion } from 'motion/react'
 import { McpServerIcon } from '@hugeicons/core-free-icons'
 import { McpServerCard } from './components/mcp-server-card'
 import { McpServerDialog } from './components/mcp-server-dialog'
+import { McpLogsDrawer } from './components/mcp-logs-drawer'
 import { InstallConfirmationDialog } from './components/install-confirmation-dialog'
 import { useMcpCapabilityMode } from './hooks/use-mcp-capability-mode'
+import {
+  useConfigureMcpServer,
+  useDeleteMcpServer,
+} from './hooks/use-mcp-mutations'
 import { useMcpServers } from './hooks/use-mcp-servers'
 import { useMcpHub } from './hooks/use-mcp-hub'
 import { SourcesManagerDialog } from './components/sources-manager-dialog'
@@ -32,7 +37,7 @@ import {
   type PlatformMcpSummary,
 } from './hooks/use-platform-mcp'
 
-type Tab = 'library' | 'agents' | 'installed' | 'marketplace'
+type Tab = 'library' | 'agents' | 'marketplace'
 
 export function McpScreen() {
   const queryClient = useQueryClient()
@@ -46,26 +51,21 @@ export function McpScreen() {
   const [installEntry, setInstallEntry] = useState<HubMcpEntry | null>(null)
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [selectedAgent, setSelectedAgent] = useState('')
+  const [logsServer, setLogsServer] = useState<McpServer | null>(null)
 
   const { mode: capabilityMode } = useMcpCapabilityMode()
   const libraryQuery = usePlatformMcpLibrary()
-  const serverListTab =
-    tab === 'marketplace' || tab === 'library' || tab === 'agents'
-      ? 'installed'
-      : tab
-  const query = useMcpServers({
-    tab: serverListTab as 'installed',
-    category,
-    search: tab === 'installed' ? search : '',
-  })
-  const servers = query.data?.servers ?? []
-  const categories = query.data?.categories ?? ['All']
   const hubQuery = useMcpHub(tab === 'marketplace' ? search : '')
 
   const agentsQuery = useQuery({
     queryKey: ['mcp-agents-list'],
     queryFn: async (): Promise<
-      Array<{ agentId: string; name: string; runtime: string }>
+      Array<{
+        agentId: string
+        name: string
+        runtime: string
+        profile?: string
+      }>
     > => {
       const response = await fetch('/api/agents')
       const payload = (await response.json()) as {
@@ -73,6 +73,8 @@ export function McpScreen() {
           agentId: string
           name?: string
           runtime?: string
+          runtimeConfig?: { profile?: string }
+          profile?: string
         }>
         error?: string
       }
@@ -85,6 +87,8 @@ export function McpScreen() {
           agentId: a.agentId,
           name: a.name || a.agentId,
           runtime: a.runtime || 'unknown',
+          profile:
+            a.runtimeConfig?.profile?.trim() || a.profile?.trim() || undefined,
         }))
     },
     staleTime: 60_000,
@@ -101,17 +105,36 @@ export function McpScreen() {
   const setEnabled = useSetAgentMcpEnabled()
   const removeBinding = useRemoveAgentMcp()
   const deleteLibrary = useDeletePlatformMcp()
-  const selectedRuntime =
-    agents.find((a) => a.agentId === selectedAgent)?.runtime ?? ''
+  const selectedAgentMeta = agents.find((a) => a.agentId === selectedAgent)
+  const selectedRuntime = selectedAgentMeta?.runtime ?? ''
   const selectedIsHermes = selectedRuntime === 'hermes' || !selectedRuntime
+  // Hermes profile FS / gateway pin — never pass managed agent ids (cc-impl…).
+  const hermesProfile = selectedIsHermes
+    ? selectedAgentMeta?.profile?.trim() || selectedAgent || undefined
+    : undefined
+  const deleteProfileMcp = useDeleteMcpServer(hermesProfile)
+  const configureProfileMcp = useConfigureMcpServer(hermesProfile)
+
+  const bindingsByName = useMemo(() => {
+    const map = new Map<string, { serverId: string; enabled: boolean }>()
+    for (const b of bindingsQuery.data ?? []) {
+      map.set(b.name, { serverId: b.serverId, enabled: b.enabled })
+    }
+    return map
+  }, [bindingsQuery.data])
+
+  // Installed snapshot for the selected Hermes agent (profile mcp_servers).
+  const installedQuery = useMcpServers({
+    tab: 'installed',
+    category,
+    search: tab === 'agents' ? search : '',
+    profile: hermesProfile,
+    enabled: tab === 'agents' && Boolean(hermesProfile),
+  })
+  const categories = installedQuery.data?.categories ?? ['All']
 
   function handleTabChange(next: string | number | null) {
-    if (
-      next === 'library' ||
-      next === 'agents' ||
-      next === 'installed' ||
-      next === 'marketplace'
-    ) {
+    if (next === 'library' || next === 'agents' || next === 'marketplace') {
       setTab(next)
       setSearch('')
     }
@@ -129,9 +152,9 @@ export function McpScreen() {
       ? `${(hubQuery.data?.total ?? 0).toLocaleString()} results`
       : tab === 'library'
         ? `${libraryServers.length.toLocaleString()} in library`
-        : tab === 'agents'
-          ? `${(bindingsQuery.data ?? []).length.toLocaleString()} assigned`
-          : `${servers.length.toLocaleString()} on profile`
+        : selectedIsHermes
+          ? `${(installedQuery.data?.servers ?? []).length.toLocaleString()} installed`
+          : `${(bindingsQuery.data ?? []).length.toLocaleString()} assigned`
 
   return (
     <PageShell>
@@ -176,9 +199,6 @@ export function McpScreen() {
               <TabsTab value="agents" className="min-w-[100px]">
                 Agents
               </TabsTab>
-              <TabsTab value="installed" className="min-w-[100px]">
-                Profile
-              </TabsTab>
               <TabsTab value="marketplace" className="min-w-[110px]">
                 Marketplace
               </TabsTab>
@@ -192,23 +212,11 @@ export function McpScreen() {
                   ? 'Search MCP catalog…'
                   : tab === 'library'
                     ? 'Search library by name'
-                    : 'Search…'
+                    : tab === 'agents'
+                      ? 'Search installed MCP…'
+                      : 'Search…'
               }
             />
-
-            {tab === 'installed' ? (
-              <ToolbarSelect
-                label="Category"
-                value={category}
-                onChange={(event) => setCategory(event.target.value)}
-              >
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </ToolbarSelect>
-            ) : null}
 
             {tab === 'agents' ? (
               <ToolbarSelect
@@ -219,6 +227,20 @@ export function McpScreen() {
                 {agents.map((a) => (
                   <option key={a.agentId} value={a.agentId}>
                     {a.name} ({a.runtime})
+                  </option>
+                ))}
+              </ToolbarSelect>
+            ) : null}
+
+            {tab === 'agents' && selectedIsHermes ? (
+              <ToolbarSelect
+                label="Category"
+                value={category}
+                onChange={(event) => setCategory(event.target.value)}
+              >
+                {categories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
                   </option>
                 ))}
               </ToolbarSelect>
@@ -244,53 +266,93 @@ export function McpScreen() {
               <p className="text-xs text-primary-500">
                 Managed runtime ({selectedRuntime}): bindings are stored in the
                 platform library and injected at run start (Claude Code per-run
-                mcp-config). No Hermes profile config.yaml write.
+                mcp-config). Test / Discover / Logs need a Hermes agent.
               </p>
-            ) : null}
-            <AgentAssignPanel
+            ) : (
+              <p className="text-xs text-primary-500">
+                Installed MCP for this agent (profile snapshot + platform
+                bindings). Use Test / Edit / Logs here; assign shared servers
+                from the library below.
+              </p>
+            )}
+
+            {selectedIsHermes ? (
+              <ServerList
+                query={installedQuery}
+                profile={hermesProfile}
+                onEdit={(s) => {
+                  setEditing(s)
+                  setDialogOpen(true)
+                }}
+                onOpenLogs={setLogsServer}
+                onRemove={async (server) => {
+                  const binding = bindingsByName.get(server.name)
+                  if (binding) {
+                    await removeBinding.mutateAsync({
+                      agentId: selectedAgent,
+                      serverId: binding.serverId,
+                    })
+                    return
+                  }
+                  await deleteProfileMcp.mutateAsync({ name: server.name })
+                }}
+                onEnabledChange={async (server, enabled) => {
+                  const binding = bindingsByName.get(server.name)
+                  if (binding) {
+                    await setEnabled.mutateAsync({
+                      agentId: selectedAgent,
+                      serverId: binding.serverId,
+                      enabled,
+                    })
+                    return
+                  }
+                  await configureProfileMcp.mutateAsync({
+                    name: server.name,
+                    enabled,
+                  })
+                }}
+                removePending={
+                  removeBinding.isPending || deleteProfileMcp.isPending
+                }
+              />
+            ) : (
+              <ManagedBindingsList
+                bindings={bindingsQuery.data ?? []}
+                loading={bindingsQuery.isPending}
+                busy={
+                  setEnabled.isPending ||
+                  removeBinding.isPending ||
+                  assignMcp.isPending
+                }
+                onToggle={(serverId, enabled) =>
+                  setEnabled.mutate({
+                    agentId: selectedAgent,
+                    serverId,
+                    enabled,
+                  })
+                }
+                onRemove={(serverId) =>
+                  removeBinding.mutate({
+                    agentId: selectedAgent,
+                    serverId,
+                  })
+                }
+              />
+            )}
+
+            <AddFromLibrary
               agentId={selectedAgent}
               library={libraryQuery.data ?? []}
-              bindings={bindingsQuery.data ?? []}
-              loading={bindingsQuery.isPending}
+              boundIds={
+                new Set((bindingsQuery.data ?? []).map((b) => b.serverId))
+              }
+              busy={assignMcp.isPending}
               onAssign={(serverId) =>
                 assignMcp.mutate({
                   agentId: selectedAgent,
                   serverIds: [serverId],
                 })
               }
-              onToggle={(serverId, enabled) =>
-                setEnabled.mutate({
-                  agentId: selectedAgent,
-                  serverId,
-                  enabled,
-                })
-              }
-              onRemove={(serverId) =>
-                removeBinding.mutate({
-                  agentId: selectedAgent,
-                  serverId,
-                })
-              }
-              busy={
-                assignMcp.isPending ||
-                setEnabled.isPending ||
-                removeBinding.isPending
-              }
-            />
-          </TabsPanel>
-
-          <TabsPanel value="installed" className="pt-3">
-            <p className="mb-3 text-xs text-primary-500">
-              Active profile snapshot of mcp_servers (includes materialized
-              platform bindings and private entries). Prefer Library + Agents
-              for shared servers.
-            </p>
-            <ServerList
-              query={query}
-              onEdit={(s) => {
-                setEditing(s)
-                setDialogOpen(true)
-              }}
             />
           </TabsPanel>
 
@@ -372,7 +434,8 @@ export function McpScreen() {
       <McpServerDialog
         open={dialogOpen}
         initial={editing}
-        target={editing ? 'profile' : 'library'}
+        target={editing && hermesProfile ? 'profile' : 'library'}
+        profile={hermesProfile}
         onClose={() => setDialogOpen(false)}
       />
 
@@ -389,6 +452,13 @@ export function McpScreen() {
       <SourcesManagerDialog
         open={sourcesOpen}
         onClose={() => setSourcesOpen(false)}
+      />
+
+      <McpLogsDrawer
+        server={logsServer}
+        open={Boolean(logsServer)}
+        profile={hermesProfile}
+        onClose={() => setLogsServer(null)}
       />
     </PageShell>
   )
@@ -463,18 +533,13 @@ function LibraryList({
   )
 }
 
-function AgentAssignPanel({
-  agentId,
-  library,
+function ManagedBindingsList({
   bindings,
   loading,
-  onAssign,
+  busy,
   onToggle,
   onRemove,
-  busy,
 }: {
-  agentId: string
-  library: Array<PlatformMcpSummary>
   bindings: Array<{
     serverId: string
     name: string
@@ -482,114 +547,133 @@ function AgentAssignPanel({
     transport: string
   }>
   loading: boolean
-  onAssign: (serverId: string) => void
+  busy: boolean
   onToggle: (serverId: string, enabled: boolean) => void
   onRemove: (serverId: string) => void
-  busy: boolean
 }) {
-  const boundIds = useMemo(
-    () => new Set(bindings.map((b) => b.serverId)),
-    [bindings],
+  if (loading) {
+    return <p className="text-sm text-primary-500">Loading…</p>
+  }
+  if (bindings.length === 0) {
+    return (
+      <EmptyCard
+        title="No MCP servers assigned"
+        description="Pick a library entry below to grant it to this agent."
+      />
+    )
+  }
+  return (
+    <div className="space-y-1.5">
+      {bindings.map((b) => (
+        <div
+          key={b.serverId}
+          className="flex items-center gap-3 rounded-xl border border-primary-200 bg-primary-50/90 px-3 py-2.5"
+        >
+          <Switch
+            checked={b.enabled}
+            disabled={busy}
+            onCheckedChange={(checked) =>
+              onToggle(b.serverId, Boolean(checked))
+            }
+          />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-ink">{b.name}</p>
+            <p className="text-xs text-primary-500">{b.transport}</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={busy}
+            onClick={() => onRemove(b.serverId)}
+          >
+            Remove
+          </Button>
+        </div>
+      ))}
+    </div>
   )
-  const available = library.filter((s) => !boundIds.has(s.id))
+}
 
+function AddFromLibrary({
+  agentId,
+  library,
+  boundIds,
+  busy,
+  onAssign,
+}: {
+  agentId: string
+  library: Array<PlatformMcpSummary>
+  boundIds: Set<string>
+  busy: boolean
+  onAssign: (serverId: string) => void
+}) {
+  const available = library.filter((s) => !boundIds.has(s.id))
   if (!agentId) {
     return (
       <EmptyCard
         title="Select an agent"
-        description="Choose a profile/agent to manage MCP assignments."
+        description="Choose an agent to manage MCP assignments."
       />
     )
   }
-
   return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="mb-2 text-sm font-medium text-ink">
-          Assigned to {agentId}
-        </h3>
-        {loading ? (
-          <p className="text-sm text-primary-500">Loading…</p>
-        ) : bindings.length === 0 ? (
-          <EmptyCard
-            title="No MCP servers assigned"
-            description="Pick a library entry below to grant it to this agent."
-          />
-        ) : (
-          <div className="space-y-1.5">
-            {bindings.map((b) => (
-              <div
-                key={b.serverId}
-                className="flex items-center gap-3 rounded-xl border border-primary-200 bg-primary-50/90 px-3 py-2.5"
-              >
-                <Switch
-                  checked={b.enabled}
-                  disabled={busy}
-                  onCheckedChange={(checked) =>
-                    onToggle(b.serverId, Boolean(checked))
-                  }
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-ink">
-                    {b.name}
-                  </p>
-                  <p className="text-xs text-primary-500">{b.transport}</p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  disabled={busy}
-                  onClick={() => onRemove(b.serverId)}
-                >
-                  Remove
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div>
-        <h3 className="mb-2 text-sm font-medium text-ink">Add from library</h3>
-        {available.length === 0 ? (
-          <p className="text-sm text-primary-500">
-            {library.length === 0
-              ? 'Library is empty — add a server first.'
-              : 'All library servers are already assigned to this agent.'}
-          </p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {available.map((s) => (
-              <Button
-                key={s.id}
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={() => onAssign(s.id)}
-              >
-                + {s.name}
-              </Button>
-            ))}
-          </div>
-        )}
-      </div>
+    <div>
+      <h3 className="mb-2 text-sm font-medium text-ink">Add from library</h3>
+      {available.length === 0 ? (
+        <p className="text-sm text-primary-500">
+          {library.length === 0
+            ? 'Library is empty — add a server first.'
+            : 'All library servers are already assigned to this agent.'}
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {available.map((s) => (
+            <Button
+              key={s.id}
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => onAssign(s.id)}
+            >
+              + {s.name}
+            </Button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
 interface ServerListProps {
   query: ReturnType<typeof useMcpServers>
+  /** Hermes profile only — undefined for managed agents. */
+  profile?: string
   onEdit: (server: McpServer) => void
+  onOpenLogs?: (server: McpServer) => void
+  onRemove?: (server: McpServer) => void | Promise<void>
+  onEnabledChange?: (
+    server: McpServer,
+    enabled: boolean,
+  ) => void | Promise<void>
+  removePending?: boolean
 }
 
-function ServerList({ query, onEdit }: ServerListProps) {
+function ServerList({
+  query,
+  profile,
+  onEdit,
+  onOpenLogs,
+  onRemove,
+  onEnabledChange,
+  removePending,
+}: ServerListProps) {
   const servers = query.data?.servers ?? []
   if (query.isLoading) {
     return (
       <EmptyCard
         title="Loading servers…"
-        description="Fetching MCP servers from the active profile."
+        description="Fetching MCP servers installed on this agent."
       />
     )
   }
@@ -605,15 +689,24 @@ function ServerList({ query, onEdit }: ServerListProps) {
   if (servers.length === 0) {
     return (
       <EmptyCard
-        title="No MCP servers on this profile"
-        description="Assign from the Library on the Agents tab, or add a private server."
+        title="No MCP servers installed"
+        description="Assign a library entry below to grant it to this agent."
       />
     )
   }
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {servers.map((server) => (
-        <McpServerCard key={server.id} server={server} onEdit={onEdit} />
+        <McpServerCard
+          key={server.id}
+          server={server}
+          profile={profile}
+          onEdit={onEdit}
+          onOpenLogs={onOpenLogs}
+          onRemove={onRemove}
+          onEnabledChange={onEnabledChange}
+          removePending={removePending}
+        />
       ))}
     </div>
   )

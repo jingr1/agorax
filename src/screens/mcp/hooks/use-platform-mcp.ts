@@ -109,6 +109,7 @@ export function useAssignAgentMcp() {
     onSuccess: (_data, vars) => {
       void qc.invalidateQueries({ queryKey: ['agent-mcp', vars.agentId] })
       void qc.invalidateQueries({ queryKey: ['platform-mcp'] })
+      void qc.invalidateQueries({ queryKey: ['mcp', 'servers'] })
       void qc.invalidateQueries({ queryKey: ['operations'] })
     },
   })
@@ -134,6 +135,7 @@ export function useSetAgentMcpEnabled() {
     },
     onSuccess: (_data, vars) => {
       void qc.invalidateQueries({ queryKey: ['agent-mcp', vars.agentId] })
+      void qc.invalidateQueries({ queryKey: ['mcp', 'servers'] })
       void qc.invalidateQueries({ queryKey: ['operations'] })
     },
   })
@@ -152,6 +154,7 @@ export function useRemoveAgentMcp() {
     onSuccess: (_data, vars) => {
       void qc.invalidateQueries({ queryKey: ['agent-mcp', vars.agentId] })
       void qc.invalidateQueries({ queryKey: ['platform-mcp'] })
+      void qc.invalidateQueries({ queryKey: ['mcp', 'servers'] })
       void qc.invalidateQueries({ queryKey: ['operations'] })
     },
   })

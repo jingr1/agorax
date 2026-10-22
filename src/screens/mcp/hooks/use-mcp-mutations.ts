@@ -7,6 +7,13 @@ import type {
   McpToolMode,
 } from '@/types/mcp'
 
+function withProfile(path: string, profile?: string): string {
+  if (!profile?.trim()) return path
+  const url = new URL(path, window.location.origin)
+  url.searchParams.set('profile', profile.trim())
+  return `${url.pathname}${url.search}`
+}
+
 async function postJson<T>(
   path: string,
   body: unknown,
@@ -28,27 +35,39 @@ async function postJson<T>(
   return json
 }
 
-export function useTestMcpServer() {
-  return useMutation<McpTestResult, Error, { name: string } | McpClientInput>({
-    mutationFn: (payload) => postJson<McpTestResult>('/api/mcp/test', payload),
+export function useTestMcpServer(profile?: string) {
+  return useMutation<
+    McpTestResult,
+    Error,
+    ({ name: string } | McpClientInput) & { profile?: string }
+  >({
+    mutationFn: (payload) => {
+      const pin = payload.profile || profile
+      return postJson<McpTestResult>(withProfile('/api/mcp/test', pin), {
+        ...payload,
+        ...(pin ? { profile: pin } : {}),
+      })
+    },
   })
 }
 
-export function useDiscoverMcpTools() {
+export function useDiscoverMcpTools(profile?: string) {
   return useMutation<
     { ok: boolean; tools: Array<McpDiscoveredTool> },
     Error,
-    McpClientInput
+    McpClientInput & { profile?: string }
   >({
-    mutationFn: (payload) =>
-      postJson<{ ok: boolean; tools: Array<McpDiscoveredTool> }>(
-        '/api/mcp/discover',
-        payload,
-      ),
+    mutationFn: (payload) => {
+      const pin = payload.profile || profile
+      return postJson<{ ok: boolean; tools: Array<McpDiscoveredTool> }>(
+        withProfile('/api/mcp/discover', pin),
+        { ...payload, ...(pin ? { profile: pin } : {}) },
+      )
+    },
   })
 }
 
-export function useUpsertMcpServer() {
+export function useUpsertMcpServer(profile?: string) {
   const qc = useQueryClient()
   // Inline `& { bearerToken? }` keeps the secret-bearing shape unexported —
   // no client module re-exports a type containing `bearerToken` or
@@ -57,10 +76,15 @@ export function useUpsertMcpServer() {
   return useMutation<
     { ok: boolean; server: McpServer },
     Error,
-    McpClientInput & { bearerToken?: string }
+    McpClientInput & { bearerToken?: string; profile?: string }
   >({
-    mutationFn: (payload) =>
-      postJson<{ ok: boolean; server: McpServer }>('/api/mcp', payload),
+    mutationFn: (payload) => {
+      const pin = payload.profile || profile
+      return postJson<{ ok: boolean; server: McpServer }>(
+        withProfile('/api/mcp', pin),
+        { ...payload, ...(pin ? { profile: pin } : {}) },
+      )
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['mcp', 'servers'] }),
   })
 }
@@ -71,32 +95,40 @@ export interface ConfigureInput {
   toolMode?: McpToolMode
   includeTools?: Array<string>
   excludeTools?: Array<string>
+  profile?: string
 }
 
-export function useConfigureMcpServer() {
+export function useConfigureMcpServer(profile?: string) {
   const qc = useQueryClient()
   return useMutation<{ ok: boolean; server: McpServer }, Error, ConfigureInput>(
     {
-      mutationFn: (payload) =>
-        postJson<{ ok: boolean; server: McpServer }>(
-          '/api/mcp/configure',
-          payload,
+      mutationFn: (payload) => {
+        const pin = payload.profile || profile
+        return postJson<{ ok: boolean; server: McpServer }>(
+          withProfile('/api/mcp/configure', pin),
+          { ...payload, ...(pin ? { profile: pin } : {}) },
           'PUT',
-        ),
+        )
+      },
       onSuccess: () => qc.invalidateQueries({ queryKey: ['mcp', 'servers'] }),
     },
   )
 }
 
-export function useDeleteMcpServer() {
+export function useDeleteMcpServer(profile?: string) {
   const qc = useQueryClient()
-  return useMutation<{ ok: boolean }, Error, { name: string }>({
-    mutationFn: ({ name }) =>
-      postJson<{ ok: boolean }>(
-        `/api/mcp/${encodeURIComponent(name)}`,
-        null,
-        'DELETE',
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['mcp', 'servers'] }),
-  })
+  return useMutation<{ ok: boolean }, Error, { name: string; profile?: string }>(
+    {
+      mutationFn: ({ name, profile: payloadProfile }) =>
+        postJson<{ ok: boolean }>(
+          withProfile(
+            `/api/mcp/${encodeURIComponent(name)}`,
+            payloadProfile || profile,
+          ),
+          null,
+          'DELETE',
+        ),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ['mcp', 'servers'] }),
+    },
+  )
 }

@@ -7,7 +7,7 @@ import { isAuthenticated } from '../../server/auth-middleware'
 import {
   BEARER_TOKEN,
   HERMES_API,
-  CLAUDE_UPGRADE_INSTRUCTIONS,
+  HERMES_UPGRADE_INSTRUCTIONS,
   ensureGatewayProbed,
 } from '../../server/gateway-capabilities'
 import {
@@ -25,13 +25,13 @@ function authHeaders(): Record<string, string> {
 function notSupported(): Response {
   return new Response(
     JSON.stringify({
-      error: `Gateway does not support /api/jobs. ${CLAUDE_UPGRADE_INSTRUCTIONS}`,
+      error: `Gateway does not support /api/jobs. ${HERMES_UPGRADE_INSTRUCTIONS}`,
     }),
     { status: 404, headers: { 'Content-Type': 'application/json' } },
   )
 }
 
-export const Route = createFileRoute('/api/claude-jobs/$jobId')({
+export const Route = createFileRoute('/api/hermes-jobs/$jobId')({
   server: {
     handlers: {
       GET: async ({ request, params }) => {

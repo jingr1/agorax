@@ -6,7 +6,7 @@ import { isAuthenticated } from '../../server/auth-middleware'
 import {
   BEARER_TOKEN,
   HERMES_API,
-  CLAUDE_UPGRADE_INSTRUCTIONS,
+  HERMES_UPGRADE_INSTRUCTIONS,
   ensureGatewayProbed,
 } from '../../server/gateway-capabilities'
 import {
@@ -49,7 +49,7 @@ async function jobsResponse(res: Response): Promise<Response> {
   }
 }
 
-export const Route = createFileRoute('/api/claude-jobs')({
+export const Route = createFileRoute('/api/hermes-jobs')({
   server: {
     handlers: {
       GET: async ({ request }) => {
@@ -128,7 +128,7 @@ export const Route = createFileRoute('/api/claude-jobs')({
           return new Response(
             JSON.stringify({
               ...createCapabilityUnavailablePayload('jobs', {
-                error: `Gateway does not support /api/jobs. ${CLAUDE_UPGRADE_INSTRUCTIONS}`,
+                error: `Gateway does not support /api/jobs. ${HERMES_UPGRADE_INSTRUCTIONS}`,
               }),
             }),
             { status: 503, headers: { 'Content-Type': 'application/json' } },

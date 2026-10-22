@@ -54,7 +54,6 @@ import { cn } from '@/lib/utils'
 import { applyTheme, useSettingsStore } from '@/hooks/use-settings'
 import { setTheme, type ThemeId } from '@/lib/theme'
 import { openHamburgerMenu } from '@/components/mobile-hamburger-menu'
-import { useFeatureAvailable } from '@/hooks/use-feature-available'
 
 // `IconSvgObject` isn't exported from @hugeicons/react; reuse the
 // inferred type from a real icon import for prop typing.
@@ -420,41 +419,29 @@ function SkillsWidget({
   onOpen: () => void
   usage: DashboardOverview['skillsUsage']
 }) {
-  const skillsAvailable = useFeatureAvailable('skills')
   const skillsQuery = useQuery({
-    queryKey: ['claude-skills'],
+    queryKey: ['platform-skills', 'dashboard-widget'],
     queryFn: async () => {
-      const res = await fetch(
-        '/api/skills?tab=installed&limit=200&summary=search',
-      )
+      const res = await fetch('/api/platform-skills')
       if (!res.ok) return []
       const data = await res.json()
       return (data?.skills ?? []) as Array<Record<string, unknown>>
     },
     staleTime: 30_000,
-    enabled: skillsAvailable,
   })
 
   const skills = skillsQuery.data ?? []
 
-  if (!skillsAvailable) {
-    return (
-      <UnavailableWidget
-        title="Skills"
-        description={getUnavailableReason('skills')}
-      />
-    )
-  }
-
-  // Summary view per Hermes Agent feedback: 'don’t enumerate, summarise.'
-  // Prefer real usage signal from /api/analytics/usage when present
-  // (counts what the agent *actually used*, not just what's installed).
+  // Summary: platform catalog size + bindings; usage still from overview.
   const installed = skills.length
-  const enabled = skills.filter((s) => s.enabled !== false).length
+  const enabled = skills.filter(
+    (s) => Number(s.boundAgentCount ?? 0) > 0,
+  ).length
   const usedThisWindow = usage?.distinctSkills ?? null
   const topUsed = usage?.topSkills[0]
-  const topInstalled = skills.find((s) => s.enabled !== false) ?? skills.at(0)
-  const topName = topUsed?.skill ?? String(topInstalled?.name ?? '—')
+  const topBound =
+    skills.find((s) => Number(s.boundAgentCount ?? 0) > 0) ?? skills.at(0)
+  const topName = topUsed?.skill ?? String(topBound?.name ?? '—')
 
   return (
     <button
@@ -666,7 +653,6 @@ function SessionRow({
 
 export function DashboardScreen() {
   const navigate = useNavigate()
-  const skillsAvailable = useFeatureAvailable('skills')
   const sessionsQuery = useQuery({
     // Use a dedicated query key — NOT chatQueryKeys.sessions — to avoid
     // cache collisions with the chat sidebar which fetches fewer sessions
@@ -795,14 +781,11 @@ export function DashboardScreen() {
     return max
   }, [recentSessions])
 
-  // Skills count for the SkillsUsageCard sub-text. Cheap query, used
-  // only for the "X of Y used" microcopy.
+  // Skills count for the SkillsUsageCard sub-text. Platform catalog size.
   const skillsCountQuery = useQuery({
     queryKey: ['dashboard', 'skills-count'],
     queryFn: async () => {
-      const res = await fetch(
-        '/api/skills?tab=installed&limit=200&summary=search',
-      )
+      const res = await fetch('/api/platform-skills')
       if (!res.ok) return 0
       const data = (await res.json()) as {
         skills?: Array<unknown>
@@ -810,7 +793,6 @@ export function DashboardScreen() {
       return data.skills?.length ?? 0
     },
     staleTime: 60_000,
-    enabled: skillsAvailable,
   })
   const skillsInstalled = skillsCountQuery.data ?? 0
 
@@ -1030,7 +1012,6 @@ export function DashboardScreen() {
               label="Skills"
               icon={PuzzleIcon}
               onClick={() => navigate({ to: '/skills' })}
-              disabled={!skillsAvailable}
             />
             {/* Edit toggle: enters "layout edit mode" where each widget
               shows an X button and a banner appears for re-adding
