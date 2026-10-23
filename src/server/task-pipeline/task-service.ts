@@ -34,6 +34,10 @@ import { createRoom, getRoom, updateRoom } from '../group-chat/room-store'
 import type { PipelineTemplate } from './pipeline-templates'
 import type { SwarmMission } from '../swarm-missions'
 import type { KanbanLane } from './lane-sync'
+import {
+  missionDetailUrl,
+  workspaceLoopbackBaseUrl,
+} from './mission-spec-freshness'
 
 type CreateMissionBase = {
   title: string
@@ -80,8 +84,7 @@ export type CreatedTask = CreatedMission
 
 /** Loopback Workspace base URL for orchestrator curl dispatch. */
 export function workspaceDispatchBaseUrl(): string {
-  const port = process.env.PORT ?? process.env.VITE_PORT ?? '6734'
-  return `http://127.0.0.1:${port}`
+  return workspaceLoopbackBaseUrl()
 }
 
 function newMissionId(): string {
@@ -104,6 +107,7 @@ export function buildAssigneeTaskInstruction(input: {
     input.acceptanceCriteria && input.acceptanceCriteria.length > 0
       ? input.acceptanceCriteria.map((c) => `- ${c}`)
       : ['- (none declared)']
+  const missionUrl = missionDetailUrl(input.missionId)
   const base = [
     `# Mission: ${input.title}`,
     '',
@@ -114,6 +118,16 @@ export function buildAssigneeTaskInstruction(input: {
     '',
     '## Acceptance criteria',
     ...criteria,
+    '',
+    '## Spec freshness',
+    'The Spec above is a snapshot from mission create/update time.',
+    'If the human may have edited the mission since, refresh before acting:',
+    '',
+    '```bash',
+    `curl -sS '${missionUrl}'`,
+    '```',
+    '',
+    'Treat API `title` / `spec` / `acceptanceCriteria` as authoritative when they differ from this snapshot.',
   ]
   if (input.assigneeId !== 'orchestrator') {
     return base.join('\n')

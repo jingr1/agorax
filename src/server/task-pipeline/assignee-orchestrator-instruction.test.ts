@@ -45,4 +45,18 @@ describe('buildAssigneeTaskInstruction', () => {
     expect(text).not.toContain('Orchestrator dispatch contract')
     expect(text).not.toContain('/api/swarm-dispatch')
   })
+
+  it('includes Spec freshness curl for every assignee', () => {
+    process.env.PORT = '6734'
+    const text = buildAssigneeTaskInstruction({
+      missionId: 'mission-fresh',
+      title: 'T',
+      spec: 'S',
+      assigneeId: 'developer',
+    })
+    expect(text).toContain('## Spec freshness')
+    expect(text).toContain(
+      `${workspaceDispatchBaseUrl()}/api/missions/mission-fresh`,
+    )
+  })
 })

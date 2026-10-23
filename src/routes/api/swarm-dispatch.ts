@@ -40,6 +40,10 @@ import {
   rewriteLegacyOutputPathsInText,
 } from '../../server/swarm-mission-artifacts'
 import {
+  hasMissionSpecFreshnessHint,
+  missionDetailUrl,
+} from '../../server/task-pipeline/mission-spec-freshness'
+import {
   buildHermesTmuxShellCommand,
   buildHermesTmuxTuiCommand,
   resolveTmuxTransportMode,
@@ -688,6 +692,16 @@ export function buildWorkerPrompt(input: {
   lines.push('## Assigned Task', taskText, '')
   if (missionId) {
     lines.push(buildMissionArtifactInstructions(missionId, input.workerId), '')
+    if (!hasMissionSpecFreshnessHint(taskText)) {
+      const missionUrl = missionDetailUrl(missionId)
+      lines.push(
+        '## Mission Spec freshness',
+        'Assigned Task text may lag human edits to the mission Spec.',
+        `Refresh authoritative title/spec/acceptanceCriteria with: curl -sS '${missionUrl}'`,
+        'Prefer the API payload when it differs from the Assigned Task Spec section.',
+        '',
+      )
+    }
   }
   lines.push(
     '## Operating Rules',

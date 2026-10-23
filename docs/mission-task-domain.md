@@ -38,6 +38,10 @@
 - **assignee + agent**: single Task, auto-dispatch
 - **assignee + chat_group**: bind existing room, or create a new room when `id` is empty; no auto-decompose
 - Room: created only via manual «Create room» (`ensureRoomForMission` → writes `roomId`)
+- **Agent Spec access:**
+  - Pipeline / assignee Task prompts embed Spec at create time, plus a **Spec freshness** curl to `GET /api/missions/:id` (authoritative after human edits)
+  - Hermes swarm-dispatch wrapper and managed `startRun` also attach the freshness hint when missing
+  - Mission-bound group-chat turns inject a live **Bound mission** block (title / Spec / AC / refresh URL) via `buildTurnContext` — Spec is not only workspace path
 - Optional `projectId` — 详见 project 合同
 - Primary key: `mission.id`（API / UI 一律用 `missionId`）
 

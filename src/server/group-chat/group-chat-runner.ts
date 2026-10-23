@@ -43,8 +43,13 @@ import {
   updateRoom,
 } from './room-store'
 import { executeMemberTurn } from './turn-executor'
-import { buildTurnContext } from './prompt-builder'
+import {
+  buildTurnContext,
+  type MissionPromptContext,
+} from './prompt-builder'
 import { resolveRoomCwd } from './resolve-room-cwd'
+import { getSwarmMission } from '../swarm-missions'
+import { missionDetailUrl } from '../task-pipeline/mission-spec-freshness'
 import {
   expandMentionTargets,
   groupMemberKey,
@@ -726,6 +731,23 @@ async function runGroupChatRounds(
   finishDrive(room, members, exitKind)
 }
 
+function missionPromptContextForRoom(
+  room: Room,
+): MissionPromptContext | null {
+  const missionId = room.missionId?.trim()
+  if (!missionId) return null
+  const mission = getSwarmMission(missionId)
+  if (!mission) return null
+  return {
+    id: mission.id,
+    title: mission.title,
+    spec: mission.spec ?? '',
+    acceptanceCriteria: mission.acceptanceCriteria ?? [],
+    specVersion: mission.specVersion ?? null,
+    refreshUrl: missionDetailUrl(mission.id),
+  }
+}
+
 async function runMemberTurn(
   room: Room,
   member: GroupMember,
@@ -741,6 +763,7 @@ async function runMemberTurn(
     delta,
     summary,
     cwd,
+    missionPromptContextForRoom(room),
   )
 
   publishChatEvent('group_chat_turn_started', {

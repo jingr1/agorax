@@ -31,6 +31,7 @@ import {
 } from '../git-ops'
 import { countRunningRunsForAgent } from '../mcp/task-runs'
 import { detectExecutionFromProfile, getProfileSshHost } from './agents-config'
+import { appendMissionSpecFreshnessHint } from '../task-pipeline/mission-spec-freshness'
 
 export type DispatchResult =
   | { ok: true; runId: string; assignmentId: string }
@@ -229,7 +230,7 @@ export async function dispatchAssignment(input: {
     await adapter.startRun({
       runId,
       agentId,
-      task: assignment.task,
+      task: appendMissionSpecFreshnessHint(assignment.task, mission.id),
       cwd,
       roomId: input.roomId ?? null,
       taskId: mission.id,

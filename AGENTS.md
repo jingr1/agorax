@@ -117,6 +117,7 @@ orchestrator → researcher → architect → (developer | writer) → architect
 
 - managed（claude-code）：`startRun({ cwd })`
 - Hermes：**只把路径写进 turn prompt**（如 `Room workspace: …`），**不**在群聊 turn 里改 profile 全局 workspace（避免跨房间互踩与每轮切换成本）
+- 绑定 `missionId` 的房间：`buildTurnContext` 每轮注入 live **Bound mission** 块（title / Spec / acceptanceCriteria + `GET /api/missions/:id` refresh URL）；长 Spec 截断后靠 API 拉全量
 
 API 要点：
 

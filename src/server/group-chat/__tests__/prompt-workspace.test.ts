@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   buildGroupChatTurnPrompt,
   buildTurnContext,
+  formatMissionContextBlock,
+  MISSION_SPEC_INLINE_MAX,
 } from '../prompt-builder'
 import type { GroupMember, RoomMessage } from '../types'
 
@@ -99,5 +101,62 @@ describe('prompt-builder workspace injection', () => {
     expect(prompt).toMatch(/not you/i)
     expect(prompt).toContain('Kimi-K2.7-Code: Token-X quota exhausted')
     expect(prompt).toContain('agent_id=kimi-impl')
+  })
+
+  it('injects bound mission Spec into the turn prompt', () => {
+    const prompt = buildGroupChatTurnPrompt({
+      groupName: 'Mission room',
+      members: [member('developer')],
+      viewer: member('developer'),
+      deltaLines: ['user: start'],
+      mission: {
+        id: 'mission-1',
+        title: 'Ship login',
+        spec: 'Fix OAuth redirect',
+        acceptanceCriteria: ['tests pass'],
+        specVersion: 2,
+        refreshUrl: 'http://127.0.0.1:6734/api/missions/mission-1',
+      },
+    })
+    expect(prompt).toContain('[Bound mission]')
+    expect(prompt).toContain('Ship login')
+    expect(prompt).toContain('id=mission-1')
+    expect(prompt).toContain('Fix OAuth redirect')
+    expect(prompt).toContain('tests pass')
+    expect(prompt).toContain('/api/missions/mission-1')
+    expect(prompt).toContain('Bound mission Spec')
+  })
+
+  it('buildTurnContext forwards mission context', () => {
+    const prompt = buildTurnContext(
+      'Room',
+      [member('a')],
+      member('a'),
+      [],
+      null,
+      '/ws',
+      {
+        id: 'mission-x',
+        title: 'T',
+        spec: 'Do the thing',
+        acceptanceCriteria: [],
+      },
+    )
+    expect(prompt).toContain('Do the thing')
+    expect(prompt).toContain('Room workspace: /ws')
+  })
+
+  it('truncates very long Spec and points at refresh URL', () => {
+    const long = 'x'.repeat(MISSION_SPEC_INLINE_MAX + 50)
+    const block = formatMissionContextBlock({
+      id: 'm',
+      title: 'Long',
+      spec: long,
+      refreshUrl: 'http://127.0.0.1:6734/api/missions/m',
+    })
+    expect(block).toContain('truncated')
+    expect(block).not.toContain(long)
+    expect(block).toContain('x'.repeat(MISSION_SPEC_INLINE_MAX))
+    expect(block).toContain('/api/missions/m')
   })
 })

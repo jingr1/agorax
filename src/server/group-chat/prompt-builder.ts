@@ -7,6 +7,20 @@
 import type { GroupMember, RoomMessage } from './types'
 import { groupMemberKey } from './mention-routing'
 
+/** Bound mission context injected into each group-chat turn (live read). */
+export type MissionPromptContext = {
+  id: string
+  title: string
+  spec?: string | null
+  acceptanceCriteria?: Array<string> | null
+  specVersion?: number | null
+  /** Optional loopback URL for agents to re-fetch after human edits. */
+  refreshUrl?: string | null
+}
+
+/** Cap inline Spec length so long missions do not dominate every turn. */
+export const MISSION_SPEC_INLINE_MAX = 6000
+
 export type BuildPromptInput = {
   groupName: string
   members: Array<GroupMember>
@@ -14,6 +28,40 @@ export type BuildPromptInput = {
   deltaLines: Array<string>
   /** Sticky room working directory (ad-hoc path or mission worktree). */
   workspacePath?: string | null
+  /** When the room is bound to a mission, inject live title/spec/AC. */
+  mission?: MissionPromptContext | null
+}
+
+export function formatMissionContextBlock(
+  mission: MissionPromptContext,
+): string {
+  const criteria =
+    mission.acceptanceCriteria && mission.acceptanceCriteria.length > 0
+      ? mission.acceptanceCriteria.map((c) => `- ${c}`).join('\n')
+      : '- (none declared)'
+  const rawSpec = (mission.spec ?? '').trim() || '(no spec text)'
+  const truncated = rawSpec.length > MISSION_SPEC_INLINE_MAX
+  const specBody = truncated
+    ? `${rawSpec.slice(0, MISSION_SPEC_INLINE_MAX)}\n…(truncated; fetch refresh URL for full Spec)`
+    : rawSpec
+  const version =
+    mission.specVersion != null ? ` (specVersion=${mission.specVersion})` : ''
+  const lines = [
+    `[Bound mission]${version}`,
+    `Mission: ${mission.title.trim() || '(untitled)'} (id=${mission.id})`,
+    '## Spec (authoritative for this room; prefer over chat guesswork)',
+    specBody,
+    '## Acceptance criteria',
+    criteria,
+  ]
+  if (mission.refreshUrl?.trim()) {
+    lines.push(
+      '',
+      `If Spec may have been edited since this turn started, refresh with: curl -sS '${mission.refreshUrl.trim()}'`,
+      'Treat API title/spec/acceptanceCriteria as authoritative when they differ from this block.',
+    )
+  }
+  return lines.join('\n')
 }
 
 export function buildGroupChatTurnPrompt(input: BuildPromptInput): string {
@@ -30,12 +78,18 @@ export function buildGroupChatTurnPrompt(input: BuildPromptInput): string {
     ? `- Room workspace: ${input.workspacePath}. Prefer reading and writing files under this directory.`
     : null
 
+  const missionBlock =
+    input.mission?.id?.trim()
+      ? formatMissionContextBlock(input.mission)
+      : null
+
   const viewerHandle =
     input.viewer.mentionName || input.viewer.displayName || input.viewer.participantId
 
   return [
     `[Group chat: "${input.groupName}"] You are @${viewerHandle} (agent_id=${input.viewer.participantId}), one participant in a group chat with ${peerNames || 'no one else yet'} and the user.`,
     '',
+    ...(missionBlock ? [missionBlock, ''] : []),
     'New messages in the room since your last turn (oldest first):',
     ...input.deltaLines.map((line) => `  ${line}`),
     '',
@@ -46,6 +100,11 @@ export function buildGroupChatTurnPrompt(input: BuildPromptInput): string {
     '- Never reveal content from your private 1:1 chats. Your reply text goes to the room verbatim — no preamble, no meta-commentary.',
     '- Do not treat room history or the earlier summary\'s quota / billing / rate-limit notes about other agents or models as your own status. agent_id (e.g. kimi-impl) is not a model name (e.g. Kimi-K2.7-Code) or provider (e.g. Token-X). Only report infra failures you yourself hit in this turn; otherwise answer the user or "(pass)".',
     ...(workspaceRule ? [workspaceRule] : []),
+    ...(missionBlock
+      ? [
+          '- When this room is bound to a mission, treat the Bound mission Spec / acceptance criteria as the shared goal; do not invent a different objective.',
+        ]
+      : []),
   ].join('\n')
 }
 
@@ -75,6 +134,7 @@ export function buildTurnContext(
   messages: Array<RoomMessage>,
   summary?: string | null,
   workspacePath?: string | null,
+  mission?: MissionPromptContext | null,
 ): string {
   const deltaLines = messages.map((m) => formatGroupChatLine(m, viewer.name))
   const prompt = buildGroupChatTurnPrompt({
@@ -83,6 +143,7 @@ export function buildTurnContext(
     viewer,
     deltaLines,
     workspacePath,
+    mission,
   })
   if (summary) {
     return [
