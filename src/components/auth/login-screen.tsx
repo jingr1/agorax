@@ -129,12 +129,12 @@ export function LoginScreen() {
         >
           Powered by{' '}
           <a
-            href="https://github.com/NousResearch/hermes-agent"
+            href="https://github.com/jingr1/agorax"
             target="_blank"
             rel="noopener noreferrer"
             className="text-accent-500 hover:text-accent-600 transition-colors"
           >
-            Hermes Agent
+            Agorax
           </a>
         </p>
       </div>
