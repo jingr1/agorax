@@ -33,7 +33,9 @@
     "electron:build:win": "pnpm build && pnpm electron:bundle-server && electron-builder --win --publish never --config electron-builder.config.cjs",
     "electron:build:linux": "pnpm build && pnpm electron:bundle-server && electron-builder --linux --publish never --config electron-builder.config.cjs",
     "electron:bundle-server": "esbuild dist/server/server.js --bundle --platform=node --format=cjs --outfile=electron/server-bundle.cjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "tsx node_modules/@cucumber/cucumber/bin/cucumber.js --config e2e/cucumber.config.js",
+    "test:e2e:smoke": "pnpm test:e2e --tags @smoke",
+    "test:e2e:soak": "tsx node_modules/@cucumber/cucumber/bin/cucumber.js --config e2e/cucumber.soak.config.js"
   },
   "dependencies": {
     "@agorax/agent-activity-core": "workspace:*",
@@ -94,6 +96,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@cucumber/cucumber": "^12.2.0",
     "@tanstack/eslint-config": "0.3.4",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.2.0",
