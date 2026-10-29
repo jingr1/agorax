@@ -46,6 +46,7 @@
 
 ---
 
+### 6. 集成 https://github.com/xingkongliang/skills-manager 功能，特别是一端修改，多端同步
 
 
 ## 🟡 中优先
