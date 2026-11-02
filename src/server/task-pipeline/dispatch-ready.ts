@@ -22,7 +22,13 @@ import {
 // Side-effect: register the swarm-path review verdict hook. review.ts is not
 // naturally imported by the hermes/swarm checkpoint path; pulling it in here
 // (dispatch-ready is imported by swarm-dispatch/task-service) wires it up.
-import { markTaskRunning, releaseTaskClaim } from './task-scheduler'
+import {
+  claimTask,
+  completeTaskClaim,
+  markTaskRunning,
+  releaseTaskClaim,
+} from './task-scheduler'
+import type { TaskDispatchClaim } from './task-scheduler'
 
 // Production Mission MCP → assignment advance: task_complete drives the next
 // ready stage. Idempotent; tests may reinstall with custom dispatchNext.
@@ -68,7 +74,16 @@ async function syncCardLane(_missionId: string): Promise<void> {
 export async function dispatchReadyAssignments(
   missionId: string,
 ): Promise<DispatchReadyResult> {
-  const ready = readyQueuedAssignments(missionId)
+  const claims = new Map<string, TaskDispatchClaim>()
+  const ready = readyQueuedAssignments(missionId).filter((assignment) => {
+    const nodeId = getAgentRuntimeRouter().registry.byId.get(
+      assignment.workerId,
+    )?.nodeId
+    const claim = claimTask({ missionId, assignmentId: assignment.id, nodeId })
+    if (!claim) return false
+    claims.set(assignment.id, claim)
+    return true
+  })
   if (ready.length === 0) {
     return { ok: true, dispatched: [] }
   }
@@ -126,6 +141,7 @@ export async function dispatchReadyAssignments(
       const result = await dispatchAssignment({
         missionId,
         assignmentId: assignment.id,
+        schedulerClaim: claims.get(assignment.id),
       })
       dispatched.push({
         assignmentId: assignment.id,
@@ -169,26 +185,32 @@ export async function dispatchReadyAssignments(
  */
 const continuationInFlight = new Set<string>()
 
-setOnCheckpointTerminalHook(({ missionId, checkpoint, source }) => {
-  if (source === 'mcp') return
-  if (checkpoint.stateLabel !== 'DONE' && checkpoint.stateLabel !== 'HANDOFF') {
-    return
-  }
-  const mission = getSwarmMission(missionId)
-  if (!mission?.pipelineId) return
-  if (continuationInFlight.has(missionId)) return
-
-  continuationInFlight.add(missionId)
-  void (async () => {
-    try {
-      await dispatchReadyAssignments(missionId)
-    } catch (error) {
-      console.error(
-        `[dispatch-ready] checkpoint continuation failed for ${missionId}:`,
-        error instanceof Error ? error.message : String(error),
-      )
-    } finally {
-      continuationInFlight.delete(missionId)
+setOnCheckpointTerminalHook(
+  ({ missionId, assignmentId, checkpoint, source }) => {
+    completeTaskClaim(assignmentId)
+    if (source === 'mcp') return
+    if (
+      checkpoint.stateLabel !== 'DONE' &&
+      checkpoint.stateLabel !== 'HANDOFF'
+    ) {
+      return
     }
-  })()
-})
+    const mission = getSwarmMission(missionId)
+    if (!mission?.pipelineId) return
+    if (continuationInFlight.has(missionId)) return
+
+    continuationInFlight.add(missionId)
+    void (async () => {
+      try {
+        await dispatchReadyAssignments(missionId)
+      } catch (error) {
+        console.error(
+          `[dispatch-ready] checkpoint continuation failed for ${missionId}:`,
+          error instanceof Error ? error.message : String(error),
+        )
+      } finally {
+        continuationInFlight.delete(missionId)
+      }
+    })()
+  },
+)

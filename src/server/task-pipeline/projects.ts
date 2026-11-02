@@ -11,6 +11,7 @@ import * as YAML from 'yaml'
 
 export type ProjectRemote = {
   host: string
+  nodeId?: string
   repo: string
   worktreeRoot: string
   setup: Array<string>
@@ -169,6 +170,7 @@ export function loadProjectsFile(input?: {
         }
         remotes.push({
           host,
+          nodeId: rr.nodeId ? String(rr.nodeId) : undefined,
           repo: remoteRepo,
           worktreeRoot: remoteWorktreeRoot,
           setup: Array.isArray(rr.setup) ? rr.setup.map(String) : setup,

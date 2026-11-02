@@ -20,6 +20,11 @@ export async function probeManagedAgentDaemonHealth(
   const url = `${baseUrl.replace(/\/$/, '')}/health`
   try {
     const response = await fetch(url, {
+      headers: process.env.AGORAX_MANAGED_AGENT_TOKEN?.trim()
+        ? {
+            Authorization: `Bearer ${process.env.AGORAX_MANAGED_AGENT_TOKEN.trim()}`,
+          }
+        : undefined,
       signal: AbortSignal.timeout(2_000),
     })
     return response.ok
@@ -30,10 +35,7 @@ export async function probeManagedAgentDaemonHealth(
 
 function workspaceRoot(): string {
   // routes/api → src/routes/api → … this file lives under src/server/agent-runtime
-  return path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '../../..',
-  )
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 }
 
 async function pathExists(filePath: string): Promise<boolean> {

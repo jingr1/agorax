@@ -1,14 +1,9 @@
-import {
-  copyFileSync,
-  existsSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs'
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as yaml from 'yaml'
 import { z } from 'zod'
-import { AGORAX_MANAGED_AGENT_BACKENDS } from '@/lib/managed-agent-runtime/agent-targets'
 import { SWARM_CANONICAL_REPO } from './swarm-environment'
+import { AGORAX_MANAGED_AGENT_BACKENDS } from '@/lib/managed-agent-runtime/agent-targets'
 
 /** Local registry (gitignored). Seeded from agents.yaml.example. */
 export const SWARM_ROSTER_PATH = join(SWARM_CANONICAL_REPO, 'agents.yaml')
@@ -34,6 +29,7 @@ const WorkerIdSchema = z
 
 export const SwarmRosterWorkerSchema = z.object({
   id: WorkerIdSchema,
+  nodeId: WorkerIdSchema.optional(),
   name: z.string().default(''),
   role: z.string().default('Worker'),
   specialty: z.string().default(''),
@@ -193,10 +189,7 @@ export function ensureAgentsYamlFromExample(
   return true
 }
 
-function parseRosterAt(
-  filePath: string,
-  ids: Array<string> = [],
-): SwarmRoster {
+function parseRosterAt(filePath: string, ids: Array<string> = []): SwarmRoster {
   const parsed = parseRosterFile(filePath)
   if (!parsed) return fallbackRoster(ids)
   const byId = new Map(parsed.workers.map((worker) => [worker.id, worker]))
@@ -264,7 +257,9 @@ export function writeSwarmRoster(
   )
 }
 
-function sortWorkers(workers: Array<SwarmRosterWorker>): Array<SwarmRosterWorker> {
+function sortWorkers(
+  workers: Array<SwarmRosterWorker>,
+): Array<SwarmRosterWorker> {
   return [...workers].sort((a, b) => {
     const na = parseInt(a.id.replace(/\D/g, ''), 10) || 0
     const nb = parseInt(b.id.replace(/\D/g, ''), 10) || 0

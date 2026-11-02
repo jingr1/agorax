@@ -69,6 +69,7 @@ afterEach(() => {
   vi.doUnmock('../swarm-environment')
   vi.doUnmock('../../server/swarm-environment')
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   try {
     rmSync(tempRoot, { recursive: true, force: true })
   } catch {
@@ -77,6 +78,58 @@ afterEach(() => {
 })
 
 describe('P1.3 end-to-end dispatch → MCP → advance', () => {
+  it('rejects a remote node when MCP is only reachable on loopback', async () => {
+    vi.stubEnv('HERMES_MCP_ENDPOINT', '')
+    const { missions, dispatch, routerMod } = await loadModules()
+    const startRun = vi.fn(async () => ({ runId: 'unexpected' }))
+    const router = new routerMod.AgentRuntimeRouter({
+      rawYaml: `
+version: 1
+agents:
+  - id: remote-dev
+    runtime: claude-code
+    command: claude
+    nodeId: builder-1
+`,
+      executionNodeResolver: (nodeId) => ({
+        id: nodeId,
+        name: 'Builder',
+        baseUrl: 'https://builder.example',
+        workspaceId: 'default',
+        status: 'online',
+        capabilities: [],
+        lastSeenAt: Date.now(),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+      executionNodeTransportFactory: () => ({
+        probe: async () => ({ available: true }),
+        startRun,
+        streamEvents: () => (async function* () {})(),
+        interrupt: async () => undefined,
+      }),
+    })
+    routerMod.setAgentRuntimeRouterForTests(router)
+    const mission = missions.createOrUpdateMission({
+      missionId: 'mission-remote-loopback',
+      title: 'Remote mission',
+      assignments: [
+        { workerId: 'remote-dev', task: 'remote work', reviewRequired: false },
+      ],
+    })
+
+    await expect(
+      dispatch.dispatchAssignment({
+        missionId: mission.id,
+        assignmentId: mission.assignments[0].id,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('cannot reach loopback MCP endpoint'),
+    })
+    expect(startRun).not.toHaveBeenCalled()
+  })
+
   it('full loop: dispatch → task_start → task_complete → assignment checkpointed → next stage dispatched', async () => {
     const { handler, missions, dispatch, advance, routerMod, runTokens } =
       await loadModules()

@@ -10,19 +10,21 @@
  * fallback — without AGORAX_MANAGED_AGENT_URL the slot is unavailable.
  */
 import { existsSync, statSync } from 'node:fs'
-import {
-  getAgentsYamlPath,
-  loadAgentsRegistry,
-} from './agents-config'
-import type { AgentDeclaration, AgentsRegistry } from './agents-config'
-import type { AgentProbeResult, AgentRuntimeAdapter } from './types'
+import { getExecutionNode } from '../execution-nodes'
+import { getAgentsYamlPath, loadAgentsRegistry } from './agents-config'
 import { probeHermesProfileGateway } from './hermes-gateway-probe'
 import {
   AgoraxManagedAgentBridge,
-  type AgoraxManagedAgentTransport,
   isAgoraxManagedAgentBackend,
 } from './agorax-managed-agent-bridge'
-import { createAgoraxManagedAgentTransportFromEnv } from './agorax-managed-agent-transport'
+import {
+  createAgoraxManagedAgentTransport,
+  createAgoraxManagedAgentTransportFromEnv,
+} from './agorax-managed-agent-transport'
+import type { AgoraxManagedAgentTransport } from './agorax-managed-agent-bridge'
+import type { ExecutionNode } from '../execution-nodes'
+import type { AgentProbeResult, AgentRuntimeAdapter } from './types'
+import type { AgentDeclaration, AgentsRegistry } from './agents-config'
 
 /** Read-only stand-in for hermes-runtime agents (they are not spawned here). */
 class HermesAdapterStub implements AgentRuntimeAdapter {
@@ -90,17 +92,35 @@ export class AgentRuntimeRouter {
     repoRoot?: string
     rawYaml?: string
     agoraxManagedTransport?: AgoraxManagedAgentTransport
+    executionNodeResolver?: (nodeId: string) => ExecutionNode | null
+    executionNodeTransportFactory?: (
+      node: ExecutionNode,
+    ) => AgoraxManagedAgentTransport
   }) {
     const agoraxManagedTransport =
       input?.agoraxManagedTransport ??
       createAgoraxManagedAgentTransportFromEnv() ??
       undefined
     this.registry = loadAgentsRegistry(input)
+    const nodeTransports = new Map<string, AgoraxManagedAgentTransport>()
+    const resolveNode = input?.executionNodeResolver ?? getExecutionNode
+    const createNodeTransport =
+      input?.executionNodeTransportFactory ?? createTransportForExecutionNode
     for (const decl of this.registry.agents) {
-      this.adapters.set(
-        decl.id,
-        this.buildAdapter(decl, agoraxManagedTransport),
-      )
+      let transport = agoraxManagedTransport
+      if (decl.nodeId) {
+        const node = resolveNode(decl.nodeId)
+        if (node && executionNodeIsFresh(node)) {
+          transport = nodeTransports.get(node.id)
+          if (!transport) {
+            transport = createNodeTransport(node)
+            nodeTransports.set(node.id, transport)
+          }
+        } else {
+          transport = undefined
+        }
+      }
+      this.adapters.set(decl.id, this.buildAdapter(decl, transport))
     }
   }
 
@@ -127,7 +147,9 @@ export class AgentRuntimeRouter {
         }
         return new UnavailableAdapter(
           decl,
-          'Agorax Managed Agent transport is not configured',
+          decl.nodeId
+            ? `Execution node ${decl.nodeId} is missing or offline`
+            : 'Agorax Managed Agent transport is not configured',
         )
       default:
         if (UNSUPPORTED_RUNTIMES.has(decl.runtime)) {
@@ -211,6 +233,27 @@ export class AgentRuntimeRouter {
 
     return this.probeAllInflight
   }
+}
+
+function executionNodeIsFresh(node: ExecutionNode): boolean {
+  if (node.status !== 'online' || node.lastSeenAt === null) return false
+  const staleMs = Number(process.env.AGORAX_EXECUTION_NODE_STALE_MS) || 45_000
+  return node.lastSeenAt >= Date.now() - staleMs
+}
+
+function nodeTokenEnvironmentKey(nodeId: string): string {
+  return `AGORAX_EXECUTION_NODE_TOKEN_${nodeId.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`
+}
+
+function createTransportForExecutionNode(
+  node: ExecutionNode,
+): AgoraxManagedAgentTransport {
+  const token = process.env[nodeTokenEnvironmentKey(node.id)]?.trim()
+  return createAgoraxManagedAgentTransport({
+    baseUrl: node.baseUrl,
+    workspaceId: node.workspaceId,
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  })
 }
 
 // ─── Singleton (HMR-safe via globalThis) ────────────────────────────────

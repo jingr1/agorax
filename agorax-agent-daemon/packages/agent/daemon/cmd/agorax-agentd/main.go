@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -92,10 +93,13 @@ func run() error {
 		HistoryRuntime: hostRuntime, GoalRuntime: hostRuntime,
 		OperationOwner: "agorax-agentd", EditRetryDisabled: true,
 	})
+	if registration, enabled := nodeRegistrationConfigFromEnv(); enabled {
+		go runNodeRegistrationLoop(ctx, registration, runtime.Controller().RegisteredProviders)
+	}
 
 	server := &http.Server{
 		Addr:              listenAddress(),
-		Handler:           routes(runtime, host, db, store, hub),
+		Handler:           withManagedAgentAuth(routes(runtime, host, db, store, hub)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -110,6 +114,22 @@ func run() error {
 		return nil
 	}
 	return err
+}
+
+func withManagedAgentAuth(next http.Handler) http.Handler {
+	expected := strings.TrimSpace(os.Getenv("AGORAX_MANAGED_AGENT_TOKEN"))
+	if expected == "" {
+		return next
+	}
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		actual := request.Header.Get("Authorization")
+		wanted := "Bearer " + expected
+		if len(actual) != len(wanted) || subtle.ConstantTimeCompare([]byte(actual), []byte(wanted)) != 1 {
+			writeJSON(response, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return
+		}
+		next.ServeHTTP(response, request)
+	})
 }
 
 func listenAddress() string {
@@ -259,20 +279,20 @@ func routesWithOps(runtime *agentdaemon.Runtime, host *agenthost.Host, db *sql.D
 			return
 		}
 		var input struct {
-			AgentSessionID  string          `json:"agentSessionId"`
-			AgentTargetID   string          `json:"agentTargetId"`
-			Provider        string          `json:"provider"`
-			ClientSubmitID  string          `json:"clientSubmitId"`
-			Content         json.RawMessage `json:"content"`
-			InitialContent  json.RawMessage `json:"initialContent"`
+			AgentSessionID string          `json:"agentSessionId"`
+			AgentTargetID  string          `json:"agentTargetId"`
+			Provider       string          `json:"provider"`
+			ClientSubmitID string          `json:"clientSubmitId"`
+			Content        json.RawMessage `json:"content"`
+			InitialContent json.RawMessage `json:"initialContent"`
 			// UI-only text when InitialContent carries injected skills / bundles.
-			DisplayPrompt   string          `json:"displayPrompt"`
-			CWD             string          `json:"cwd"`
-			Model           string          `json:"model"`
-			ReasoningEffort string          `json:"reasoningEffort"`
+			DisplayPrompt   string `json:"displayPrompt"`
+			CWD             string `json:"cwd"`
+			Model           string `json:"model"`
+			ReasoningEffort string `json:"reasoningEffort"`
 			// Optional per-run Mission MCP handshake (Agorax workspace control channel).
-			McpEndpoint     string   `json:"mcpEndpoint"`
-			McpRunToken     string   `json:"mcpRunToken"`
+			McpEndpoint      string   `json:"mcpEndpoint"`
+			McpRunToken      string   `json:"mcpRunToken"`
 			McpToolAllowlist []string `json:"mcpToolAllowlist"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
@@ -300,9 +320,9 @@ func routesWithOps(runtime *agentdaemon.Runtime, host *agenthost.Host, db *sql.D
 		result, err := host.CreateSession(request.Context(), workspaceID, agenthost.CreateSessionInput{
 			AgentSessionID: input.AgentSessionID, AgentTargetID: input.AgentTargetID,
 			Provider: provider, ClientSubmitID: input.ClientSubmitID,
-			InitialContent: content,
+			InitialContent:       content,
 			InitialDisplayPrompt: strings.TrimSpace(input.DisplayPrompt),
-			Cwd:            stringPointer(input.CWD), Model: stringPointer(input.Model),
+			Cwd:                  stringPointer(input.CWD), Model: stringPointer(input.Model),
 			ReasoningEffort: stringPointer(input.ReasoningEffort),
 			RuntimeContext:  runtimeContext,
 		})
@@ -325,7 +345,7 @@ func routesWithOps(runtime *agentdaemon.Runtime, host *agenthost.Host, db *sql.D
 			ClientSubmitID string          `json:"clientSubmitId"`
 			Content        json.RawMessage `json:"content"`
 			// UI-only text when Content carries injected skills / bundles.
-			DisplayPrompt  string          `json:"displayPrompt"`
+			DisplayPrompt string `json:"displayPrompt"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 			writeJSON(response, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -390,9 +410,9 @@ func routesWithOps(runtime *agentdaemon.Runtime, host *agenthost.Host, db *sql.D
 			return
 		}
 		writeJSON(response, http.StatusOK, map[string]any{
-			"workspaceId":     workspaceID,
-			"session":         session.Canonical,
-			"turns":           nonNilSlice(turns),
+			"workspaceId": workspaceID,
+			"session":     session.Canonical,
+			"turns":       nonNilSlice(turns),
 			// Prefer displayPrompt over injected skill bodies on the wire so
 			// sidebar hydrate is not multi-MB for a single user turn.
 			"messages":        nonNilSlice(compactActivityMessagesForWire(messages.Messages)),
@@ -484,11 +504,11 @@ func routesWithOps(runtime *agentdaemon.Runtime, host *agenthost.Host, db *sql.D
 	})
 	mux.HandleFunc("POST /v1/workspaces/{workspaceID}/agent-sessions/{agentSessionID}/settings", func(response http.ResponseWriter, request *http.Request) {
 		var input struct {
-			Model           *string `json:"model"`
-			ReasoningEffort *string `json:"reasoningEffort"`
+			Model            *string `json:"model"`
+			ReasoningEffort  *string `json:"reasoningEffort"`
 			PermissionModeID *string `json:"permissionModeId"`
-			PlanMode        *bool   `json:"planMode"`
-			Speed           *string `json:"speed"`
+			PlanMode         *bool   `json:"planMode"`
+			Speed            *string `json:"speed"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 			writeJSON(response, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -608,10 +628,10 @@ func projectComposerOptions(provider, requestedModel string) map[string]any {
 	modelOptions := make([]map[string]any, 0, len(models))
 	for _, model := range models {
 		modelOptions = append(modelOptions, map[string]any{
-			"value": model.ID,
-			"label": firstNonBlank(model.DisplayName, model.ID),
-			"name":  firstNonBlank(model.DisplayName, model.ID),
-			"id":    model.ID,
+			"value":   model.ID,
+			"label":   firstNonBlank(model.DisplayName, model.ID),
+			"name":    firstNonBlank(model.DisplayName, model.ID),
+			"id":      model.ID,
 			"default": model.IsDefault,
 		})
 	}
@@ -675,15 +695,15 @@ func projectComposerOptions(provider, requestedModel string) map[string]any {
 		"permissionConfig": map[string]any{
 			"configurable": false, "defaultValue": "", "currentValue": "", "modes": []any{},
 		},
-		"runtimeContext": map[string]any{},
-		"skills":         []any{},
-		"commands":       []any{},
+		"runtimeContext":    map[string]any{},
+		"skills":            []any{},
+		"commands":          []any{},
 		"capabilityCatalog": []any{},
 		"behavior": map[string]any{
-			"collapseModelOptionsToLatest":     false,
-			"modelOptionsAuthoritative":        true,
-			"refreshModelOptionsAfterSettings": false,
-			"prewarmDraftSession":              false,
+			"collapseModelOptionsToLatest":        false,
+			"modelOptionsAuthoritative":           true,
+			"refreshModelOptionsAfterSettings":    false,
+			"prewarmDraftSession":                 false,
 			"planModeExclusiveWithPermissionMode": false,
 		},
 		"slashCommandPolicy": map[string]any{

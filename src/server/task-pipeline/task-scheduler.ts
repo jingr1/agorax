@@ -7,10 +7,21 @@ import {
   getSwarmMission,
   listSwarmMissions,
   requeueMissionAssignment,
-  type SwarmMissionAssignment,
 } from '../swarm-missions'
 import { dispatchReadyAssignments } from './dispatch-ready'
 import { getPipelineTemplate } from './pipeline-templates'
+import {
+  acquireDispatchClaim,
+  ownsDispatchClaim,
+  releaseDispatchClaim,
+  renewDispatchClaim,
+} from './dispatch-claim-store'
+import type { SwarmMissionAssignment } from '../swarm-missions'
+import type { PersistentDispatchClaim } from './dispatch-claim-store'
+
+export type TaskDispatchClaim = PersistentDispatchClaim
+
+const dispatchClaims = new Map<string, TaskDispatchClaim>()
 
 export type SchedulerRetryKind = 'failure' | 'continuation'
 
@@ -69,8 +80,7 @@ function resolveLimits(missionId: string): {
     : null
   const runtime = template?.runtime
   return {
-    maxConcurrent:
-      runtime?.maxConcurrentTasks ?? globalState.maxConcurrent,
+    maxConcurrent: runtime?.maxConcurrentTasks ?? globalState.maxConcurrent,
     stallTimeoutMs: runtime?.stallTimeoutMs ?? globalState.stallTimeoutMs,
     maxRetryBackoffMs:
       runtime?.maxRetryBackoffMs ?? globalState.maxRetryBackoffMs,
@@ -100,16 +110,77 @@ export function markTaskRunning(input: {
     lastEventAt: now(),
   })
   globalState.retries.delete(retryKey(input.missionId, input.assignmentId))
+  const claim = dispatchClaims.get(input.assignmentId)
+  if (claim && persistentClaimsEnabled()) {
+    const renewed = renewDispatchClaim(claim, 'running')
+    if (renewed) dispatchClaims.set(input.assignmentId, renewed)
+  }
 }
 
 export function markTaskEvent(assignmentId: string): void {
   const row = globalState.running.get(assignmentId)
   if (row) row.lastEventAt = now()
+  const claim = dispatchClaims.get(assignmentId)
+  if (claim && persistentClaimsEnabled()) {
+    const renewed = renewDispatchClaim(claim, 'running')
+    if (renewed) dispatchClaims.set(assignmentId, renewed)
+  }
 }
 
 export function releaseTaskClaim(assignmentId: string): void {
+  const claim = dispatchClaims.get(assignmentId)
+  if (claim && persistentClaimsEnabled()) releaseDispatchClaim(claim)
   globalState.claimed.delete(assignmentId)
   globalState.running.delete(assignmentId)
+  dispatchClaims.delete(assignmentId)
+}
+
+export function completeTaskClaim(assignmentId: string): void {
+  const claim = dispatchClaims.get(assignmentId)
+  if (claim && persistentClaimsEnabled()) releaseDispatchClaim(claim, true)
+  globalState.claimed.delete(assignmentId)
+  globalState.running.delete(assignmentId)
+  dispatchClaims.delete(assignmentId)
+}
+
+export function claimTask(input: {
+  missionId: string
+  assignmentId: string
+  nodeId?: string | null
+}): TaskDispatchClaim | null {
+  if (globalState.claimed.has(input.assignmentId)) return null
+  if (availableSlots(input.missionId) <= 0) return null
+  const claim = persistentClaimsEnabled()
+    ? acquireDispatchClaim(input)
+    : {
+        ...input,
+        nodeId: input.nodeId ?? null,
+        ownerId: 'in-memory',
+        attempt: 1,
+        leaseExpiresAt: Number.MAX_SAFE_INTEGER,
+      }
+  if (!claim) return null
+  globalState.claimed.add(input.assignmentId)
+  globalState.running.set(input.assignmentId, {
+    missionId: input.missionId,
+    startedAt: now(),
+    lastEventAt: now(),
+  })
+  dispatchClaims.set(input.assignmentId, claim)
+  return claim
+}
+
+export function ownsTaskClaim(claim: TaskDispatchClaim): boolean {
+  if (dispatchClaims.get(claim.assignmentId) !== claim) return false
+  return !persistentClaimsEnabled() || ownsDispatchClaim(claim)
+}
+
+function persistentClaimsEnabled(): boolean {
+  if (process.env.AGORAX_DISTRIBUTED_TASK_CLAIMS === '0') return false
+  return (
+    process.env.NODE_ENV !== 'test' ||
+    process.env.AGORAX_DISTRIBUTED_TASK_CLAIMS === '1'
+  )
 }
 
 function backoffDelayMs(attempt: number, maxBackoffMs: number): number {
@@ -219,11 +290,11 @@ export async function scheduleDispatchMission(missionId: string): Promise<{
 export async function processDueRetries(nowMs = now()): Promise<number> {
   reconcileStalledTasks(nowMs)
   let count = 0
-  const due = [...globalState.retries.values()].filter((r) => r.dueAtMs <= nowMs)
+  const due = [...globalState.retries.values()].filter(
+    (r) => r.dueAtMs <= nowMs,
+  )
   for (const entry of due) {
-    globalState.retries.delete(
-      retryKey(entry.missionId, entry.assignmentId),
-    )
+    globalState.retries.delete(retryKey(entry.missionId, entry.assignmentId))
     if (availableSlots(entry.missionId) <= 0) {
       scheduleTaskRetry({
         ...entry,
@@ -236,8 +307,7 @@ export async function processDueRetries(nowMs = now()): Promise<number> {
       (a) => a.id === entry.assignmentId,
     )
     if (!assignment || assignment.dispatchable === false) continue
-    if (mission?.state === 'cancelled' || mission?.state === 'done')
-      continue
+    if (mission?.state === 'cancelled' || mission?.state === 'done') continue
     await scheduleDispatchMission(entry.missionId)
     count++
   }
@@ -249,6 +319,7 @@ export function __resetSchedulerStateForTests(): void {
   globalState.claimed.clear()
   globalState.running.clear()
   globalState.retries.clear()
+  dispatchClaims.clear()
 }
 
 export function isAssignmentDispatchable(

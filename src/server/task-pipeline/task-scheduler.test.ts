@@ -1,11 +1,13 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   __resetSchedulerStateForTests,
   availableSlots,
+  claimTask,
+  completeTaskClaim,
   getSchedulerSnapshot,
   markTaskRunning,
-  scheduleTaskRetry,
   reconcileStalledTasks,
+  scheduleTaskRetry,
 } from './task-scheduler'
 
 describe('task-scheduler', () => {
@@ -21,6 +23,13 @@ describe('task-scheduler', () => {
     markTaskRunning({ missionId: 'm1', assignmentId: 'a1' })
     expect(availableSlots()).toBe(9)
     expect(getSchedulerSnapshot().running).toHaveLength(1)
+  })
+
+  it('releases scheduler capacity when an assignment becomes terminal', () => {
+    expect(claimTask({ missionId: 'm1', assignmentId: 'a1' })).not.toBeNull()
+    expect(availableSlots()).toBe(9)
+    completeTaskClaim('a1')
+    expect(availableSlots()).toBe(10)
   })
 
   it('schedules failure retries with backoff metadata', () => {

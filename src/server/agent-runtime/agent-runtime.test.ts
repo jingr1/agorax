@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { getStateDir } from '../workspace-state-dir'
 import { loadAgentsRegistry } from './agents-config'
 import {
   isProcessGroupAlive,
@@ -15,7 +16,6 @@ import {
   unregisterPid,
 } from './pid-registry'
 import { AgentRuntimeRouter } from './router'
-import { getStateDir } from '../workspace-state-dir'
 
 vi.mock('./hermes-gateway-probe', () => ({
   probeHermesProfileGateway: vi.fn(async (profile: string) => ({
@@ -60,6 +60,34 @@ agents:
     expect(dev?.runtime).toBe('hermes')
     expect(dev?.capabilities).toEqual(['code', 'test']) // inherited
     expect(registry.byId.get('cc-impl')?.command).toBe('claude')
+  })
+
+  it('loads a managed agent execution-node binding', () => {
+    const registry = loadAgentsRegistry({
+      rawYaml: `
+version: 1
+agents:
+  - id: cc-remote
+    runtime: claude-code
+    command: claude
+    nodeId: builder-1
+`,
+    })
+    expect(registry.byId.get('cc-remote')?.nodeId).toBe('builder-1')
+  })
+
+  it('rejects execution-node bindings on Hermes agents', () => {
+    expect(() =>
+      loadAgentsRegistry({
+        rawYaml: `
+version: 1
+agents:
+  - id: remote-hermes
+    runtime: hermes
+    nodeId: builder-1
+`,
+      }),
+    ).toThrow(/nodeId is only supported for managed runtimes/)
   })
 
   it('rejects runtime!=hermes with execution=ssh', () => {
@@ -339,6 +367,59 @@ agents:
     expect(transport.probe).toHaveBeenCalledWith('codex')
   })
 
+  it('routes node-bound agents through separate node transports', async () => {
+    const transports = new Map(
+      ['builder-1', 'reviewer-1'].map((nodeId) => [
+        nodeId,
+        {
+          probe: vi.fn(async () => ({ available: true, detail: nodeId })),
+          startRun: vi.fn(async () => ({ runId: `run-${nodeId}` })),
+          streamEvents: vi.fn(() => (async function* () {})()),
+          interrupt: vi.fn(async () => undefined),
+        },
+      ]),
+    )
+    const router = new AgentRuntimeRouter({
+      rawYaml: `
+version: 1
+agents:
+  - id: builder
+    runtime: claude-code
+    command: claude
+    nodeId: builder-1
+  - id: reviewer
+    runtime: codex
+    command: codex
+    nodeId: reviewer-1
+`,
+      executionNodeResolver: (nodeId) => ({
+        id: nodeId,
+        name: nodeId,
+        baseUrl: `https://${nodeId}.example`,
+        workspaceId: 'default',
+        status: 'online',
+        capabilities: [],
+        lastSeenAt: Date.now(),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+      executionNodeTransportFactory: (node) => transports.get(node.id)!,
+    })
+
+    await expect(router.getAdapter('builder')!.probe()).resolves.toMatchObject({
+      detail: 'builder-1',
+    })
+    await expect(router.getAdapter('reviewer')!.probe()).resolves.toMatchObject(
+      {
+        detail: 'reviewer-1',
+      },
+    )
+    expect(transports.get('builder-1')!.probe).toHaveBeenCalledWith(
+      'claude-code',
+    )
+    expect(transports.get('reviewer-1')!.probe).toHaveBeenCalledWith('codex')
+  })
+
   it('uses the injected Agorax Managed Agent transport when configured', async () => {
     const transport = {
       probe: vi.fn(async () => ({ available: true })),
@@ -403,9 +484,7 @@ agents:
   })
 
   it('probeAll coalesces concurrent callers and serves TTL cache', async () => {
-    const { probeHermesProfileGateway } = await import(
-      './hermes-gateway-probe'
-    )
+    const { probeHermesProfileGateway } = await import('./hermes-gateway-probe')
     const probeSpy = vi.mocked(probeHermesProfileGateway)
     probeSpy.mockClear()
 

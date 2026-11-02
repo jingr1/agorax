@@ -269,7 +269,7 @@ orchestrator → researcher → architect → (developer | writer) → architect
 
 **Phase 2 Human Gate.** When `needs_human=true`, the `/swarm` panel shows the blocker, checkpoint, and routing analysis. Resume with **Continue** or **Abort**, or use `POST /api/swarm-langgraph/resume`.
 
-Start here: [docs/swarm/QUICKSTART.md](./docs/swarm/QUICKSTART.md) · [docs/swarm/HANDOFF-PROTOCOL.md](./docs/swarm/HANDOFF-PROTOCOL.md)
+Start here: [docs/swarm/QUICKSTART.md](./docs/swarm/QUICKSTART.md) · [docs/swarm/HANDOFF-PROTOCOL.md](./docs/swarm/HANDOFF-PROTOCOL.md) · [Managed multi-machine execution](./docs/multi-machine-execution/README.md)
 
 **LangGraph orchestrator (required for Swarm missions from the UI):** needs a local venv once per machine — **Python ≥ 3.10** (3.11+ recommended):
 

@@ -109,6 +109,7 @@ import { Route as ApiGatewayStatusRouteImport } from './routes/api/gateway-statu
 import { Route as ApiGatewayReprobeRouteImport } from './routes/api/gateway-reprobe'
 import { Route as ApiGatewayPoolRouteImport } from './routes/api/gateway-pool'
 import { Route as ApiFilesRouteImport } from './routes/api/files'
+import { Route as ApiExecutionNodesRouteImport } from './routes/api/execution-nodes'
 import { Route as ApiEventsRouteImport } from './routes/api/events'
 import { Route as ApiCrewStatusRouteImport } from './routes/api/crew-status'
 import { Route as ApiContextUsageRouteImport } from './routes/api/context-usage'
@@ -770,6 +771,11 @@ const ApiGatewayPoolRoute = ApiGatewayPoolRouteImport.update({
 const ApiFilesRoute = ApiFilesRouteImport.update({
   id: '/api/files',
   path: '/api/files',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiExecutionNodesRoute = ApiExecutionNodesRouteImport.update({
+  id: '/api/execution-nodes',
+  path: '/api/execution-nodes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiEventsRoute = ApiEventsRouteImport.update({
@@ -1661,6 +1667,7 @@ export interface FileRoutesByFullPath {
   '/api/context-usage': typeof ApiContextUsageRoute
   '/api/crew-status': typeof ApiCrewStatusRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/execution-nodes': typeof ApiExecutionNodesRoute
   '/api/files': typeof ApiFilesRoute
   '/api/gateway-pool': typeof ApiGatewayPoolRoute
   '/api/gateway-reprobe': typeof ApiGatewayReprobeRoute
@@ -1919,6 +1926,7 @@ export interface FileRoutesByTo {
   '/api/context-usage': typeof ApiContextUsageRoute
   '/api/crew-status': typeof ApiCrewStatusRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/execution-nodes': typeof ApiExecutionNodesRoute
   '/api/files': typeof ApiFilesRoute
   '/api/gateway-pool': typeof ApiGatewayPoolRoute
   '/api/gateway-reprobe': typeof ApiGatewayReprobeRoute
@@ -2181,6 +2189,7 @@ export interface FileRoutesById {
   '/api/context-usage': typeof ApiContextUsageRoute
   '/api/crew-status': typeof ApiCrewStatusRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/execution-nodes': typeof ApiExecutionNodesRoute
   '/api/files': typeof ApiFilesRoute
   '/api/gateway-pool': typeof ApiGatewayPoolRoute
   '/api/gateway-reprobe': typeof ApiGatewayReprobeRoute
@@ -2444,6 +2453,7 @@ export interface FileRouteTypes {
     | '/api/context-usage'
     | '/api/crew-status'
     | '/api/events'
+    | '/api/execution-nodes'
     | '/api/files'
     | '/api/gateway-pool'
     | '/api/gateway-reprobe'
@@ -2702,6 +2712,7 @@ export interface FileRouteTypes {
     | '/api/context-usage'
     | '/api/crew-status'
     | '/api/events'
+    | '/api/execution-nodes'
     | '/api/files'
     | '/api/gateway-pool'
     | '/api/gateway-reprobe'
@@ -2963,6 +2974,7 @@ export interface FileRouteTypes {
     | '/api/context-usage'
     | '/api/crew-status'
     | '/api/events'
+    | '/api/execution-nodes'
     | '/api/files'
     | '/api/gateway-pool'
     | '/api/gateway-reprobe'
@@ -3225,6 +3237,7 @@ export interface RootRouteChildren {
   ApiContextUsageRoute: typeof ApiContextUsageRoute
   ApiCrewStatusRoute: typeof ApiCrewStatusRoute
   ApiEventsRoute: typeof ApiEventsRoute
+  ApiExecutionNodesRoute: typeof ApiExecutionNodesRoute
   ApiFilesRoute: typeof ApiFilesRoute
   ApiGatewayPoolRoute: typeof ApiGatewayPoolRoute
   ApiGatewayReprobeRoute: typeof ApiGatewayReprobeRoute
@@ -4081,6 +4094,13 @@ declare module '@tanstack/react-router' {
       path: '/api/files'
       fullPath: '/api/files'
       preLoaderRoute: typeof ApiFilesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/execution-nodes': {
+      id: '/api/execution-nodes'
+      path: '/api/execution-nodes'
+      fullPath: '/api/execution-nodes'
+      preLoaderRoute: typeof ApiExecutionNodesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/events': {
@@ -5672,6 +5692,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiContextUsageRoute: ApiContextUsageRoute,
   ApiCrewStatusRoute: ApiCrewStatusRoute,
   ApiEventsRoute: ApiEventsRoute,
+  ApiExecutionNodesRoute: ApiExecutionNodesRoute,
   ApiFilesRoute: ApiFilesRoute,
   ApiGatewayPoolRoute: ApiGatewayPoolRoute,
   ApiGatewayReprobeRoute: ApiGatewayReprobeRoute,

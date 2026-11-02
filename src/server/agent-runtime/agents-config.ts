@@ -8,14 +8,16 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { homedir } from 'node:os'
 import * as YAML from 'yaml'
+import { ensureAgentsYamlFromExample } from '../swarm-roster'
 import type { AgentRuntimeKind } from './types'
 import { AGORAX_MANAGED_AGENT_BACKENDS } from '@/lib/managed-agent-runtime/agent-targets'
-import { ensureAgentsYamlFromExample } from '../swarm-roster'
 
 export type AgentExecution = 'local' | 'ssh'
 
 export type AgentDeclaration = {
   id: string
+  /** Optional execution node id for managed runtimes. Omit for the local daemon. */
+  nodeId?: string
   name?: string
   role?: string
   specialty?: string
@@ -214,6 +216,14 @@ export function loadAgentsRegistry(input?: {
       continue
     }
 
+    const nodeId = entry.nodeId ? String(entry.nodeId).trim() : undefined
+    if (nodeId && runtime === 'hermes') {
+      errors.push(
+        `agent ${id}: nodeId is only supported for managed runtimes; Hermes remote execution uses its profile gateway`,
+      )
+      continue
+    }
+
     if (runtime === 'hermes' && !entry.profile) {
       entry.profile = id
     }
@@ -229,6 +239,7 @@ export function loadAgentsRegistry(input?: {
 
     agents.push({
       id,
+      nodeId,
       name: entry.name ? String(entry.name) : undefined,
       role: entry.role ? String(entry.role) : undefined,
       specialty: entry.specialty ? String(entry.specialty) : undefined,

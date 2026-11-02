@@ -30,8 +30,14 @@ import {
   pushBranchToRemote,
 } from '../git-ops'
 import { countRunningRunsForAgent } from '../mcp/task-runs'
-import { detectExecutionFromProfile, getProfileSshHost } from './agents-config'
 import { appendMissionSpecFreshnessHint } from '../task-pipeline/mission-spec-freshness'
+import {
+  claimTask,
+  ownsTaskClaim,
+  releaseTaskClaim,
+} from '../task-pipeline/task-scheduler'
+import { detectExecutionFromProfile, getProfileSshHost } from './agents-config'
+import type { TaskDispatchClaim } from '../task-pipeline/task-scheduler'
 
 export type DispatchResult =
   | { ok: true; runId: string; assignmentId: string }
@@ -79,13 +85,18 @@ export function getMcpEndpoint(): string {
  * Caller must have already verified the assignment is ready
  * (readyQueuedAssignments). Returns the runId on success.
  */
-export async function dispatchAssignment(input: {
+export type DispatchAssignmentInput = {
   missionId: string
   assignmentId: string
   agentId?: string // defaults to assignment.workerId; agents.yaml id = workerId
   cwd?: string
   roomId?: string | null
-}): Promise<DispatchResult> {
+  schedulerClaim?: TaskDispatchClaim
+}
+
+export async function dispatchAssignment(
+  input: DispatchAssignmentInput,
+): Promise<DispatchResult> {
   const mission = getSwarmMission(input.missionId)
   if (!mission)
     return { ok: false, error: `Mission not found: ${input.missionId}` }
@@ -102,6 +113,7 @@ export async function dispatchAssignment(input: {
   }
 
   const router = getAgentRuntimeRouter()
+  let claim = input.schedulerClaim
 
   // P2b capability routing: if stage declares `requires`, pick an agent that
   // has all required capabilities and is not overloaded. If none available,
@@ -118,6 +130,7 @@ export async function dispatchAssignment(input: {
       .filter((a) => a.load < (a.maxConcurrentTasks ?? 1))
       .sort((a, b) => a.load - b.load)
     if (candidates.length === 0) {
+      if (claim) releaseTaskClaim(input.assignmentId)
       return {
         ok: false,
         error: `No available agent has required capabilities: ${stageRequires.join(', ')}`,
@@ -131,18 +144,32 @@ export async function dispatchAssignment(input: {
   }
 
   const agentId = input.agentId ?? assignment.workerId
-  const adapter = router.getAdapter(agentId)
-  if (!adapter)
+  const nodeId = router.registry.byId.get(agentId)?.nodeId
+  if (claim && !ownsTaskClaim(claim)) {
     return {
       ok: false,
-      error: `No agent declared in agents.yaml: ${assignment.workerId}`,
+      error: 'Assignment is already claimed by another scheduler',
     }
+  }
+  const fail = (
+    result: Extract<DispatchResult, { ok: false }>,
+  ): DispatchResult => {
+    if (claim) releaseTaskClaim(input.assignmentId)
+    return result
+  }
+  const adapter = router.getAdapter(agentId)
+  if (!adapter) {
+    return fail({
+      ok: false,
+      error: `No agent declared in agents.yaml: ${assignment.workerId}`,
+    })
+  }
   if (adapter.kind === 'hermes') {
-    return {
+    return fail({
       ok: false,
       error:
         'hermes runtime is dispatched via the existing swarm-dispatch path',
-    }
+    })
   }
 
   let cwd = input.cwd
@@ -151,16 +178,33 @@ export async function dispatchAssignment(input: {
   if (mission.workspaceMode === 'worktree' && mission.projectId) {
     const project = getProject(mission.projectId)
     if (!project)
-      return { ok: false, error: `Project not found: ${mission.projectId}` }
+      return fail({
+        ok: false,
+        error: `Project not found: ${mission.projectId}`,
+      })
     const agentDecl = router.registry.byId.get(agentId)
-    const locality = agentDecl?.execution === 'ssh' ? 'ssh' : 'local'
+    const executionNodeRemote = agentDecl?.nodeId
+      ? project.remotes.find(
+          (remote) =>
+            remote.nodeId === agentDecl.nodeId ||
+            (!remote.nodeId && remote.host === agentDecl.nodeId),
+        )
+      : undefined
+    const locality =
+      agentDecl?.execution === 'ssh' || agentDecl?.nodeId ? 'ssh' : 'local'
     if (locality === 'ssh') {
       const profileHost = agentDecl?.profile
         ? getProfileSshHost(agentDecl.profile)
         : null
-      const host = profileHost ?? project.remotes[0]?.host
+      const host =
+        executionNodeRemote?.host ?? profileHost ?? project.remotes[0]?.host
       if (!host)
-        return { ok: false, error: `ssh locality agent ${agentId} has no host` }
+        return fail({
+          ok: false,
+          error: agentDecl?.nodeId
+            ? `project ${project.id} has no remote mapped to execution node ${agentDecl.nodeId}`
+            : `ssh locality agent ${agentId} has no host`,
+        })
       const { baseRef: localBase } = await ensureMissionWorktree(
         project,
         mission.id,
@@ -184,6 +228,29 @@ export async function dispatchAssignment(input: {
     }
   }
 
+  claim ??=
+    claimTask({
+      missionId: input.missionId,
+      assignmentId: input.assignmentId,
+      nodeId,
+    }) ?? undefined
+  if (!claim || !ownsTaskClaim(claim)) {
+    return {
+      ok: false,
+      error: 'Assignment is already claimed by another scheduler',
+    }
+  }
+
+  const mcpEndpoint = getMcpEndpoint()
+  if (nodeId && /^http:\/\/(127\.|localhost|\[::1\])/.test(mcpEndpoint)) {
+    return fail({
+      ok: false,
+      error:
+        `Execution node ${nodeId} cannot reach loopback MCP endpoint ${mcpEndpoint}; ` +
+        'set HERMES_MCP_ENDPOINT to an HTTPS endpoint reachable from the node',
+    })
+  }
+
   const runId = createCollabId('run')
 
   // Step 1: JSON CAS queued → dispatched.  Persist capability-routed workerId.
@@ -197,7 +264,7 @@ export async function dispatchAssignment(input: {
     overrideWorkerId: assignment.workerId,
   })
   if (!dispatched)
-    return { ok: false, error: 'Failed to CAS assignment to dispatched' }
+    return fail({ ok: false, error: 'Failed to CAS assignment to dispatched' })
 
   // Step 2: issue the per-run write token (bound to this runId).
   const tokenContext: Record<string, string> | undefined =
@@ -235,16 +302,16 @@ export async function dispatchAssignment(input: {
       roomId: input.roomId ?? null,
       taskId: mission.id,
       mcp: {
-        endpoint: getMcpEndpoint(),
+        endpoint: mcpEndpoint,
         runToken: token,
         toolAllowlist: WRITE_ALLOWLIST,
       },
     })
   } catch (error) {
-    return {
+    return fail({
       ok: false,
       error: `spawn failed: ${error instanceof Error ? error.message : String(error)}`,
-    }
+    })
   }
 
   publishChatEvent('agent_dispatched', {

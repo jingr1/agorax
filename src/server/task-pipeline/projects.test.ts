@@ -46,4 +46,31 @@ describe('projects.yaml loader (P2b)', () => {
     })
     expect(file.projects[0].selfHosted).toBe(true)
   })
+
+  it('keeps execution-node mappings on project remotes', () => {
+    const repo = process.cwd()
+    const file = loadProjectsFile({
+      repoRoot: repo,
+      rawYaml: `
+version: 1
+projects:
+  - id: remote-project
+    repo: ${repo}
+    selfHosted: true
+    worktreeRoot: /tmp/wt-remote-project
+    remotes:
+      builder-host:
+        nodeId: builder-1
+        repo: /srv/project
+        worktreeRoot: /srv/worktrees
+`,
+    })
+
+    expect(file.projects[0].remotes[0]).toMatchObject({
+      host: 'builder-host',
+      nodeId: 'builder-1',
+      repo: '/srv/project',
+      worktreeRoot: '/srv/worktrees',
+    })
+  })
 })

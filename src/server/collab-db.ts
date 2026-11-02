@@ -19,9 +19,7 @@ import { getHermesRoot } from './hermes-paths'
  */
 
 export function getCollabDbPath(): string {
-  return (
-    process.env.HERMES_COLLAB_DB ?? path.join(getHermesRoot(), 'collab.db')
-  )
+  return process.env.HERMES_COLLAB_DB ?? path.join(getHermesRoot(), 'collab.db')
 }
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
@@ -461,6 +459,43 @@ CREATE INDEX IF NOT EXISTS idx_agorax_run_mapping_run
   ON agorax_run_mapping(hermes_run_id);
 `,
   },
+  {
+    version: 12,
+    sql: `
+-- Execution nodes are independently running managed-agent daemons. Agents bind
+-- to a node id; endpoint credentials remain deployment configuration.
+CREATE TABLE IF NOT EXISTS execution_nodes (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  status TEXT NOT NULL CHECK(status IN ('online','offline')),
+  capabilities_json TEXT NOT NULL DEFAULT '[]',
+  last_seen_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_nodes_base_url
+  ON execution_nodes(base_url, workspace_id);
+CREATE INDEX IF NOT EXISTS idx_execution_nodes_status
+  ON execution_nodes(status, last_seen_at);
+
+CREATE TABLE IF NOT EXISTS task_dispatch_claims (
+  assignment_id TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL,
+  node_id TEXT,
+  owner_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('claimed','running','released','terminal')),
+  claimed_at INTEGER NOT NULL,
+  lease_expires_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (node_id) REFERENCES execution_nodes(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_dispatch_claims_lease
+  ON task_dispatch_claims(status, lease_expires_at);
+`,
+  },
 ]
 
 export function ensureCollabDb(dbPath: string = getCollabDbPath()): void {
@@ -473,16 +508,21 @@ export function ensureCollabDb(dbPath: string = getCollabDbPath()): void {
         applied_at INTEGER NOT NULL
       );
     `)
-    const rows = db
-      .prepare('SELECT version FROM schema_migrations ORDER BY version')
-      .all() as Array<{ version: number }>
-    const applied = new Set(rows.map((r) => r.version))
     for (const migration of MIGRATIONS) {
-      if (applied.has(migration.version)) continue
-      // Wrap each migration in a transaction so a crash mid-migration can't
-      // leave half-applied DDL with a schema_migrations row already written.
-      db.exec('BEGIN')
+      // BEGIN IMMEDIATE serializes first-open migrations across workspace
+      // processes. Recheck the version under that lock: two processes may both
+      // have observed an empty database before either acquired the writer.
+      db.exec('BEGIN IMMEDIATE')
       try {
+        const applied = db
+          .prepare(
+            'SELECT 1 AS applied FROM schema_migrations WHERE version = ?',
+          )
+          .get(migration.version)
+        if (applied) {
+          db.exec('COMMIT')
+          continue
+        }
         db.exec(migration.sql)
         db.prepare(
           'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
