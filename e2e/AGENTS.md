@@ -17,6 +17,8 @@
 | Chat       | 快速重复提交只产生一条新用户消息             | `@CHAT-SEND-001`      |
 | Chat       | 生成期间的后续消息进入队列，不改变旧回复归属 | `@CHAT-TURN-001`      |
 | Chat       | 新一轮发送后旧回复保持可见，用户消息不重复   | `@CHAT-TURN-002`      |
+| Chat       | 同戳多轮历史保持 U-A 交错且回复不合并        | `@CHAT-DISPLAY-001`   |
+| Chat       | Thinking 正文到达后卸除，结算后空闲          | `@CHAT-DISPLAY-002`   |
 | Recovery   | 已完成历史不重复，界面处于空闲态             | `@CHAT-RECOVERY-001`  |
 | Recovery   | 刷新后清理已完成会话的过期 waiting 状态      | `@CHAT-RECOVERY-002`  |
 | Group Chat | SSE 刷新先于 POST 返回时，消息不重复         | `@GROUP-SEND-001`     |
@@ -29,11 +31,24 @@
 覆盖范围以 `src/features/` 为准。真实网络重连、多标签页、移动布局与 managed
 协议仍需补充；短轮次耐久通过不代表已完成数小时运行或内存泄漏验证。
 
+工作区页面基线放在 `src/features/pages/workspace.feature`，使用 `@workspace`
+单独运行。页面覆盖矩阵见 README 的 Workspace Pages，区分入口加载、读取、
+搜索、写入和表单取消；打开页面不等于验证全部 CRUD。页面 fixture 在
+`src/mocks/pages.ts`，包含能力探测、Hermes/managed roster、隔离文件与终端流。
+主标题需区别路由的二级加载占位和 Markdown 正文标题；列表写入前先等待固定
+数据加载，不能让空列表提前满足否定断言。
+报告目录必须在 Vite watcher 忽略范围内，避免 HTML 报告写入触发页面重载；
+路由懒加载应等待输入框或业务主标题就绪，不把加载占位当作页面成功。
+测试浏览器隔离 Vite 根路径 HMR WebSocket，不屏蔽产品 API 或事件路径。
+Mock EventSource 关闭后必须停止派发排队的连接事件；managed 初始化依赖
+`connected.workspaceId` 与 canonical 详情读取，不能只等输入框出现就发送。
+
 ### 标签与执行分层
 
 - `@smoke`：快速验证关键入口与基础行为
 - `@regression`：固定回归场景
 - `@chat` / `@group-chat`：业务模块
+- `@workspace`：工作区页面入口与交互基线
 - `@P0` / `@P1` / `@P2`：风险和优先级，不代表已经配置了对应 CI
 - `@soak`：同页多轮耐久测试，通过 `pnpm test:e2e:soak` 单独运行
 - `@skip`：暂不执行，必须说明原因和恢复条件
@@ -98,6 +113,14 @@ PowerShell 使用 `$env:BASE_URL = 'http://127.0.0.1:6745'` 等环境变量赋�
 Chat mock 使用浏览器端 fetch 拦截与 `ReadableStream`，发送 Agorax 的
 `started`、`chunk` 等事件。忙碌场景保持流打开，context 关闭时回收。
 不要照搬 LobeHub 的 `/webapi/chat/` 路径和 SSE 格式。
+
+`holdThinkingFirst()` 让下一轮只发 `started` + `thinking`；`releaseText()` 再发
+`chunk`；`complete()` 结算。用它覆盖 Thinking… 卸除，不要在仍立即发 chunk 的
+路径上断言 Thinking 可见。
+
+`POST /api/sessions` 必须返回 `{ sessionKey, persisted }`，不能复用会话列表
+shape；否则新建会话路径在 E2E 里会假失败。同戳多轮显示回归应省略
+`historyIndex`，否则排序捷径会掩盖 source-order 缺陷。
 
 `route.fulfill()` 会缓冲响应，不能模拟真实的逐块到达时间。
 需要测试流式完成、取消或失败时，为 mock 增加明确的控制方式，并匹配产品协议；

@@ -10,6 +10,9 @@ import {
   parseStoredMessageContent,
   splitCompleteThinkingTags,
   storedMessageContentToText,
+  normalizeAssistantThinkingAgainstReply,
+  stripLeadingReplyOverlapFromThinking,
+  stripReplyEchoThinking,
   thinkingContentFromText,
   thinkingTextFromContent,
   thinkingTextFromPayload,
@@ -202,6 +205,68 @@ describe('splitCompleteThinkingTags', () => {
     expect(splitCompleteThinkingTags('<thinking>x</thinking>y')).toEqual({
       text: 'y',
       thinking: 'x',
+    })
+  })
+})
+
+describe('stripReplyEchoThinking', () => {
+  it('drops thinking that equals or prefixes the reply body', () => {
+    const reply =
+      '收到 probe 1793622898089。我这边在线，可以正常响应。\n\n这是连接测试，还是你有一个具体任务？'
+    expect(
+      stripReplyEchoThinking({
+        role: 'assistant',
+        content: [
+          { type: 'thinking' as const, thinking: reply },
+          { type: 'text' as const, text: reply },
+        ],
+        __streamingThinking: reply,
+      }),
+    ).toEqual({
+      role: 'assistant',
+      content: [{ type: 'text', text: reply }],
+      __streamingThinking: '',
+    })
+  })
+
+  it('keeps distinct planning text beside the reply', () => {
+    const message = {
+      role: 'assistant',
+      content: [
+        {
+          type: 'thinking' as const,
+          thinking: 'User is probing connectivity. Answer briefly and offer help.',
+        },
+        { type: 'text' as const, text: '收到，我在线。需要我做什么？' },
+      ],
+    }
+    expect(stripReplyEchoThinking(message)).toEqual(message)
+  })
+
+  it('strips a shared opening sentence mirrored into thinking (live mash)', () => {
+    const opener = '这个数字看起来像 Unix 毫秒时间戳，我用工具验证一下含义。'
+    const plan =
+      '用户发了一个看起来像数字串的内容："乱不乱探测 1793623652987"。先用工具验证时间戳。'
+    const reply = `${opener}\n\n这里无法直接执行 Python，但单从数字看：\`1793623652987\` 大约是 2026-08-02 前后。`
+    const thinking = `${opener}${plan}`
+    expect(stripLeadingReplyOverlapFromThinking(thinking, reply)).toBe(plan)
+    expect(normalizeAssistantThinkingAgainstReply(thinking, reply)).toBe(plan)
+    expect(
+      stripReplyEchoThinking({
+        role: 'assistant',
+        content: [
+          { type: 'thinking' as const, thinking },
+          { type: 'text' as const, text: reply },
+        ],
+        __streamingThinking: thinking,
+      }),
+    ).toEqual({
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: plan },
+        { type: 'text', text: reply },
+      ],
+      __streamingThinking: plan,
     })
   })
 })

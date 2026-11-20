@@ -9,15 +9,16 @@ import {
   AddTeamIcon,
   ArrowLeft01Icon,
   Delete02Icon,
+  RefreshIcon,
 } from '@hugeicons/core-free-icons'
+import { SkillFilesPanel } from './skill-files-panel'
+import { AddToAgentDialog } from './add-to-agent-dialog'
+import type { PlatformSkillFile } from '@/server/platform-skills/types'
+import type { AddToAgentTarget } from './add-to-agent-dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { Markdown } from '@/components/prompt-kit/markdown'
+import { Tabs, TabsList, TabsTab } from '@/components/ui/tabs'
 import { toast } from '@/components/ui/toast'
-import {
-  AddToAgentDialog,
-  type AddToAgentTarget,
-} from './add-to-agent-dialog'
 
 type AgentSummary = {
   agentId: string
@@ -34,9 +35,23 @@ type SkillDetail = {
     description: string
     category: string
     content: string
+    revisionId?: string
+    deploymentMode?: 'symlink' | 'copy'
+    allowCopyFallback?: boolean
+    files?: Array<PlatformSkillFile>
     origin?: { kind?: string; source?: string }
   }
   agents: Array<{ agentId: string; enabled: boolean }>
+  deployments?: Array<{
+    agentId: string
+    status: string
+    delivery?: string
+    actualMode?: 'symlink' | 'copy'
+    message?: string
+    hash?: string
+    path?: string
+  }>
+  revisions?: Array<{ id: string; createdAt: number; hash: string }>
 }
 
 function agentIdOf(agent: AgentSummary): string {
@@ -68,11 +83,16 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState(false)
+  const [editRevision, setEditRevision] = useState('')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState('')
   const [content, setContent] = useState('')
-  const [preview, setPreview] = useState(true)
+  const [files, setFiles] = useState<Array<PlatformSkillFile>>([])
+  const [deploymentMode, setDeploymentMode] = useState<'symlink' | 'copy'>(
+    'symlink',
+  )
+  const [allowCopyFallback, setAllowCopyFallback] = useState(true)
   const [addOpen, setAddOpen] = useState(false)
 
   const detailQuery = useQuery({
@@ -81,6 +101,7 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
       fetchJson<SkillDetail>(
         `/api/platform-skills/${encodeURIComponent(skillId)}`,
       ),
+    refetchInterval: editing ? false : 5_000,
   })
 
   const agentsQuery = useQuery({
@@ -95,11 +116,14 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
 
   useEffect(() => {
     const skill = detailQuery.data?.skill
-    if (!skill) return
+    if (!skill || editing) return
     setName(skill.name)
     setDescription(skill.description || '')
     setCategory(skill.category || '')
     setContent(skill.content || '')
+    setFiles(skill.files ?? [])
+    setDeploymentMode(skill.deploymentMode ?? 'symlink')
+    setAllowCopyFallback(skill.allowCopyFallback !== false)
     setEditing(false)
   }, [detailQuery.data?.skill])
 
@@ -114,12 +138,20 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
             description,
             category,
             content,
+            files,
+            expectedRevision: editRevision,
+            deploymentMode,
+            allowCopyFallback,
           }),
         },
       ),
     onSuccess: (payload) => {
       void queryClient.invalidateQueries({ queryKey: ['platform-skills'] })
       void queryClient.invalidateQueries({ queryKey: ['platform-skill'] })
+      void queryClient.invalidateQueries({
+        queryKey: ['chat', 'composer', 'agent-skills'],
+      })
+      void queryClient.invalidateQueries({ queryKey: ['agent-skills'] })
       setEditing(false)
       toast(`已保存 ${payload.skill.name}`, { type: 'success' })
       if (payload.skill.id !== skillId) {
@@ -133,6 +165,26 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
     onError: (error: Error) => {
       toast(error.message || '保存失败', { type: 'error' })
     },
+  })
+
+  const operationMutation = useMutation({
+    mutationFn: (operation: Record<string, unknown>) =>
+      fetchJson(`/api/platform-skills/${encodeURIComponent(skillId)}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          expectedRevision: detailQuery.data?.skill.revisionId ?? '',
+          ...operation,
+        }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['platform-skill'] })
+      void queryClient.invalidateQueries({ queryKey: ['platform-skills'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-skills'] })
+      void queryClient.invalidateQueries({
+        queryKey: ['chat', 'composer', 'agent-skills'],
+      })
+    },
+    onError: (error: Error) => toast(error.message, { type: 'error' }),
   })
 
   const deleteMutation = useMutation({
@@ -173,6 +225,9 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
       void queryClient.invalidateQueries({ queryKey: ['platform-skill'] })
       void queryClient.invalidateQueries({ queryKey: ['platform-skills'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-skills'] })
+      void queryClient.invalidateQueries({
+        queryKey: ['chat', 'composer', 'agent-skills'],
+      })
     },
     onError: (error: Error) => {
       toast(error.message || '更新失败', { type: 'error' })
@@ -194,10 +249,12 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
       void queryClient.invalidateQueries({ queryKey: ['platform-skill'] })
       void queryClient.invalidateQueries({ queryKey: ['platform-skills'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-skills'] })
-      toast(
-        count === 1 ? '已添加到智能体' : `已添加到 ${count} 个智能体`,
-        { type: 'success' },
-      )
+      void queryClient.invalidateQueries({
+        queryKey: ['chat', 'composer', 'agent-skills'],
+      })
+      toast(count === 1 ? '已添加到智能体' : `已添加到 ${count} 个智能体`, {
+        type: 'success',
+      })
     },
     onError: (error: Error) => {
       toast(error.message || '添加失败', { type: 'error' })
@@ -224,12 +281,16 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
 
   const skill = detailQuery.data?.skill
   const dirty =
-    editing &&
-    skill &&
-    (name.trim() !== skill.name ||
-      description !== (skill.description || '') ||
-      category !== (skill.category || '') ||
-      content !== (skill.content || ''))
+    (editing &&
+      skill &&
+      (name.trim() !== skill.name ||
+        description !== (skill.description || '') ||
+        category !== (skill.category || '') ||
+        content !== (skill.content || ''))) ||
+    (editing && JSON.stringify(files) !== JSON.stringify(skill?.files ?? [])) ||
+    (editing &&
+      (deploymentMode !== (skill?.deploymentMode ?? 'symlink') ||
+        allowCopyFallback !== (skill?.allowCopyFallback !== false)))
 
   return (
     <div className="min-h-full overflow-y-auto bg-surface text-ink">
@@ -266,7 +327,7 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
         ) : (
           <>
             <header className="rounded-2xl border border-primary-200 bg-primary-50/85 p-4 backdrop-blur-xl sm:p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 flex-1 space-y-2">
                   {editing ? (
                     <input
@@ -289,7 +350,7 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
                       />
                     ) : (
                       <span className="rounded-md bg-primary-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-primary-500">
-                        {skill.category?.trim() || 'General'}
+                        {skill.category.trim() || 'General'}
                       </span>
                     )}
                     {skill.origin?.kind ? (
@@ -319,7 +380,10 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
                         type="button"
                         size="sm"
                         variant="outline"
-                        onClick={() => setEditing(true)}
+                        onClick={() => {
+                          setEditRevision(skill.revisionId ?? '')
+                          setEditing(true)
+                        }}
                       >
                         编辑
                       </Button>
@@ -344,6 +408,11 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
                           setDescription(skill.description || '')
                           setCategory(skill.category || '')
                           setContent(skill.content || '')
+                          setFiles(skill.files ?? [])
+                          setDeploymentMode(skill.deploymentMode ?? 'symlink')
+                          setAllowCopyFallback(
+                            skill.allowCopyFallback !== false,
+                          )
                           setEditing(false)
                         }}
                       >
@@ -352,7 +421,9 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
                       <Button
                         type="button"
                         size="sm"
-                        disabled={!name.trim() || !dirty || saveMutation.isPending}
+                        disabled={
+                          !name.trim() || !dirty || saveMutation.isPending
+                        }
                         onClick={() => saveMutation.mutate()}
                       >
                         {saveMutation.isPending ? '保存中…' : '保存'}
@@ -363,57 +434,69 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
               </div>
             </header>
 
-            <section className="rounded-2xl border border-primary-200 bg-primary-50/70 p-4 sm:p-5">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-xs font-medium uppercase tracking-wider text-primary-500">
-                  SKILL.md
-                </h2>
-                <div className="flex gap-1 rounded-lg border border-primary-200 p-0.5">
-                  <button
-                    type="button"
-                    className={`rounded-md px-2.5 py-1 text-xs ${
-                      preview
-                        ? 'bg-primary-100 font-medium text-ink'
-                        : 'text-primary-500'
-                    }`}
-                    onClick={() => setPreview(true)}
-                    disabled={editing}
+            <section
+              aria-label="部署设置"
+              className="space-y-3 border-y border-primary-200 py-4"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-sm font-medium">部署模式</h2>
+                {editing ? (
+                  <Tabs
+                    value={deploymentMode}
+                    onValueChange={(value) =>
+                      setDeploymentMode(value === 'copy' ? 'copy' : 'symlink')
+                    }
+                    aria-label="部署模式"
                   >
-                    预览
-                  </button>
-                  <button
-                    type="button"
-                    className={`rounded-md px-2.5 py-1 text-xs ${
-                      !preview || editing
-                        ? 'bg-primary-100 font-medium text-ink'
-                        : 'text-primary-500'
-                    }`}
-                    onClick={() => setPreview(false)}
-                  >
-                    源码
-                  </button>
-                </div>
+                    <TabsList>
+                      <TabsTab value="symlink">Symlink</TabsTab>
+                      <TabsTab value="copy">Copy</TabsTab>
+                    </TabsList>
+                  </Tabs>
+                ) : (
+                  <span className="font-mono text-sm">
+                    {skill.deploymentMode === 'copy' ? 'Copy' : 'Symlink'}
+                  </span>
+                )}
               </div>
-              {editing || !preview ? (
-                <textarea
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  readOnly={!editing}
-                  rows={22}
-                  className="w-full rounded-xl border border-primary-200 bg-primary-100/30 px-3 py-3 font-mono text-xs leading-relaxed text-ink outline-none focus:border-primary"
-                />
-              ) : (
-                <div className="min-h-[20rem] rounded-xl border border-primary-200 bg-primary-100/30 p-4 text-sm">
-                  <Markdown>{content || '_空_'}</Markdown>
-                </div>
+              {(editing
+                ? deploymentMode === 'symlink'
+                : skill.deploymentMode !== 'copy') && (
+                <label className="flex items-center justify-between gap-3 text-sm text-primary-500">
+                  允许 Copy 降级
+                  <Switch
+                    checked={allowCopyFallback}
+                    disabled={!editing || saveMutation.isPending}
+                    onCheckedChange={setAllowCopyFallback}
+                    aria-label="允许 Copy 降级"
+                  />
+                </label>
               )}
             </section>
+
+            <SkillFilesPanel
+              content={content}
+              files={files}
+              editing={editing}
+              onContentChange={setContent}
+              onFilesChange={setFiles}
+            />
 
             <section className="rounded-2xl border border-primary-200 bg-primary-50/70 p-4 sm:p-5">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-xs font-medium uppercase tracking-wider text-primary-500">
                   已绑定智能体 ({bindings.length})
                 </h2>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={editing || operationMutation.isPending}
+                  onClick={() => operationMutation.mutate({ action: 'sync' })}
+                >
+                  <HugeiconsIcon icon={RefreshIcon} size={14} />
+                  {operationMutation.isPending ? '同步中…' : '同步'}
+                </Button>
                 <Button
                   type="button"
                   size="sm"
@@ -425,15 +508,25 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
                 </Button>
               </div>
               {bindings.length === 0 ? (
-                <p className="text-sm text-primary-500">
-                  尚未绑定任何智能体。
-                </p>
+                <p className="text-sm text-primary-500">尚未绑定任何智能体。</p>
               ) : (
                 <ul className="space-y-2">
                   {bindings.map((binding) => {
                     const agent = agents.find(
                       (a) => agentIdOf(a) === binding.agentId,
                     )
+                    const deployment = detailQuery.data?.deployments?.find(
+                      (entry) => entry.agentId === binding.agentId,
+                    )
+                    const statusLabels: Record<string, string> = {
+                      'in-sync': '已同步',
+                      conflict: '内容冲突',
+                      'external-visible': '外部目录，尚未接管',
+                      error: '同步失败',
+                      pending: '同步中',
+                      unsupported: '暂不支持交付',
+                      'prompt-only': '仅 Prompt 注入',
+                    }
                     return (
                       <li
                         key={binding.agentId}
@@ -448,6 +541,62 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
                               {agent.runtime}
                             </p>
                           ) : null}
+                          <p className="mt-1 break-all text-xs text-primary-500">
+                            {deployment?.actualMode
+                              ? `${deployment.actualMode === 'symlink' ? 'Symlink' : 'Copy'} · `
+                              : ''}
+                            {deployment
+                              ? (statusLabels[deployment.status] ??
+                                deployment.status)
+                              : '待同步'}
+                            {deployment?.delivery === 'on-demand'
+                              ? ' · 隔离文件包，按需加载'
+                              : ''}
+                          </p>
+                          {deployment?.message && (
+                            <p className="mt-1 break-words text-xs text-danger">
+                              {deployment.message}
+                            </p>
+                          )}
+                          {deployment?.hash &&
+                            ['conflict', 'external-visible'].includes(
+                              deployment.status,
+                            ) && (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={
+                                    operationMutation.isPending || editing
+                                  }
+                                  onClick={() =>
+                                    operationMutation.mutate({
+                                      action: 'publish-local',
+                                      agentId: binding.agentId,
+                                      observedHash: deployment.hash,
+                                    })
+                                  }
+                                >
+                                  采用此副本并发布
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={
+                                    operationMutation.isPending || editing
+                                  }
+                                  onClick={() =>
+                                    operationMutation.mutate({
+                                      action: 'use-catalog',
+                                      agentId: binding.agentId,
+                                      observedHash: deployment.hash,
+                                    })
+                                  }
+                                >
+                                  采用平台版本
+                                </Button>
+                              </div>
+                            )}
                         </div>
                         <div className="flex items-center gap-2">
                           <Switch
@@ -478,6 +627,38 @@ export function PlatformSkillDetailScreen({ skillId }: { skillId: string }) {
                   })}
                 </ul>
               )}
+            </section>
+
+            <section className="space-y-2 border-t border-primary-200 pt-4">
+              <h2 className="text-sm font-medium">版本历史</h2>
+              {(detailQuery.data?.revisions ?? []).map((revision) => (
+                <div
+                  key={revision.id}
+                  className="flex flex-wrap items-center justify-between gap-2 text-xs"
+                >
+                  <span className="min-w-0 break-all text-primary-500">
+                    {new Date(revision.createdAt).toLocaleString()} ·{' '}
+                    {revision.hash.slice(0, 12)}
+                  </span>
+                  {revision.id === skill.revisionId ? (
+                    <span>当前版本</span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={editing || operationMutation.isPending}
+                      onClick={() =>
+                        operationMutation.mutate({
+                          action: 'restore',
+                          revisionId: revision.id,
+                        })
+                      }
+                    >
+                      恢复
+                    </Button>
+                  )}
+                </div>
+              ))}
             </section>
 
             <section className="rounded-2xl border border-danger/30 bg-danger/5 p-4">

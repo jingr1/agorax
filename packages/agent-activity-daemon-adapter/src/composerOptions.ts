@@ -13,6 +13,7 @@ import type {
   AgentActivitySlashCommandPolicy
 } from "@agorax/agent-activity-core";
 import type { DaemonProviderComposerOptionsResponse } from "./daemonDtos.ts";
+import { agentActivitySessionCapabilitiesFromIds } from "@agorax/agent-activity-core";
 
 /**
  * Maps daemon composer-options JSON into the activity-core catalog shape.
@@ -134,6 +135,9 @@ function sessionCapabilitiesFromValue(
   value: unknown
 ): AgentActivitySessionCapabilities | null {
   const capabilities = recordValue(value);
+  if (Array.isArray(capabilities.values)) {
+    return agentActivitySessionCapabilitiesFromIds(capabilities.values.filter((entry): entry is string => typeof entry === "string"));
+  }
   if (Object.keys(capabilities).length === 0) {
     return null;
   }
@@ -231,10 +235,10 @@ function slashCommandPolicyFromValue(
   value: unknown
 ): AgentActivitySlashCommandPolicy | null {
   const policy = recordValue(value);
-  if (!Array.isArray(policy.fallbackCommands)) {
+  if (!Array.isArray(policy.fallbackCommands) && policy.commandCatalogAuthoritative !== true) {
     return null;
   }
-  const fallbackCommands = policy.fallbackCommands.flatMap((entry) => {
+  const fallbackCommands = (Array.isArray(policy.fallbackCommands) ? policy.fallbackCommands : []).flatMap((entry) => {
     const command = normalizeText(entry);
     return command ? [command] : [];
   });

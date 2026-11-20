@@ -2,6 +2,12 @@
  * Normalize a loose file tree (folder upload or unzipped archive) into a
  * single skill: SKILL.md content + supporting files under its root.
  */
+import { parse } from 'yaml'
+import {
+  normalizeSkillFilePath,
+  skillFileBytes,
+  skillTreeFiles,
+} from './skill-tree'
 import type { PlatformSkillFile } from './types'
 
 export const MAX_SKILL_FILE_BYTES = 1 << 20
@@ -14,6 +20,9 @@ export type SkillBundle = {
   description: string
   content: string
   files: Array<PlatformSkillFile>
+  resolvedCommit?: string
+  sourcePath?: string
+  sourceRef?: string
 }
 
 function normalizeRelPath(raw: string): string {
@@ -25,7 +34,9 @@ function normalizeRelPath(raw: string): string {
 
 function isIgnored(path: string): boolean {
   const parts = path.split('/')
-  if (parts.some((p) => p === '.git' || p === 'node_modules' || p === '__MACOSX')) {
+  if (
+    parts.some((p) => p === '.git' || p === 'node_modules' || p === '__MACOSX')
+  ) {
     return true
   }
   const base = parts[parts.length - 1] || ''
@@ -35,32 +46,21 @@ function isIgnored(path: string): boolean {
 }
 
 function isSkillMd(path: string): boolean {
-  return path.toLowerCase().endsWith('skill.md') && /skill\.md$/i.test(path)
-}
-
-function isLikelyBinary(path: string): boolean {
-  return /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|tar|woff2?|ttf|eot|mp[34]|wav|webm|exe|dll|so|dylib|bin)$/i.test(
-    path,
-  )
+  return /(?:^|\/)skill\.md$/i.test(path)
 }
 
 export function parseSkillFrontmatter(content: string): {
   name: string
   description: string
 } {
-  let name = ''
-  let description = ''
   const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-  const block = fmMatch?.[1] ?? content.slice(0, 1024)
-  const nameMatch = block.match(/^name:\s*(.+?)\s*$/m)
-  const descMatch = block.match(/^description:\s*(.+?)\s*$/m)
-  if (nameMatch) {
-    name = nameMatch[1].trim().replace(/^["']|["']$/g, '')
+  if (!fmMatch) return { name: '', description: '' }
+  const parsed = parse(fmMatch[1]) as Record<string, unknown> | null
+  return {
+    name: typeof parsed?.name === 'string' ? parsed.name.trim() : '',
+    description:
+      typeof parsed?.description === 'string' ? parsed.description.trim() : '',
   }
-  if (descMatch) {
-    description = descMatch[1].trim().replace(/^["']|["']$/g, '')
-  }
-  return { name, description }
 }
 
 export function normalizeSkillBundle(
@@ -75,10 +75,10 @@ export function normalizeSkillBundle(
   for (const file of rawFiles) {
     const path = normalizeRelPath(file.path)
     if (!path || isIgnored(path)) continue
-    if (Buffer.byteLength(file.content ?? '', 'utf-8') > MAX_SKILL_FILE_BYTES) {
-      continue
-    }
-    normalized.push({ path, content: file.content ?? '' })
+    normalizeSkillFilePath(path)
+    if (skillFileBytes(file).length > MAX_SKILL_FILE_BYTES)
+      throw new Error(`Skill file is too large: ${path}`)
+    normalized.push({ ...file, path, content: file.content })
   }
   if (normalized.length === 0) {
     throw new Error('Skill archive is empty')
@@ -98,6 +98,20 @@ export function normalizeSkillBundle(
   if (!skillMd) {
     throw new Error('SKILL.md not found in archive')
   }
+  if (
+    normalized.filter(
+      (file) =>
+        isSkillMd(file.path) &&
+        !file.path.startsWith(`${skillPrefix}references/`) &&
+        !file.path.startsWith(`${skillPrefix}templates/`),
+    ).length > 1
+  ) {
+    throw new Error(
+      'Multiple skills found; import one skill directory at a time',
+    )
+  }
+  if (skillMd.encoding === 'base64')
+    throw new Error('SKILL.md must be UTF-8 text')
 
   const content = skillMd.content
   const fm = parseSkillFrontmatter(content)
@@ -113,20 +127,20 @@ export function normalizeSkillBundle(
     if (skillPrefix && !file.path.startsWith(skillPrefix)) continue
     const rel = skillPrefix ? file.path.slice(skillPrefix.length) : file.path
     if (!rel || rel.endsWith('/')) continue
-    if (isSkillMd(rel)) continue
-    if (isLikelyBinary(rel)) continue
+    if (rel === 'SKILL.md') continue
     supportingCount += 1
     if (supportingCount > MAX_SKILL_FILE_COUNT) {
       throw new Error('Skill has too many files')
     }
-    const bytes = Buffer.byteLength(file.content, 'utf-8')
+    const bytes = skillFileBytes(file).length
     supportingBytes += bytes
     if (supportingBytes > MAX_SKILL_BUNDLE_BYTES) {
       throw new Error('Skill bundle is too large')
     }
-    files.push({ path: rel, content: file.content })
+    files.push({ ...file, path: rel })
   }
 
+  skillTreeFiles({ content, files })
   return {
     name,
     description: fm.description,

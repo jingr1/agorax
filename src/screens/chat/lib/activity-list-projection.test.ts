@@ -136,6 +136,117 @@ describe('foldAssistantsPerUserTurn', () => {
     expect(text).toBe(`${intro}\n\n${body}`)
   })
 
+  it('drops a trailing thinking-only host that only echoes the prior reply body', () => {
+    const reply =
+      '收到 probe 1793622898089。我这边在线，可以正常响应。\n\n这是连接测试，还是你有一个具体任务？'
+    const folded = foldAssistantsPerUserTurn([
+      {
+        id: 'u1',
+        role: 'user',
+        content: [{ type: 'text', text: 'probe' }],
+        timestamp: 1,
+      } as ChatMessage,
+      {
+        id: 'assistant:client-uuid',
+        messageId: 'assistant:client-uuid',
+        turnId: 'turn-client',
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: reply },
+          { type: 'text', text: reply },
+        ],
+        timestamp: 2,
+      } as ChatMessage,
+      {
+        id: 'assistant:run_abc',
+        messageId: 'assistant:run_abc',
+        turnId: 'turn-run_abc',
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: reply }],
+        timestamp: 3,
+      } as ChatMessage,
+    ])
+    expect(folded.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+    ])
+  })
+
+  it('does not mash distinct turn reply bodies when users were reordered away', () => {
+    // Chronology bugs can yield UUUAAA; fold must still keep one host per turn.
+    const folded = foldAssistantsPerUserTurn([
+      {
+        id: 'u1',
+        role: 'user',
+        content: [{ type: 'text', text: '你好' }],
+        timestamp: 1,
+      } as ChatMessage,
+      {
+        id: 'u2',
+        role: 'user',
+        content: [{ type: 'text', text: '你是谁？' }],
+        timestamp: 1,
+      } as ChatMessage,
+      {
+        id: 'u3',
+        role: 'user',
+        content: [{ type: 'text', text: '你在干什么？' }],
+        timestamp: 1,
+      } as ChatMessage,
+      {
+        id: 'assistant:r1',
+        messageId: 'assistant:r1',
+        turnId: 'turn-c1',
+        runId: 'r1',
+        role: 'assistant',
+        content: [{ type: 'text', text: '你好！有什么我可以帮你的吗？' }],
+        timestamp: 1,
+      } as ChatMessage,
+      {
+        id: 'assistant:r2',
+        messageId: 'assistant:r2',
+        turnId: 'turn-c2',
+        runId: 'r2',
+        role: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: '我是 Architect Agent，一个系统架构与技术规格 Agent。',
+          },
+        ],
+        timestamp: 1,
+      } as ChatMessage,
+      {
+        id: 'assistant:r3',
+        messageId: 'assistant:r3',
+        turnId: 'turn-c3',
+        runId: 'r3',
+        role: 'assistant',
+        content: [{ type: 'text', text: '我目前没在跑任何具体任务。' }],
+        timestamp: 1,
+      } as ChatMessage,
+    ])
+    expect(folded.map((message) => message.role)).toEqual([
+      'user',
+      'user',
+      'user',
+      'assistant',
+      'assistant',
+      'assistant',
+    ])
+    const texts = folded
+      .filter((message) => message.role === 'assistant')
+      .map(
+        (message) =>
+          message.content?.find((part) => part.type === 'text')?.text ?? '',
+      )
+    expect(texts).toEqual([
+      '你好！有什么我可以帮你的吗？',
+      '我是 Architect Agent，一个系统架构与技术规格 Agent。',
+      '我目前没在跑任何具体任务。',
+    ])
+  })
+
   it('does not append a segment already inside the longer host', () => {
     const body = '找到原因了：\n\n```bash\necho hi\n```'
     const live = `先看一下。\n\n${body}`
@@ -215,5 +326,68 @@ describe('projectActivityMessagesToChat', () => {
     expect(messages[1]?.content).toEqual([
       { type: 'text', text: 'hello from run' },
     ])
+  })
+
+  it('strips reply-echo thinking and drops the empty run host', () => {
+    const reply =
+      '收到 probe 1793622898089。我这边在线，可以正常响应。\n\n这是连接测试，还是你有一个具体任务？'
+    const messages = projectActivityMessagesToChat([
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'user:c1',
+        turnId: 'turn-c1',
+        role: 'user',
+        kind: 'text',
+        payload: { text: 'probe' },
+        version: 1,
+        sequence: 1,
+        occurredAtUnixMs: 1,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:client-uuid:thinking',
+        turnId: 'turn-c1',
+        role: 'assistant_thinking',
+        kind: 'reasoning',
+        status: 'completed',
+        payload: { text: reply },
+        version: 2,
+        sequence: 2,
+        occurredAtUnixMs: 2,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:client-uuid',
+        turnId: 'turn-c1',
+        role: 'assistant',
+        kind: 'text',
+        status: 'completed',
+        payload: { text: reply },
+        version: 3,
+        sequence: 3,
+        occurredAtUnixMs: 3,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run_abc:thinking',
+        turnId: 'turn-run_abc',
+        role: 'assistant_thinking',
+        kind: 'reasoning',
+        status: 'completed',
+        payload: { text: reply },
+        version: 4,
+        sequence: 4,
+        occurredAtUnixMs: 4,
+      },
+    ])
+    expect(messages.map((m) => m.id)).toEqual([
+      'user:c1',
+      'assistant:client-uuid',
+    ])
+    expect(messages[1]?.content).toEqual([{ type: 'text', text: reply }])
   })
 })

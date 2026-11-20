@@ -251,7 +251,7 @@ export function buildAgentCapabilities(agentId: string): AgentCapabilities {
   const platformMcp = listAgentMcpBindings(id).map((s) => ({
     name: s.name,
     enabled: s.enabled,
-    status: s.enabled ? 'ok' : 'disabled',
+    status: s.enabled ? 'assigned' : 'disabled',
     transportType: s.transport,
     serverId: s.serverId,
     source: 'platform' as const,

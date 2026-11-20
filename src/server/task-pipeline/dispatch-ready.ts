@@ -10,25 +10,32 @@
  *   - POST /api/missions/:missionId/start retry/continue
  *   - terminal checkpoint continuation hook
  */
-import { dispatchSwarmAssignments } from '../../routes/api/swarm-dispatch'
+import { dispatchSwarmAssignments } from '../swarm-dispatch-service'
 import { dispatchAssignment } from '../agent-runtime/dispatch'
 import { installAdvanceBridge } from '../agent-runtime/advance'
 import { getAgentRuntimeRouter } from '../agent-runtime/router'
 import {
   getSwarmMission,
   readyQueuedAssignments,
+  recordMissionAssignmentBlocked,
   setOnCheckpointTerminalHook,
 } from '../swarm-missions'
 // Side-effect: register the swarm-path review verdict hook. review.ts is not
 // naturally imported by the hermes/swarm checkpoint path; pulling it in here
 // (dispatch-ready is imported by swarm-dispatch/task-service) wires it up.
-import { markTaskRunning, releaseTaskClaim } from './task-scheduler'
+import {
+  claimTask,
+  markTaskStarted,
+  releaseTaskClaim,
+  scheduleTaskRetry,
+} from './task-scheduler'
+import type { TaskDispatchClaim } from './task-scheduler'
 
 // Production Mission MCP → assignment advance: task_complete drives the next
 // ready stage. Idempotent; tests may reinstall with custom dispatchNext.
 installAdvanceBridge({
   dispatchNext: async ({ missionId, assignmentId }) => {
-    await dispatchAssignment({ missionId, assignmentId })
+    await dispatchReadyAssignments(missionId, { assignmentId })
   },
 })
 
@@ -37,6 +44,7 @@ export type DispatchedAssignmentSummary = {
   workerId: string
   ok: boolean
   error?: string
+  needsHuman?: boolean
 }
 
 export type DispatchReadyResult = {
@@ -67,8 +75,17 @@ async function syncCardLane(_missionId: string): Promise<void> {
  */
 export async function dispatchReadyAssignments(
   missionId: string,
+  options?: { assignmentId?: string },
 ): Promise<DispatchReadyResult> {
-  const ready = readyQueuedAssignments(missionId)
+  const claims = new Map<string, TaskDispatchClaim>()
+  const ready = readyQueuedAssignments(missionId).filter((assignment) => {
+    if (options?.assignmentId && assignment.id !== options.assignmentId)
+      return false
+    const claim = claimTask({ missionId, assignmentId: assignment.id })
+    if (!claim) return false
+    claims.set(assignment.id, claim)
+    return true
+  })
   if (ready.length === 0) {
     return { ok: true, dispatched: [] }
   }
@@ -84,19 +101,22 @@ export async function dispatchReadyAssignments(
 
   if (hermesAssignments.length > 0) {
     try {
-      const result = await dispatchSwarmAssignments({
-        missionId,
-        assignments: hermesAssignments.map((a) => ({
-          workerId: a.workerId,
-          task: a.task,
-          rationale: a.rationale ?? undefined,
-          dependsOn: a.dependsOn,
-          reviewRequired: a.reviewRequired,
-          assignmentId: a.id,
-          direct: false,
-        })),
-        allowAsync: true,
-      })
+      const result = await dispatchSwarmAssignments(
+        {
+          missionId,
+          assignments: hermesAssignments.map((a) => ({
+            workerId: a.workerId,
+            task: a.task,
+            rationale: a.rationale ?? undefined,
+            dependsOn: a.dependsOn,
+            reviewRequired: a.reviewRequired,
+            assignmentId: a.id,
+            direct: false,
+          })),
+          allowAsync: true,
+        },
+        claims,
+      )
       for (const [index, assignment] of hermesAssignments.entries()) {
         const workerResult = result.results[index] ?? {
           ok: false,
@@ -126,12 +146,14 @@ export async function dispatchReadyAssignments(
       const result = await dispatchAssignment({
         missionId,
         assignmentId: assignment.id,
+        schedulerClaim: claims.get(assignment.id),
       })
       dispatched.push({
         assignmentId: assignment.id,
         workerId: assignment.workerId,
         ok: result.ok,
         error: result.ok ? undefined : (result as { error: string }).error,
+        needsHuman: !result.ok && result.needsHuman === true,
       })
     } catch (error) {
       dispatched.push({
@@ -147,9 +169,31 @@ export async function dispatchReadyAssignments(
 
   for (const row of dispatched) {
     if (row.ok) {
-      markTaskRunning({ missionId, assignmentId: row.assignmentId })
+      markTaskStarted(row.assignmentId)
     } else {
       releaseTaskClaim(row.assignmentId)
+      const assignment = getSwarmMission(missionId)?.assignments.find(
+        (item) => item.id === row.assignmentId,
+      )
+      if (assignment?.state === 'queued' && !row.needsHuman) {
+        scheduleTaskRetry({
+          missionId,
+          assignmentId: row.assignmentId,
+          kind: 'failure',
+          error: row.error,
+        })
+      } else if (
+        assignment &&
+        !['done', 'cancelled', 'checkpointed'].includes(assignment.state)
+      ) {
+        recordMissionAssignmentBlocked({
+          missionId,
+          assignmentId: row.assignmentId,
+          workerId: row.workerId,
+          reason: row.error ?? 'Dispatch failed',
+          source: 'task-scheduler',
+        })
+      }
     }
   }
 

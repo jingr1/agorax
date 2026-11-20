@@ -88,6 +88,8 @@ export type SendAgoraxAgentInput = {
   /** UI-only text when content/promptContent carry injected skills. */
   displayPrompt?: string
   clientSubmitId: string
+  guidance?: boolean
+  targetTurnId?: string
 }
 
 type CanonicalSessionProjection = {
@@ -325,6 +327,7 @@ export class AgoraxManagedAgentHttpClient {
         clientSubmitId: input.clientSubmitId,
         content: input.promptContent ?? [{ type: 'text', text: input.content }],
         ...(displayPrompt ? { displayPrompt } : {}),
+        ...(input.guidance ? { guidance: true, targetTurnId: input.targetTurnId } : {}),
       },
       options,
     )

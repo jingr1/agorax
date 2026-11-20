@@ -45,13 +45,13 @@ export const Route = createFileRoute('/api/rooms/$roomId')({
         }
 
         // Pause / resume go through dedicated helpers (epoch bump + holds).
-        if (body.state === 'paused' && existing.state !== 'paused') {
-          const room = pauseRoom(params.roomId)
-          return json({ ok: true, room })
-        }
-        if (body.state === 'active' && existing.state === 'paused') {
-          const room = resumeRoom(params.roomId)
-          return json({ ok: true, room })
+        if (body.state === 'paused' || (body.state === 'active' && existing.state === 'paused')) {
+          try {
+            const room = body.state === 'paused' ? await pauseRoom(params.roomId) : await resumeRoom(params.roomId)
+            return json({ ok: true, room })
+          } catch (error) {
+            return json({ ok: false, room: getRoom(params.roomId), error: error instanceof Error ? error.message : String(error) }, { status: 409 })
+          }
         }
 
         const patch: Record<string, unknown> = {

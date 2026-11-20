@@ -735,16 +735,18 @@ export function applyModelProviderToConfig(
   providerId: string,
   modelId: string,
 ): void {
+  // Hermes runtime only reads model.provider (not top-level provider). A bare
+  // `model: <id>` string drops the provider and resolves to credentialless
+  // `custom` on new sessions. Always keep the nested shape.
   config.provider = providerId
   const existing = config.model
-  if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
-    const next = { ...(existing as Record<string, unknown>) }
-    next.default = modelId
-    next.provider = providerId
-    config.model = next
-    return
-  }
-  config.model = modelId
+  const next =
+    existing && typeof existing === 'object' && !Array.isArray(existing)
+      ? { ...(existing as Record<string, unknown>) }
+      : {}
+  next.default = modelId
+  next.provider = providerId
+  config.model = next
 }
 
 function profileConfigPath(name: string): {
@@ -1069,11 +1071,17 @@ export function createProfile(
     )
   }
 
-  // Override model/provider if specified
+  // Override model/provider if specified — nested model.provider is what Hermes
+  // runtime resolves; a bare string model leaves new sessions on bare `custom`.
   if (options?.model || options?.provider) {
     const config = readYamlConfig(configPath)
-    if (options.model) config.model = options.model
-    if (options.provider) config.provider = options.provider
+    applyModelProviderToConfig(
+      config,
+      options.provider?.trim() ||
+        readModelProviderFromConfig(config).provider ||
+        '',
+      options.model?.trim() || readModelProviderFromConfig(config).model || '',
+    )
     fs.writeFileSync(configPath, YAML.stringify(config), 'utf-8')
   }
 

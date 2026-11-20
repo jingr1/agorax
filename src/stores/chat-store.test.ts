@@ -230,6 +230,63 @@ describe('chat-store history merge ordering', () => {
       'local-3',
     ])
   })
+
+  it('keeps source order when equal timestamps have no historyIndex (ids would localeCompare wrongly)', () => {
+    const shared = 1_700_000_000_000
+    const messages: Array<ChatMessage> = [
+      {
+        id: 'hist-user-1',
+        role: 'user',
+        timestamp: shared,
+        content: [{ type: 'text', text: '你好' }],
+      },
+      {
+        id: 'assistant:run-equal-1',
+        role: 'assistant',
+        timestamp: shared,
+        content: [{ type: 'text', text: '你好！有什么我可以帮你的吗？' }],
+      },
+      {
+        id: 'hist-user-2',
+        role: 'user',
+        timestamp: shared,
+        content: [{ type: 'text', text: '你是谁？' }],
+      },
+      {
+        id: 'assistant:run-equal-2',
+        role: 'assistant',
+        timestamp: shared,
+        content: [
+          { type: 'text', text: '我是 Architect Agent，一个系统架构与技术规格 Agent。' },
+        ],
+      },
+      {
+        id: 'hist-user-3',
+        role: 'user',
+        timestamp: shared,
+        content: [{ type: 'text', text: '你在干什么？' }],
+      },
+      {
+        id: 'assistant:run-equal-3',
+        role: 'assistant',
+        timestamp: shared,
+        content: [{ type: 'text', text: '我目前没在跑任何具体任务。' }],
+      },
+    ]
+
+    const merged = useChatStore
+      .getState()
+      .mergeHistoryMessages('equal-ts-no-history-index', messages)
+
+    expect(merged.map((message) => message.id)).toEqual([
+      'hist-user-1',
+      'assistant:run-equal-1',
+      'hist-user-2',
+      'assistant:run-equal-2',
+      'hist-user-3',
+      'assistant:run-equal-3',
+    ])
+  })
 })
 
 function resetStore(sessionKey: string) {

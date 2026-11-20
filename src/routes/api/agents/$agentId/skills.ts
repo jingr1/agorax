@@ -40,8 +40,7 @@ export const Route = createFileRoute('/api/agents/$agentId/skills')({
         if (!isAuthenticated(request)) {
           return json({ error: 'Unauthorized' }, { status: 401 })
         }
-        const agentId =
-          typeof params.agentId === 'string' ? params.agentId : ''
+        const agentId = typeof params.agentId === 'string' ? params.agentId : ''
         if (!agentId) {
           return json({ error: 'agentId is required' }, { status: 400 })
         }
@@ -56,8 +55,7 @@ export const Route = createFileRoute('/api/agents/$agentId/skills')({
         }
         const ct = requireJsonContentType(request)
         if (ct) return ct
-        const agentId =
-          typeof params.agentId === 'string' ? params.agentId : ''
+        const agentId = typeof params.agentId === 'string' ? params.agentId : ''
         if (!agentId) {
           return json({ error: 'agentId is required' }, { status: 400 })
         }
@@ -70,8 +68,8 @@ export const Route = createFileRoute('/api/agents/$agentId/skills')({
         >
         try {
           const skills = setAgentSkills(agentId, parseSkillIds(body))
-          materializeHermesAgentSkills(agentId)
-          return json({ agentId, skills })
+          const { deployments } = materializeHermesAgentSkills(agentId)
+          return json({ agentId, skills, deployments })
         } catch (error) {
           const message =
             error instanceof Error ? error.message : 'Failed to set skills'
@@ -89,8 +87,7 @@ export const Route = createFileRoute('/api/agents/$agentId/skills')({
         }
         const ct = requireJsonContentType(request)
         if (ct) return ct
-        const agentId =
-          typeof params.agentId === 'string' ? params.agentId : ''
+        const agentId = typeof params.agentId === 'string' ? params.agentId : ''
         if (!agentId) {
           return json({ error: 'agentId is required' }, { status: 400 })
         }
@@ -103,8 +100,8 @@ export const Route = createFileRoute('/api/agents/$agentId/skills')({
         >
         try {
           const skills = addAgentSkills(agentId, parseSkillIds(body))
-          materializeHermesAgentSkills(agentId)
-          return json({ agentId, skills })
+          const { deployments } = materializeHermesAgentSkills(agentId)
+          return json({ agentId, skills, deployments })
         } catch (error) {
           const message =
             error instanceof Error ? error.message : 'Failed to add skills'

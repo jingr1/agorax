@@ -262,10 +262,11 @@ function isTerminalAssignment(assignment: SwarmMissionAssignment): boolean {
   return terminalAssignmentStateSet.has(assignment.state)
 }
 
-function _legacylistSwarmMissions(limit = 20): Array<SwarmMission> {
+function _legacylistSwarmMissions(limit = 20, offset = 0): Array<SwarmMission> {
+  const start = Math.max(0, Math.floor(offset))
   return readStore()
-    .missions.sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, Math.max(1, Math.min(100, limit)))
+    .missions.sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))
+    .slice(start, start + Math.max(1, Math.min(100, limit)))
 }
 
 function _legacygetSwarmMission(missionId: string): SwarmMission | null {
@@ -1240,8 +1241,8 @@ function _legacylistSwarmReports(input?: {
     .slice(0, limit)
 }
 
-export const listSwarmMissions = (limit?: number): Array<SwarmMission> =>
-  getMissionRepository().listMissions(limit)
+export const listSwarmMissions = (limit?: number, offset?: number, options?: { summaryOnly?: boolean }): Array<SwarmMission> =>
+  getMissionRepository().listMissions(limit, offset, options)
 
 export const getSwarmMission = (missionId: string): SwarmMission | null =>
   getMissionRepository().getMission(missionId)
@@ -1366,8 +1367,8 @@ export function setMissionRepositoryForTests(
 
 /** Backwards-compatible JSON backend: wraps the legacy in-memory JSON store. */
 class JsonMissionRepository implements MissionRepository {
-  listMissions(limit?: number) {
-    return _legacylistSwarmMissions(limit)
+  listMissions(limit?: number, offset?: number) {
+    return _legacylistSwarmMissions(limit, offset)
   }
   getMission(missionId: string) {
     return _legacygetSwarmMission(missionId)

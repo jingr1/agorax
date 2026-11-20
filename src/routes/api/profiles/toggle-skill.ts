@@ -15,6 +15,13 @@ import {
   readProfile,
   updateProfileConfig,
 } from '../../../server/profiles-browser'
+import { getAgentRuntimeRouter } from '../../../server/agent-runtime/router'
+import {
+  getPlatformSkill,
+  listAgentSkillBindings,
+  setAgentSkillEnabled,
+} from '../../../server/platform-skills/store'
+import { materializeHermesAgentSkills } from '../../../server/platform-skills/materialize'
 
 const PROFILE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 
@@ -50,6 +57,31 @@ export const Route = createFileRoute('/api/profiles/toggle-skill')({
             )
           }
 
+          const platformSkill = getPlatformSkill(name)
+          if (platformSkill) {
+            const agents = getAgentRuntimeRouter().registry.agents.filter(
+              (agent) =>
+                agent.runtime === 'hermes' &&
+                (agent.profile ?? agent.id) === profile &&
+                listAgentSkillBindings(agent.id).some(
+                  (binding) => binding.skillId === platformSkill.id,
+                ),
+            )
+            if (agents.length > 0) {
+              for (const agent of agents)
+                setAgentSkillEnabled(agent.id, platformSkill.id, enabled)
+              const results = agents.map((agent) =>
+                materializeHermesAgentSkills(agent.id),
+              )
+              return json({
+                ok: true,
+                name,
+                enabled,
+                deployments: results.flatMap((result) => result.deployments),
+              })
+            }
+          }
+
           let detail
           try {
             detail = readProfile(profile)
@@ -60,13 +92,13 @@ export const Route = createFileRoute('/api/profiles/toggle-skill')({
             )
           }
 
-          const currentDisabled: string[] = Array.isArray(
+          const currentDisabled: Array<string> = Array.isArray(
             (detail.config as any)?.skills?.disabled,
           )
-            ? ((detail.config as any).skills.disabled as string[])
+            ? ((detail.config as any).skills.disabled as Array<string>)
             : []
 
-          let nextDisabled: string[]
+          let nextDisabled: Array<string>
           if (enabled) {
             nextDisabled = currentDisabled.filter((s) => s !== name)
           } else {

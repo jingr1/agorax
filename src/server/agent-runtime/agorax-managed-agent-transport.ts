@@ -17,6 +17,7 @@ type Queue = {
   events: AgentStreamEvent[]
   waiters: Array<() => void>
   done: boolean
+  subscribed: boolean
   close: () => void
 }
 
@@ -58,6 +59,7 @@ export function createAgoraxManagedAgentTransportFromEnv():
             listener(error instanceof Error ? error : new Error(String(error))),
           )
         },
+        onClose: (listener) => { socket.on('close', listener) },
         close: () => socket.close(),
       }
     },
@@ -71,18 +73,19 @@ function activityUrl(baseUrl: string): string {
 
 export function createAgoraxManagedAgentTransport(
   options: AgoraxManagedAgentTransportOptions,
-): AgoraxManagedAgentTransport {
+): AgoraxManagedAgentTransport & { subscriptionStats: () => { queues: number; bufferedEvents: number } } {
   const client = new AgoraxManagedAgentHttpClient(options)
   const runStore = options.runStore ?? new AgoraxManagedRunStore()
   const queues = new Map<string, Queue>()
 
-  const ensureQueue = (runId: string, binding: { agentSessionId: string }): Queue => {
+  const ensureQueue = (runId: string, binding: { agentSessionId: string; turnId?: string }): Queue => {
     const existing = queues.get(runId)
     if (existing) return existing
     const queue: Queue = {
       events: [],
       waiters: [],
       done: false,
+      subscribed: false,
       close: () => undefined,
     }
     const stream = new AgoraxManagedAgentActivityStream({
@@ -90,29 +93,38 @@ export function createAgoraxManagedAgentTransport(
       workspaceId: options.workspaceId,
       agentSessionId: binding.agentSessionId,
       runId,
+      turnId: binding.turnId,
       socketFactory: options.socketFactory,
       onEvents: (events) => {
+        if (queue.done) return
         queue.events.push(...events)
+        if (events.some((event) => event.type === 'run_exited')) queue.close()
         for (const wake of queue.waiters.splice(0)) wake()
       },
       onError: (error) => {
         queue.events.push({ type: 'error', runId, message: error.message })
-        queue.done = true
-        for (const wake of queue.waiters.splice(0)) wake()
+        queue.close()
       },
     })
-    stream.connect()
+    let closed = false
     queue.close = () => {
-      if (queue.done) return
+      if (closed) return
+      closed = true
       queue.done = true
       stream.close()
       for (const wake of queue.waiters.splice(0)) wake()
     }
     queues.set(runId, queue)
+    try { stream.connect() } catch (error) {
+      queue.close()
+      queues.delete(runId)
+      throw error
+    }
     return queue
   }
 
   return {
+    subscriptionStats: () => ({ queues: queues.size, bufferedEvents: [...queues.values()].reduce((count, queue) => count + queue.events.length, 0) }),
     probe: (backend: AgoraxManagedAgentBackend): Promise<AgentProbeResult> =>
       client.probe(backend),
     startRun: async ({ backend, run, mcp }: { backend: AgoraxManagedAgentBackend; run: AgentRunInput; mcp: McpHandshake }) => {
@@ -135,7 +147,7 @@ export function createAgoraxManagedAgentTransport(
           ...(displaySessionId ? { displaySessionId } : {}),
           turnId: response.turnId,
         })
-        ensureQueue(run.runId, { agentSessionId: existing.agentSessionId })
+        if (run.subscribeEvents !== false) ensureQueue(run.runId, { agentSessionId: existing.agentSessionId, turnId: response.turnId })
         return { runId: run.runId }
       }
       const response = await client.createSessionForRun({
@@ -167,25 +179,39 @@ export function createAgoraxManagedAgentTransport(
           ...(response.session.activeTurnId ? { turnId: response.session.activeTurnId } : {}),
         })
       }
-      ensureQueue(run.runId, { agentSessionId: response.session.id })
+      if (run.subscribeEvents !== false) ensureQueue(run.runId, { agentSessionId: response.session.id, ...(response.session.activeTurnId ? { turnId: response.session.activeTurnId } : {}) })
       return { runId: run.runId }
     },
     streamEvents: async function* ({ runId }: { backend: AgoraxManagedAgentBackend; runId: string }) {
       const binding = await runStore.get(runId)
       if (!binding) return
       const queue = ensureQueue(runId, binding)
-      let cursor = 0
-      while (!queue.done || cursor < queue.events.length) {
-        while (cursor < queue.events.length) yield queue.events[cursor++]!
-        if (!queue.done) await new Promise<void>((wake) => queue.waiters.push(wake))
+      if (queue.subscribed) throw new Error('Managed run already has an event subscriber')
+      queue.subscribed = true
+      try {
+        while (!queue.done || queue.events.length > 0) {
+          while (queue.events.length > 0) yield queue.events.shift()!
+          if (!queue.done) await new Promise<void>((wake) => queue.waiters.push(wake))
+        }
+      } finally {
+        queue.close()
+        queue.events.length = 0
+        if (queues.get(runId) === queue) queues.delete(runId)
       }
+    },
+    closeEvents: ({ runId }: { runId: string }) => {
+      const queue = queues.get(runId)
+      queue?.close()
+      if (queue) queue.events.length = 0
       queues.delete(runId)
     },
     interrupt: async ({ runId }: { backend: AgoraxManagedAgentBackend; runId: string; reason: string }) => {
       const binding = await runStore.get(runId)
-      if (!binding?.turnId) return
-      await client.cancelTurn(binding.agentSessionId, binding.turnId)
-      queues.get(runId)?.close()
+      try {
+        if (binding?.turnId) await client.cancelTurn(binding.agentSessionId, binding.turnId)
+      } finally {
+        queues.get(runId)?.close()
+      }
     },
   }
 }

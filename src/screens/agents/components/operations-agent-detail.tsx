@@ -930,7 +930,11 @@ function CapabilitiesTab({
                         ? 'Connected'
                         : mcp.status === 'error'
                           ? 'Error'
-                          : 'Disabled'}
+                          : !mcp.enabled
+                            ? 'Disabled'
+                            : mcp.status === 'assigned'
+                              ? 'Assigned · enabled'
+                              : 'Connection unknown'}
                     </p>
                   )}
                 </div>

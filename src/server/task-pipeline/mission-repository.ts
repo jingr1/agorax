@@ -55,7 +55,7 @@ export type RecordCheckpointResult =
   | null
 
 export type MissionRepository = {
-  listMissions(limit?: number): Array<SwarmMission>
+  listMissions(limit?: number, offset?: number, options?: { summaryOnly?: boolean }): Array<SwarmMission>
   getMission(missionId: string): SwarmMission | null
   createOrUpdateMission(input: {
     missionId?: string | null
@@ -350,17 +350,6 @@ export class SqliteMissionRepository implements MissionRepository {
     return openSqliteDatabase(this.dbPath, false)
   }
 
-  private syncJsonCache(): void {
-    try {
-      writeJsonCache(this.listMissions(1000))
-    } catch (error) {
-      console.error(
-        '[SqliteMissionRepository] cache sync failed:',
-        error instanceof Error ? error.message : String(error),
-      )
-    }
-  }
-
   private withTransaction<T>(fn: (db: ReturnType<typeof openSqliteDatabase>) => T): T {
     const db = this.db()
     try {
@@ -381,9 +370,7 @@ export class SqliteMissionRepository implements MissionRepository {
   }
 
   private withWriteSync<T>(fn: (db: ReturnType<typeof openSqliteDatabase>) => T): T {
-    const result = this.withTransaction(fn)
-    this.syncJsonCache()
-    return result
+    return this.withTransaction(fn)
   }
 
   private hydrateMission(db: ReturnType<typeof openSqliteDatabase>, missionId: string): SwarmMission {
@@ -426,13 +413,23 @@ export class SqliteMissionRepository implements MissionRepository {
     )
   }
 
-  listMissions(limit = 20): Array<SwarmMission> {
+  listMissions(limit = 20, offset = 0, options?: { summaryOnly?: boolean }): Array<SwarmMission> {
     const cap = Math.max(1, Math.min(100, limit))
     const db = this.dbReadonly()
     try {
       const rows = db
-        .prepare('SELECT id FROM missions ORDER BY updated_at DESC LIMIT ?')
-        .all(cap) as Array<{ id: string }>
+        .prepare(`SELECT ${options?.summaryOnly
+          ? 'id,title,state,pipeline_id,project_id,execution_mode,assignee_type,assignee_id,room_id,priority,labels,board_lane,created_at,updated_at'
+          : 'id'} FROM missions ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`)
+        .all(cap, Math.max(0, Math.floor(offset))) as Array<Record<string, unknown> & { id: string }>
+      if (options?.summaryOnly) {
+        if (!rows.length) return []
+        const assignments = db.prepare(`SELECT id,mission_id,worker_id,state,depends_on,review_required,reviewed_at,reviewed_by,stage_key,
+          '' AS task FROM assignments WHERE mission_id IN (${rows.map(() => '?').join(',')}) ORDER BY dispatched_at ASC,id ASC`).all(...rows.map((row) => row.id))
+        return rows.map((row) => ({ ...missionRowToMission(row),
+          assignments: assignments.filter((assignment) => assignment.mission_id === row.id).map(assignmentRowToAssignment),
+        }))
+      }
       return rows.map((row) => this.hydrateMission(db, row.id))
     } finally {
       db.close()
@@ -1565,7 +1562,16 @@ export class SqliteMissionRepository implements MissionRepository {
   }
 
   exportToJson(): Array<SwarmMission> {
-    return this.listMissions(1000)
+    const db = this.dbReadonly()
+    let missions: Array<SwarmMission>
+    try {
+      db.exec('BEGIN')
+      const rows = db.prepare('SELECT id FROM missions ORDER BY updated_at DESC,id DESC').all() as Array<{ id: string }>
+      missions = rows.map((row) => this.hydrateMission(db, row.id))
+      db.exec('COMMIT')
+    } finally { db.close() }
+    writeJsonCache(missions)
+    return missions
   }
 
   private assertAcyclicDependencies(

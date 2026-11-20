@@ -464,14 +464,19 @@ export function reconcileHistoryMessages<T>(
 
 export function reconcileHistoryResponse<
   T extends { messages?: Array<unknown> },
->(previous: T | undefined, incoming: T | undefined): T | undefined {
+>(previous: T | undefined, incoming: T | undefined): T | undefined
+export function reconcileHistoryResponse(previous: unknown, incoming: unknown): unknown
+export function reconcileHistoryResponse(previous: unknown, incoming: unknown): unknown {
   if (!incoming) return previous
   if (!previous) return incoming
+  if (typeof incoming !== 'object' || typeof previous !== 'object') return incoming
+  const previousMessages = 'messages' in previous && Array.isArray(previous.messages) ? previous.messages : undefined
+  const incomingMessages = 'messages' in incoming && Array.isArray(incoming.messages) ? incoming.messages : undefined
   const messages = reconcileHistoryMessages(
-    previous.messages,
-    incoming.messages,
+    previousMessages,
+    incomingMessages,
   )
-  if (messages === previous.messages) {
+  if (messages === previousMessages) {
     return previous
   }
   return {

@@ -8,9 +8,7 @@ import {
   setAgentSkillEnabled,
 } from '../../../../../server/platform-skills'
 
-export const Route = createFileRoute(
-  '/api/agents/$agentId/skills/$skillId',
-)({
+export const Route = createFileRoute('/api/agents/$agentId/skills/$skillId')({
   server: {
     handlers: {
       PATCH: async ({ request, params }) => {
@@ -19,10 +17,8 @@ export const Route = createFileRoute(
         }
         const ct = requireJsonContentType(request)
         if (ct) return ct
-        const agentId =
-          typeof params.agentId === 'string' ? params.agentId : ''
-        const skillId =
-          typeof params.skillId === 'string' ? params.skillId : ''
+        const agentId = typeof params.agentId === 'string' ? params.agentId : ''
+        const skillId = typeof params.skillId === 'string' ? params.skillId : ''
         const body = (await request.json().catch(() => ({}))) as Record<
           string,
           unknown
@@ -34,23 +30,21 @@ export const Route = createFileRoute(
         if (!binding) {
           return json({ error: 'Binding not found' }, { status: 404 })
         }
-        materializeHermesAgentSkills(agentId)
-        return json({ skill: binding })
+        const { deployments } = materializeHermesAgentSkills(agentId)
+        return json({ skill: binding, deployments })
       },
       DELETE: async ({ request, params }) => {
         if (!isAuthenticated(request)) {
           return json({ error: 'Unauthorized' }, { status: 401 })
         }
-        const agentId =
-          typeof params.agentId === 'string' ? params.agentId : ''
-        const skillId =
-          typeof params.skillId === 'string' ? params.skillId : ''
+        const agentId = typeof params.agentId === 'string' ? params.agentId : ''
+        const skillId = typeof params.skillId === 'string' ? params.skillId : ''
         const ok = removeAgentSkill(agentId, skillId)
         if (!ok) {
           return json({ error: 'Binding not found' }, { status: 404 })
         }
-        materializeHermesAgentSkills(agentId)
-        return json({ ok: true })
+        const { deployments } = materializeHermesAgentSkills(agentId)
+        return json({ ok: true, deployments })
       },
     },
   },

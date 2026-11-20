@@ -14,23 +14,6 @@ import {
   getChatMode,
 } from '../../server/gateway-capabilities'
 import { isAuthenticated } from '../../server/auth-middleware'
-import { startGroupChatRunner } from '../../server/group-chat/group-chat-runner'
-import { ensureActiveProfileGateway } from '../../server/gateway-pool'
-
-// Start the Bot Mode group-chat runner when the server process starts. The
-// function is idempotent; it returns immediately if the runner is already on.
-startGroupChatRunner()
-
-// Auto-start the active profile's Hermes gateway in production builds (dev
-// mode already starts it via vite.config.ts). This keeps local single-profile
-// deployments self-bootstrapping. The call is async and intentionally not
-// awaited so server startup is not blocked by gateway spawn time.
-void ensureActiveProfileGateway().catch((error) => {
-  console.warn(
-    '[connection-status] auto-start gateway failed:',
-    error instanceof Error ? error.message : String(error),
-  )
-})
 
 const CONFIG_PATH = path.join(
   process.env.HERMES_HOME ??

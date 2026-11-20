@@ -588,6 +588,19 @@ func streamEventTypeCounts(events []StreamEvent) []string {
 	return summarizeLogValueCounts(types)
 }
 
+func (c *Controller) SessionCommands(roomID, agentSessionID string) ([]AgentSessionCommand, bool) {
+	if c == nil {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	snapshot, ok := c.commands[sessionKey(roomID, agentSessionID)]
+	if !ok {
+		return nil, false
+	}
+	return cloneAgentSessionCommands(snapshot.Commands), true
+}
+
 func (c *Controller) publishAdapterCommandSnapshot(session Session, adapter Adapter) {
 	commandAdapter, ok := adapter.(CommandSnapshotAdapter)
 	if !ok {

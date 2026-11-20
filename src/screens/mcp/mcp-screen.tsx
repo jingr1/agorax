@@ -578,7 +578,9 @@ function ManagedBindingsList({
           />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-ink">{b.name}</p>
-            <p className="text-xs text-primary-500">{b.transport}</p>
+            <p className="text-xs text-primary-500">
+              {b.transport} · {b.enabled ? 'Assigned · enabled' : 'Disabled'}
+            </p>
           </div>
           <Button
             variant="ghost"

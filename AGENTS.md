@@ -214,6 +214,8 @@ set -g exit-unattached off
 
 ## 八、给 Agent 的仓库导航（简图）
 
+整体架构与状态所有权见 [docs/architecture.md](docs/architecture.md)；Managed 双桥覆盖见 [docs/managed-agent-daemon-mapping.md](docs/managed-agent-daemon-mapping.md)。
+
 | 区域                         | 路径                                                                         |
 | ---------------------------- | ---------------------------------------------------------------------------- |
 | Chat 分层合同（运行时分叉·事件同源） | `docs/hermes-native-bridge.md`、`src/lib/hermes-activity-adapter.ts` |

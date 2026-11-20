@@ -115,7 +115,8 @@ export type ManagedAgentChat = {
   fileChanges: unknown
   usage: unknown
   composer: ManagedAgentComposerState
-  submit: (text: string, attachments: Array<ComposerAttachment>, options?: { effort?: string }) => Promise<void>
+  submit: (text: string, attachments: Array<ComposerAttachment>, options?: { effort?: string; mode?: 'queue' | 'steer' | 'interrupt' }) => Promise<void>
+  clearQueue: () => void
   abort: () => void
   clearMessages: () => void
   startNewSession: () => void
@@ -608,11 +609,24 @@ export function useManagedAgentChat({
   const submit = useCallback(async (
     text: string,
     attachments: Array<ComposerAttachment>,
-    options?: { effort?: string },
+    options?: { effort?: string; mode?: 'queue' | 'steer' | 'interrupt' },
   ) => {
     if (!text.trim() && attachments.length === 0) return
     setError(null)
     try {
+      const currentSessionId = canonicalSessionIdRef.current
+      const currentSession = currentSessionId && runtimeRef.current
+        ? selectEngineSession(runtimeRef.current.engine.getSnapshot(), currentSessionId)
+        : null
+      const availability = currentSessionId && runtimeRef.current
+        ? selectEngineSubmitAvailability(runtimeRef.current.engine.getSnapshot(), currentSessionId)
+        : null
+      if (availability?.state === 'blocked' && availability.reason !== 'active_turn') {
+        throw new Error(`Managed Agent input is blocked: ${availability.reason}`)
+      }
+      if (attachments.some((attachment) => attachment.kind === 'image' || attachment.contentType.startsWith('image/')) && currentSession?.capabilities?.imageInput !== true) {
+        throw new Error('Image input is unavailable for this session')
+      }
       const promptContent = managedPromptContentFromAttachments({ text, attachments })
       const generation = activityGenerationRef.current
       let chatRuntime = runtimeRef.current
@@ -661,12 +675,20 @@ export function useManagedAgentChat({
       } else {
         if (!chatRuntime) chatRuntime = await ensureRuntime(displaySessionIdRef.current, generation)
         const agentSessionId = canonicalSessionIdRef.current
+        const session = selectEngineSession(chatRuntime.engine.getSnapshot(), agentSessionId)
+        if (options?.mode === 'steer' && session?.capabilities?.activeTurnGuidance !== true) {
+          throw new Error('Active-turn guidance is unavailable for this session')
+        }
+        if (options?.mode === 'interrupt') {
+          if (session?.capabilities?.interrupt !== true) throw new Error('Interrupt is unavailable for this session')
+          chatRuntime.engine.stopSession({ agentSessionId })
+        }
         // Existing sessions resume with a sticky provider model. Composer picks
         // only live in session-model-store unless we push them through
         // updateSessionSettings (ACP session/set_model) before the prompt.
         // The prompt queue drains only after the settings write settles.
         const settingsPatch = managedSessionSettingsPatch({
-          selectedModel,
+          selectedModel: session?.capabilities?.modelSwitch === true ? selectedModel : undefined,
           effort: options?.effort,
           current: selectEngineSession(
             chatRuntime.engine.getSnapshot(),
@@ -680,20 +702,22 @@ export function useManagedAgentChat({
           })
         }
         const clientSubmitId = crypto.randomUUID()
-        ingestManagedUserPromptMessage({
+        if (!session?.activeTurnId) ingestManagedUserPromptMessage({
           engine: chatRuntime.engine,
           workspaceId: chatRuntime.workspaceId,
           agentSessionId,
           clientSubmitId,
           text,
         })
-        chatRuntime.engine.submitPrompt({
+        const admission = chatRuntime.engine.submitPrompt({
           agentSessionId,
           clientSubmitId,
           content: promptContent,
           displayPrompt: text,
-          routing: 'auto',
+          routing: options?.mode === 'steer' ? 'send_now' : 'auto',
+          ...(options?.mode === 'steer' && session?.activeTurnId ? { targetTurnId: session.activeTurnId } : {}),
         })
+        if (!admission.accepted) throw new Error('Managed Agent input was not accepted')
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -704,6 +728,15 @@ export function useManagedAgentChat({
   const abort = useCallback(() => {
     const agentSessionId = canonicalSessionIdRef.current
     if (agentSessionId) runtimeRef.current?.engine.stopSession({ agentSessionId })
+  }, [])
+
+  const clearQueue = useCallback(() => {
+    const agentSessionId = canonicalSessionIdRef.current
+    const chatRuntime = runtimeRef.current
+    if (!chatRuntime || !agentSessionId) return
+    for (const prompt of selectEngineVisibleQueuedPrompts(chatRuntime.engine.getSnapshot(), agentSessionId)) {
+      chatRuntime.engine.dispatch({ type: 'queue/removed', agentSessionId, promptId: prompt.id })
+    }
   }, [])
 
   const respondToInteraction = useCallback(async (input: AgentInteractionResponseInput) => {
@@ -790,6 +823,7 @@ export function useManagedAgentChat({
     activeTitle,
     composer,
     submit,
+    clearQueue,
     abort,
     clearMessages,
     startNewSession,

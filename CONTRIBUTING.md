@@ -82,7 +82,22 @@ pnpm build && pnpm start
 
 # Run tests
 pnpm test
+
+# Workspace Node suites (not included by root Vitest)
+pnpm test:workspace
+
+# Architecture contract links
+pnpm docs:check
+
+# Production control-plane startup/shutdown/restart with isolated state
+pnpm build && pnpm test:control-plane
 ```
+
+CI runs lint, typecheck, build, Vitest, workspace Node tests, Go Host/storage/
+activity tests, Python orchestration and architecture-link checks independently.
+Errors fail their jobs; no gate converts failures into success. Local tests must
+isolate both `HERMES_HOME` and `HERMES_COLLAB_DB`, not only the legacy JSON path.
+See [architecture ownership and recovery](docs/architecture.md).
 
 ## Environment Variables
 

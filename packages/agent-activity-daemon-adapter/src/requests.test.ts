@@ -113,7 +113,7 @@ test("request projection rejects unsupported image MIME types", () => {
   );
 });
 
-test("send projection keeps displayPrompt and drops unsupported fields", () => {
+test("send projection keeps displayPrompt and exact guidance target", () => {
   const projected = daemonSendAgentSessionInputRequestFromActivity({
     agentSessionId: "session-1",
     capabilityRefs: [{ capability: "agorax", source: "slash_command" }],
@@ -133,7 +133,9 @@ test("send projection keeps displayPrompt and drops unsupported fields", () => {
       { text: "list my calendar events", type: "text" },
       { connectorKey: "lark-cli", type: "connector" }
     ],
-    displayPrompt: "/lark-cli list my calendar events"
+    displayPrompt: "/lark-cli list my calendar events",
+    guidance: true,
+    targetTurnId: "turn-target"
   });
 });
 

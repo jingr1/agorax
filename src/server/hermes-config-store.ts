@@ -207,18 +207,17 @@ function applySetDefaultModel(
   const config = readYamlConfig(paths.configPath)
   config.provider = patch.providerId
 
-  // Preserve any nested-form extension fields (e.g. temperature, max_tokens)
-  // some Hermes deployments stash under `model: { ... }`. Only update the
-  // canonical `default`/`provider` keys; otherwise switch to flat form.
+  // Preserve nested-form extension fields (e.g. temperature, max_tokens).
+  // Never flatten to a bare model string — Hermes only reads model.provider,
+  // and a string `model:` drops credentials into bare `custom`.
   const existing = config.model
-  if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
-    const next = { ...(existing as Record<string, unknown>) }
-    next.default = patch.modelId
-    next.provider = patch.providerId
-    config.model = next
-  } else {
-    config.model = patch.modelId
-  }
+  const next =
+    existing && typeof existing === 'object' && !Array.isArray(existing)
+      ? { ...(existing as Record<string, unknown>) }
+      : {}
+  next.default = patch.modelId
+  next.provider = patch.providerId
+  config.model = next
 
   writeYamlConfig(paths.configPath, config)
   return { ok: true }

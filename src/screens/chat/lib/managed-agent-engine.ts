@@ -238,6 +238,7 @@ export function createManagedAgentCommandPort(
             clientSubmitId: input.clientSubmitId,
             content: input.displayPrompt ?? '',
             promptContent: input.content,
+            ...(input.guidance ? { guidance: true, targetTurnId: input.targetTurnId } : {}),
           }),
         )
         const detail = mapManagedAgentActivitySnapshot(response.activity)

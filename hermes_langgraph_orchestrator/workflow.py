@@ -247,12 +247,20 @@ def route_by_workflow(
     if (
         classification.worker_id == "architect"
         and classification.verdict == "DONE"
+        and _workflow_uses_gate_h(wf)
+        and "dispatched_workers" in state
         and "developer" not in dispatched_workers
         and "writer" not in dispatched_workers
     ):
-        classification.review_outcome = ""
-        if classification.metadata:
-            classification.metadata.pop("harden_outcome", None)
+        classification = WorkerClassification(
+            worker_id=classification.worker_id,
+            verdict=classification.verdict,
+            blocker_type=classification.blocker_type,
+            blocker_summary=classification.blocker_summary,
+            reasoning=classification.reasoning,
+            review_outcome="",
+            metadata={key: value for key, value in (classification.metadata or {}).items() if key != "harden_outcome"},
+        )
 
     # Gate H: workflows that declare harden_outcome on approved transitions require
     # HARDEN_OUTCOME after REVIEW_OUTCOME=approved (missing → human, not silent ship).

@@ -9,6 +9,14 @@
  */
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import {
+  PLATFORM_MARKER,
+  SKILL_TREE_EXCLUDED_DIR_NAMES,
+  readSkillMarker,
+  readSkillTree,
+} from './skill-tree'
+import { isOwnedSkillLink, readSkillDeployment } from './deployment-tree'
+import { parseSkillFrontmatter } from './skill-bundle'
 import type { PlatformSkillFile } from './types'
 
 export type ScannedSkill = {
@@ -20,32 +28,6 @@ export type ScannedSkill = {
   sourceDir: string
 }
 
-const PLATFORM_MARKER = '.agorax-platform-skill'
-
-/** Mirrors hermes-agent EXCLUDED_SKILL_DIRS (+ common junk). */
-const EXCLUDED_DIR_NAMES = new Set([
-  '.git',
-  '.github',
-  '.hub',
-  '.archive',
-  '.curator_backups',
-  '.venv',
-  'venv',
-  'node_modules',
-  'site-packages',
-  '__pycache__',
-  '.tox',
-  '.nox',
-  '.pytest_cache',
-  '.mypy_cache',
-  '.ruff_cache',
-  '.cache',
-  'dist',
-  'build',
-  '_org',
-  '_wisdom',
-])
-
 /** Progressive-disclosure dirs inside a skill package — never skill roots. */
 const SKILL_SUPPORT_DIRS = new Set([
   'references',
@@ -55,60 +37,28 @@ const SKILL_SUPPORT_DIRS = new Set([
 ])
 
 function collectSupportingFiles(skillDir: string): Array<PlatformSkillFile> {
-  const files: Array<PlatformSkillFile> = []
-  const walk = (dir: string, prefix: string) => {
-    let entries: Array<fs.Dirent>
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const entry of entries) {
-      if (entry.name.startsWith('.')) continue
-      if (SKILL_SUPPORT_DIRS.has(entry.name) && entry.isDirectory()) {
-        // Still include support files as skill files (content), but don't
-        // treat nested SKILL.md under them as separate skills (walk skips
-        // them at the index level).
-      }
-      const full = path.join(dir, entry.name)
-      const rel = prefix ? `${prefix}/${entry.name}` : entry.name
-      if (entry.isDirectory()) {
-        walk(full, rel)
-        continue
-      }
-      if (entry.name === 'SKILL.md') continue
-      try {
-        files.push({ path: rel, content: fs.readFileSync(full, 'utf-8') })
-      } catch {
-        /* skip binary/unreadable */
-      }
-    }
-  }
-  walk(skillDir, '')
-  return files
+  const marker = readSkillMarker(skillDir)
+  return (
+    (marker
+      ? readSkillDeployment(skillDir, marker.skillId)
+      : readSkillTree(skillDir)
+    ).files ?? []
+  )
 }
 
 function readDescription(content: string): string {
-  const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-  const block = fmMatch?.[1] ?? content.slice(0, 1024)
-  const descMatch = block.match(/^description:\s*(.+?)\s*$/m)
-  return descMatch?.[1]?.trim().replace(/^["']|["']$/g, '') ?? ''
+  return parseSkillFrontmatter(content).description
 }
 
 function readName(content: string, fallback: string): string {
-  const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-  const block = fmMatch?.[1] ?? content.slice(0, 1024)
-  const nameMatch = block.match(/^name:\s*(.+?)\s*$/m)
-  return nameMatch?.[1]?.trim().replace(/^["']|["']$/g, '') || fallback
+  return parseSkillFrontmatter(content).name || fallback
 }
 
 function readCategoryFromFrontmatter(content: string): string {
   const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   const block = fmMatch?.[1] ?? ''
   // metadata.hermes.category: creative  OR category: creative
-  const hermesCat = block.match(
-    /^\s*category:\s*(.+?)\s*$/m,
-  )
+  const hermesCat = block.match(/^\s*category:\s*(.+?)\s*$/m)
   if (hermesCat) {
     return hermesCat[1].trim().replace(/^["']|["']$/g, '')
   }
@@ -179,12 +129,17 @@ export function iterSkillMdFiles(skillsDir: string): Array<string> {
     } catch {
       return
     }
-    const hasSkillMd = entries.some(
-      (e) => e.isFile() && e.name === 'SKILL.md',
-    )
+    const hasSkillMd = entries.some((e) => e.isFile() && e.name === 'SKILL.md')
     for (const entry of entries) {
+      if (entry.isSymbolicLink()) {
+        const directory = path.join(dir, entry.name)
+        const marker = readSkillMarker(directory)
+        if (marker && isOwnedSkillLink(directory, marker.skillId))
+          walk(directory)
+        continue
+      }
       if (entry.isDirectory()) {
-        if (EXCLUDED_DIR_NAMES.has(entry.name)) continue
+        if (SKILL_TREE_EXCLUDED_DIR_NAMES.has(entry.name)) continue
         // Allow Codex system skills (`.system`) and shared `.agents`.
         if (
           entry.name.startsWith('.') &&
@@ -254,7 +209,7 @@ export function scanSkillsRoot(
       files: collectSupportingFiles(skillDir),
       sourceDir: skillDir,
     }
-    const key = skill.name.toLowerCase()
+    const key = skill.sourceDir
     if (seen.has(key)) continue
     seen.add(key)
     found.push(skill)
@@ -267,13 +222,10 @@ export function scanManySkillsRoots(
   roots: Array<string>,
   opts?: { skipPlatformManaged?: boolean },
 ): Array<ScannedSkill> {
-  const byName = new Map<
-    string,
-    ScannedSkill & { platformManaged: boolean }
-  >()
+  const byName = new Map<string, ScannedSkill & { platformManaged: boolean }>()
   for (const root of roots) {
     for (const skill of scanSkillsRoot(root, { skipPlatformManaged: false })) {
-      const key = skill.name.toLowerCase()
+      const key = path.resolve(skill.sourceDir)
       const platformManaged = fs.existsSync(
         path.join(skill.sourceDir, PLATFORM_MARKER),
       )

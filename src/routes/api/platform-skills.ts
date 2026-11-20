@@ -6,9 +6,12 @@ import {
   createPlatformSkill,
   ensurePlatformSkillsSeeded,
   listPlatformSkills,
-  type CreatePlatformSkillInput,
-  type PlatformSkillFile,
-  type PlatformSkillOrigin,
+} from '../../server/platform-skills'
+import { startPlatformSkillSync } from '../../server/platform-skills/sync-loop'
+import type {
+  CreatePlatformSkillInput,
+  PlatformSkillFile,
+  PlatformSkillOrigin,
 } from '../../server/platform-skills'
 
 function parseFiles(value: unknown): Array<PlatformSkillFile> | undefined {
@@ -22,6 +25,8 @@ function parseFiles(value: unknown): Array<PlatformSkillFile> | undefined {
     files.push({
       path,
       content: typeof record.content === 'string' ? record.content : '',
+      ...(record.encoding === 'base64' ? { encoding: 'base64' } : {}),
+      ...(record.executable === true ? { executable: true } : {}),
     })
   }
   return files
@@ -49,7 +54,8 @@ export const Route = createFileRoute('/api/platform-skills')({
         if (!isAuthenticated(request)) {
           return json({ error: 'Unauthorized' }, { status: 401 })
         }
-        ensurePlatformSkillsSeeded()
+        ensurePlatformSkillsSeeded({ materialize: false })
+        startPlatformSkillSync()
         return json({ skills: listPlatformSkills() })
       },
       POST: async ({ request }) => {
@@ -70,13 +76,28 @@ export const Route = createFileRoute('/api/platform-skills')({
           name,
           description:
             typeof body.description === 'string' ? body.description : '',
-          category:
-            typeof body.category === 'string' ? body.category : '',
+          category: typeof body.category === 'string' ? body.category : '',
           content: typeof body.content === 'string' ? body.content : '',
           files: parseFiles(body.files),
           origin: parseOrigin(body.origin) ?? { kind: 'manual' },
         }
         try {
+          if (
+            body.deploymentMode !== undefined &&
+            body.deploymentMode !== 'symlink' &&
+            body.deploymentMode !== 'copy'
+          )
+            return json({ error: 'Invalid deployment mode' }, { status: 400 })
+          if (
+            body.allowCopyFallback !== undefined &&
+            typeof body.allowCopyFallback !== 'boolean'
+          )
+            return json(
+              { error: 'allowCopyFallback must be a boolean' },
+              { status: 400 },
+            )
+          input.deploymentMode = body.deploymentMode
+          input.allowCopyFallback = body.allowCopyFallback
           const skill = createPlatformSkill(input)
           return json({ skill }, { status: 201 })
         } catch (error) {

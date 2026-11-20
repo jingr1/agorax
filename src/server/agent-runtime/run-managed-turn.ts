@@ -220,6 +220,7 @@ async function drainManagedRun(
   const startedAt = Date.now()
   let deadline = startedAt + opts.softMs
   const reconcile = opts.reconcileActivity
+  let iterator: AsyncIterator<AgentStreamEvent> | undefined
 
   const onAbort = () => {
     void adapter.interrupt(runId, 'aborted')
@@ -260,7 +261,7 @@ async function drainManagedRun(
   }
 
   try {
-    const iterator = adapter.streamEvents(runId)[Symbol.asyncIterator]()
+    iterator = adapter.streamEvents(runId)[Symbol.asyncIterator]()
     let pending = iterator.next()
 
     while (!sawExit) {
@@ -363,6 +364,8 @@ async function drainManagedRun(
       events: opts.events,
     }
   } finally {
+    adapter.closeEvents?.(runId)
+    if (adapter.closeEvents) await iterator?.return?.()
     opts.signal?.removeEventListener('abort', onAbort)
   }
 

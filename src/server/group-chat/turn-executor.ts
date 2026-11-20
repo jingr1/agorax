@@ -26,6 +26,7 @@ import {
   resolveNativeSessionForRun,
   roomManagedSessionId,
 } from '../agent-runtime/managed-chat-store'
+import { registerRoomTurn } from './turn-control'
 import { upsertManagedInteractionCard } from './managed-interaction-cards'
 import {
   GROUP_TURN_HARD_CAP_MS,
@@ -50,9 +51,12 @@ export type TurnExecutorOptions = {
   cwd?: string | null
   dbPath?: string
   onEvent?: (event: string, data: Record<string, unknown>) => void
+  onSessionPrepared?: (sessionId: string, before: number | null) => void
+  onManagedRun?: (runId: string) => void
 }
 
 const PROVIDER_CONFIG_RE = /No LLM provider configured/i
+type ControlledTurnOptions = TurnExecutorOptions & { control: ReturnType<typeof registerRoomTurn> }
 
 type StreamCapture = {
   replyText: string
@@ -77,7 +81,7 @@ function isHermesMember(member: GroupMember): boolean {
 }
 
 async function executeManagedMemberTurn(
-  opts: TurnExecutorOptions,
+  opts: ControlledTurnOptions,
 ): Promise<GroupTurnResult> {
   console.log(
     `[turn-executor] managed member=${opts.member.displayName} runtime=${opts.member.runtime} agent=${opts.member.participantId}`,
@@ -98,8 +102,35 @@ async function executeManagedMemberTurn(
   // the drain loop then waits past the soft deadline (hard cap still bounds)
   // so a human can answer the room card without the run being interrupted.
   let awaitingInteraction = false
+  let cancelBound = false
+  const bindCancel = (runId: string) => {
+    if (cancelBound) return
+    cancelBound = true
+    opts.onManagedRun?.(runId)
+    opts.control.bindCancel(async () => {
+      const { getAgentRuntimeRouter } = await import('../agent-runtime/router')
+      const adapter = getAgentRuntimeRouter().getAdapter(opts.member.participantId)
+      if (!adapter) throw new Error('Managed Agent is unavailable')
+      await adapter.interrupt(runId, 'room paused')
+      const { AgoraxManagedRunStore } = await import('../agent-runtime/agorax-managed-run-store')
+      const { AgoraxManagedAgentHttpClient } = await import('../agent-runtime/agorax-managed-agent-http-client')
+      const binding = await new AgoraxManagedRunStore().get(runId)
+      const baseUrl = process.env.AGORAX_MANAGED_AGENT_URL?.trim()
+      const workspaceId = process.env.AGORAX_WORKSPACE_ID?.trim()
+      if (!binding?.turnId || !baseUrl || !workspaceId) throw new Error('Cannot confirm the managed turn cancellation')
+      const client = new AgoraxManagedAgentHttpClient({ baseUrl, workspaceId })
+      const deadline = Date.now() + 30_000
+      while (Date.now() < deadline) {
+        const detail = await client.getSessionDetail(binding.agentSessionId)
+        if (detail.turns.some((turn) => turn.turnId === binding.turnId && turn.phase === 'settled')) return
+        await sleep(100)
+      }
+      throw new Error('Managed turn is still stopping')
+    })
+  }
 
   const result = await runManagedTurn({
+    signal: opts.control.signal,
     agentId: opts.member.participantId,
     task: opts.prompt,
     model: opts.model,
@@ -109,6 +140,7 @@ async function executeManagedMemberTurn(
     nativeResume: native.resume,
     whileInteractionPending: () => awaitingInteraction,
     onEvent: (event) => {
+      bindCancel(event.runId)
       if (event.type === 'text_delta') {
         opts.onEvent?.('assistant.delta', { delta: event.text })
       } else if (event.type === 'error') {
@@ -144,6 +176,7 @@ async function executeManagedMemberTurn(
       }
     },
   })
+  if ('runId' in result && result.runId) bindCancel(result.runId)
 
   if (result.kind === 'completed' || result.kind === 'timed_out') {
     const text = result.text.trim()
@@ -172,10 +205,11 @@ async function executeManagedMemberTurn(
 }
 
 async function streamOnce(
-  opts: TurnExecutorOptions,
+  opts: ControlledTurnOptions,
   sessionId: string,
   profile: string | null,
 ): Promise<StreamCapture> {
+  if (opts.control.isCanceled()) return { replyText: '', streamError: null, timedOut: false }
   const client =
     opts.member.runtime === 'hermes' && profile
       ? getHermesApiClient(profile)
@@ -186,8 +220,14 @@ async function streamOnce(
   let streamError: string | null = null
   const startedAt = Date.now()
   let deadline = startedAt + GROUP_TURN_TIMEOUT_MS
+  let boundRunId: string | null = null
 
   const handleStreamEvent = (event: string, data: Record<string, unknown>) => {
+    const runId = typeof data.run_id === 'string' ? data.run_id : typeof data.runId === 'string' ? data.runId : null
+    if (!boundRunId && runId && (event === 'run.started' || event === 'started' || event === 'assistant.started')) {
+      boundRunId = runId
+      opts.control.bindCancel(() => client ? client.stopRun(runId) : import('../hermes-api').then((api) => api.stopRun(runId)))
+    }
     // Any activity means the turn is still visibly working — extend soft deadline.
     deadline = extendDeadline(startedAt, deadline)
     opts.onEvent?.(event, data)
@@ -222,6 +262,7 @@ async function streamOnce(
 
   let streamSettled = false
   let streamRejected: unknown = null
+  let detached = false
 
   const streamPromise = (
     client
@@ -257,6 +298,7 @@ async function streamOnce(
       streamSettled = true
       streamRejected = error
     })
+    .finally(() => { if (detached) opts.control.finish() })
 
   // Soft-deadline loop: tick until stream settles or hard/soft deadline elapses.
   // On timeout we deliberately do NOT abort the fetch — the gateway turn keeps
@@ -269,6 +311,7 @@ async function streamOnce(
       )
       // Detach: swallow late settle so it doesn't become an unhandled rejection.
       void streamPromise.catch(() => undefined)
+      detached = true
       return {
         replyText: (completedText ?? replyAccum).trim(),
         streamError: streamError ?? 'stream timeout',
@@ -381,7 +424,7 @@ async function toTurnResult(
 }
 
 async function executeHermesMemberTurn(
-  opts: TurnExecutorOptions,
+  opts: ControlledTurnOptions,
 ): Promise<GroupTurnResult> {
   // getOrCreateSession ensures the profile gateway before verifying/creating
   // the session — do not call ensureProfileGateway again here (avoids a second
@@ -400,10 +443,12 @@ async function executeHermesMemberTurn(
   console.log(
     `[turn-executor] member=${opts.member.displayName} profile=${profile ?? 'n/a'} session=${sessionId}`,
   )
+  if (opts.control.isCanceled()) return { kind: 'pass' }
 
   try {
     // Baseline message count before submit — harvest/pick scan from here.
     let before = 0
+    let baselineKnown = false
     try {
       const client =
         opts.member.runtime === 'hermes' && profile
@@ -413,10 +458,12 @@ async function executeHermesMemberTurn(
         ? await client.getMessages(sessionId)
         : await getMessages(sessionId)
       before = pre.length
+      baselineKnown = true
     } catch {
       before = 0
     }
 
+    opts.onSessionPrepared?.(sessionId, baselineKnown ? before : null)
     let capture = await streamOnce(opts, sessionId, profile)
 
     // Poisoned sessions (persisted model, often has_model_config=false) fail
@@ -425,7 +472,8 @@ async function executeHermesMemberTurn(
       !capture.replyText &&
       !capture.timedOut &&
       capture.streamError &&
-      PROVIDER_CONFIG_RE.test(capture.streamError)
+      PROVIDER_CONFIG_RE.test(capture.streamError) &&
+      !opts.control.isCanceled()
     ) {
       console.warn(
         `[turn-executor] member=${opts.member.displayName} retiring poisoned session ${sessionId} and retrying once`,
@@ -446,9 +494,11 @@ async function executeHermesMemberTurn(
         `[turn-executor] member=${opts.member.displayName} retry session=${sessionId}`,
       )
       before = 0
+      opts.onSessionPrepared?.(sessionId, before)
       capture = await streamOnce(opts, sessionId, profile)
     }
 
+    if (opts.control.isCanceled()) return { kind: 'pass' }
     return await toTurnResult(opts, sessionId, profile, before, capture)
   } catch (error) {
     console.error(
@@ -467,8 +517,15 @@ async function executeHermesMemberTurn(
 export async function executeMemberTurn(
   opts: TurnExecutorOptions,
 ): Promise<GroupTurnResult> {
-  if (!isHermesMember(opts.member)) {
-    return executeManagedMemberTurn(opts)
+  const control = registerRoomTurn(opts.roomId)
+  let detached = false
+  try {
+    const result = await (isHermesMember(opts.member)
+      ? executeHermesMemberTurn({ ...opts, control })
+      : executeManagedMemberTurn({ ...opts, control }))
+    detached = result.kind === 'timeout'
+    return control.isCanceled() ? { kind: 'pass' } : result
+  } finally {
+    if (!detached) control.finish()
   }
-  return executeHermesMemberTurn(opts)
 }

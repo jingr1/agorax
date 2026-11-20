@@ -17,6 +17,7 @@ export {
 }
 
 export type AgoraxManagedAgentTransport = {
+  closeEvents?: (input: { backend: AgoraxManagedAgentBackend; runId: string }) => void
   probe: (
     backend: AgoraxManagedAgentBackend,
   ) => Promise<AgentProbeResult>
@@ -133,6 +134,10 @@ export class AgoraxManagedAgentBridge {
       return this.fallback!.streamEvents(runId)
     }
     return this.transport.streamEvents({ backend: this.backend, runId })
+  }
+
+  closeEvents(runId: string): void {
+    this.transport.closeEvents?.({ backend: this.backend, runId })
   }
 
   async interrupt(runId: string, reason: string): Promise<void> {

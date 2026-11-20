@@ -1,4 +1,7 @@
+import { useComposerVoice } from '../hooks/use-composer-voice'
+import { MAX_ATTACHMENT_FILE_SIZE, MAX_IMAGE_DIMENSION, IMAGE_QUALITY, MAX_TRANSPORT_IMAGE_SIZE, IMAGE_EXTENSION_TO_MIME, TEXT_EXTENSION_TO_MIME, normalizeMimeType, isImageMimeType, inferImageMimeTypeFromFileName, inferTextMimeTypeFromFileName, isTextMimeType, isImageFile, isTextFile, formatFileSize, hasAttachableData, collectFilesFromDataTransfer, readFileAsDataUrl, readFileAsText, isCanvasSupported, estimateDataUrlBytes, readDataUrlMimeType, compressImageToDataUrl } from '../lib/composer-attachments'
 import { createPortal } from 'react-dom'
+import type { AgentActivitySessionCapabilities } from '@agorax/agent-activity-core'
 import {
   Add01Icon,
   ArrowDown01Icon,
@@ -97,6 +100,7 @@ import {
 } from '@/screens/chat/lib/composer-primary-action'
 import type { SlashCommandRuntime } from '@/screens/chat/slash-commands/types'
 import { HERMES_SLASH_COMMANDS } from '@/screens/chat/slash-commands/hermes'
+import { useComposerDraft } from '../hooks/use-composer-draft'
 
 type ChatComposerAttachment = {
   id: string
@@ -195,6 +199,8 @@ type ChatComposerProps = {
    * payload is not competing with models/session-status/etc. on a cold gateway.
    */
   gatewayQueriesEnabled?: boolean
+  runtimeCapabilities?: AgentActivitySessionCapabilities | null
+  clearDraftOnSubmit?: boolean
   /** Number of follow-ups waiting to send after the current turn */
   queuedCount?: number
   onClearQueue?: () => void
@@ -531,157 +537,6 @@ async function switchModel(
   }
 }
 
-/** Maximum file size accepted from picker/drop before processing (50MB). */
-const MAX_ATTACHMENT_FILE_SIZE = 50 * 1024 * 1024
-/** Longest side target for resized images. */
-const MAX_IMAGE_DIMENSION = 1920
-/** Initial JPEG compression quality (0-1). */
-const IMAGE_QUALITY = 0.85
-/** Safe image attachment limit after processing (1MB). */
-const MAX_TRANSPORT_IMAGE_SIZE = 1 * 1024 * 1024
-
-const IMAGE_EXTENSION_TO_MIME: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  bmp: 'image/bmp',
-  svg: 'image/svg+xml',
-  avif: 'image/avif',
-  heic: 'image/heic',
-  heif: 'image/heif',
-  tif: 'image/tiff',
-  tiff: 'image/tiff',
-}
-
-const TEXT_EXTENSION_TO_MIME: Record<string, string> = {
-  md: 'text/markdown',
-  txt: 'text/plain',
-  json: 'application/json',
-  csv: 'text/csv',
-  ts: 'text/plain',
-  tsx: 'text/plain',
-  js: 'text/plain',
-  py: 'text/plain',
-}
-
-function normalizeMimeType(value: string): string {
-  return value.trim().toLowerCase()
-}
-
-function isImageMimeType(value: string): boolean {
-  const normalized = normalizeMimeType(value)
-  return normalized.startsWith('image/')
-}
-
-function inferImageMimeTypeFromFileName(name: string): string {
-  const match = /\.([a-z0-9]+)$/i.exec(name.trim())
-  if (!match?.[1]) return ''
-  return IMAGE_EXTENSION_TO_MIME[match[1].toLowerCase()] || ''
-}
-
-function inferTextMimeTypeFromFileName(name: string): string {
-  const match = /\.([a-z0-9]+)$/i.exec(name.trim())
-  if (!match?.[1]) return ''
-  return TEXT_EXTENSION_TO_MIME[match[1].toLowerCase()] || ''
-}
-
-function isTextMimeType(value: string): boolean {
-  const normalized = normalizeMimeType(value)
-  return normalized.startsWith('text/') || normalized === 'application/json'
-}
-
-function isImageFile(file: File): boolean {
-  if (isImageMimeType(file.type)) return true
-  return inferImageMimeTypeFromFileName(file.name).length > 0
-}
-
-function isTextFile(file: File): boolean {
-  if (isTextMimeType(file.type)) return true
-  return inferTextMimeTypeFromFileName(file.name).length > 0
-}
-
-function formatFileSize(size: number): string {
-  if (!Number.isFinite(size) || size <= 0) return ''
-  const units = ['B', 'KB', 'MB', 'GB'] as const
-  let value = size
-  let unitIndex = 0
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex += 1
-  }
-  const precision = value >= 100 || unitIndex === 0 ? 0 : 1
-  return `${value.toFixed(precision)} ${units[unitIndex]}`
-}
-
-function hasAttachableData(dt: DataTransfer | null): boolean {
-  if (!dt) return false
-  const items = Array.from(dt.items)
-  if (
-    items.some(
-      (item) =>
-        item.kind === 'file' &&
-        (isImageMimeType(item.type) ||
-          isTextMimeType(item.type) ||
-          item.type.trim().length === 0),
-    )
-  )
-    return true
-  const files = Array.from(dt.files)
-  return files.some(
-    (file) =>
-      isImageFile(file) || isTextFile(file) || file.type.trim().length === 0,
-  )
-}
-
-function collectFilesFromDataTransfer(dt: DataTransfer | null): Array<File> {
-  if (!dt) return []
-  const files: Array<File> = []
-  const seen = new Set<string>()
-
-  const pushFile = (file: File | null) => {
-    if (!file) return
-    const key = `${file.name}:${file.size}:${file.lastModified}:${file.type}`
-    if (seen.has(key)) return
-    seen.add(key)
-    files.push(file)
-  }
-
-  for (const item of Array.from(dt.items)) {
-    if (item.kind !== 'file') continue
-    pushFile(item.getAsFile())
-  }
-
-  for (const file of Array.from(dt.files)) {
-    pushFile(file)
-  }
-
-  return files
-}
-
-async function readFileAsDataUrl(file: File): Promise<string | null> {
-  return await new Promise((resolve) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      resolve(typeof reader.result === 'string' ? reader.result : null)
-    }
-    reader.onerror = () => resolve(null)
-    reader.readAsDataURL(file)
-  })
-}
-
-async function readFileAsText(file: File): Promise<string | null> {
-  return await new Promise((resolve) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      resolve(typeof reader.result === 'string' ? reader.result : null)
-    }
-    reader.onerror = () => resolve(null)
-    reader.readAsText(file)
-  })
-}
-
 function readText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -734,93 +589,6 @@ function isCurrentModel(
   return false
 }
 
-function isCanvasSupported(): boolean {
-  if (typeof document === 'undefined') return false
-  try {
-    const canvas = document.createElement('canvas')
-    return Boolean(canvas.getContext('2d'))
-  } catch {
-    return false
-  }
-}
-
-function estimateDataUrlBytes(dataUrl: string): number {
-  const commaIndex = dataUrl.indexOf(',')
-  const base64 = commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl
-  if (!base64) return 0
-  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0
-  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding)
-}
-
-function readDataUrlMimeType(dataUrl: string): string | null {
-  const match = /^data:([^;]+);base64,/.exec(dataUrl)
-  return match?.[1]?.trim() || null
-}
-
-async function compressImageToDataUrl(file: File): Promise<string> {
-  if (!isCanvasSupported()) {
-    throw new Error('Image compression not available')
-  }
-
-  return await new Promise((resolve, reject) => {
-    const image = new Image()
-    const objectUrl = URL.createObjectURL(file)
-    const cleanup = () => URL.revokeObjectURL(objectUrl)
-
-    image.onload = () => {
-      try {
-        let width = image.width
-        let height = image.height
-
-        if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
-          if (width > height) {
-            height = Math.round((height * MAX_IMAGE_DIMENSION) / width)
-            width = MAX_IMAGE_DIMENSION
-          } else {
-            width = Math.round((width * MAX_IMAGE_DIMENSION) / height)
-            height = MAX_IMAGE_DIMENSION
-          }
-        }
-
-        const canvas = document.createElement('canvas')
-        canvas.width = width
-        canvas.height = height
-        const context = canvas.getContext('2d')
-        if (!context) {
-          cleanup()
-          reject(new Error('Failed to get canvas context'))
-          return
-        }
-
-        context.drawImage(image, 0, 0, width, height)
-
-        let quality = IMAGE_QUALITY
-        let dataUrl = canvas.toDataURL('image/jpeg', quality)
-        let bytes = estimateDataUrlBytes(dataUrl)
-
-        while (bytes > MAX_TRANSPORT_IMAGE_SIZE && quality > 0.4) {
-          quality -= 0.08
-          dataUrl = canvas.toDataURL('image/jpeg', quality)
-          bytes = estimateDataUrlBytes(dataUrl)
-        }
-
-        cleanup()
-        resolve(dataUrl)
-      } catch (error) {
-        cleanup()
-        reject(error instanceof Error ? error : new Error('Compression failed'))
-      }
-    }
-
-    image.onerror = () => {
-      cleanup()
-      reject(new Error('Failed to load image'))
-    }
-
-    image.src = objectUrl
-  })
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -852,16 +620,6 @@ function readModelFromStatusPayload(payload: unknown): string {
   }
 
   return ''
-}
-
-function normalizeDraftSessionKey(sessionKey?: string): string {
-  if (typeof sessionKey !== 'string') return 'new'
-  const normalized = sessionKey.trim()
-  return normalized.length > 0 ? normalized : 'new'
-}
-
-function toDraftStorageKey(sessionKey?: string): string {
-  return `claude-draft-${normalizeDraftSessionKey(sessionKey)}`
 }
 
 function readSlashCommandQuery(inputValue: string): string | null {
@@ -1017,7 +775,11 @@ function ChatComposerComponent({
   skillsAgentId,
   runtimeLabel,
   runtimeConfigHint,
+  runtimeCapabilities,
+  clearDraftOnSubmit = true,
 }: ChatComposerProps) {
+  const imageInputAllowed = runtimeCapabilities === undefined || runtimeCapabilities?.imageInput === true
+  const modelSwitchAllowed = runtimeCapabilities === undefined || runtimeCapabilities?.modelSwitch === true
   const { activeProfileName, activeProfile, workspaceProfileName } =
     useProfiles()
   const contextProfile =
@@ -1060,7 +822,7 @@ function ChatComposerComponent({
   const setMobileComposerFocused = useWorkspaceStore(
     (s) => s.setMobileComposerFocused,
   )
-  const [value, setValue] = useState('')
+  const { value, setValue, persistDraft, clearDraft } = useComposerDraft(sessionKey)
   const [attachments, setAttachments] = useState<Array<ChatComposerAttachment>>(
     [],
   )
@@ -1412,6 +1174,7 @@ function ChatComposerComponent({
 
   const handleModelSelect = useCallback(
     function handleModelSelect(nextModel: string, provider?: string) {
+      if (disabled || !modelSwitchAllowed) return
       const model = nextModel.trim()
       if (!model) return
       if (
@@ -1436,7 +1199,7 @@ function ChatComposerComponent({
       setIsModelMenuOpen(false)
 
       // Managed runtimes apply via updateSessionSettings on submit.
-      if (modelKeyMode === 'bare') return
+      if (runtimeCapabilities !== undefined || modelKeyMode === 'bare') return
       const gatewaySessionId =
         typeof sessionKey === 'string' ? sessionKey.trim() : ''
       if (
@@ -1465,6 +1228,9 @@ function ChatComposerComponent({
     [
       activeProfileName,
       gatewayModeQuery.data,
+      disabled,
+      modelSwitchAllowed,
+      runtimeCapabilities,
       modelKeyMode,
       modelSessionKey,
       sessionKey,
@@ -1552,11 +1318,7 @@ function ChatComposerComponent({
     }
   }, [currentModel, thinkingLevel, onThinkingLevelChange])
 
-  const isModelSwitcherDisabled = disabled
-  const draftStorageKey = useMemo(
-    () => toDraftStorageKey(sessionKey),
-    [sessionKey],
-  )
+  const isModelSwitcherDisabled = disabled || !modelSwitchAllowed
   // On new chat, currentModel is empty until a session is created.
   // Read the runtime model from the models query (first item is default).
   const configuredModel = useMemo(() => {
@@ -1696,12 +1458,6 @@ function ChatComposerComponent({
   }, [])
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const savedDraft = window.sessionStorage.getItem(draftStorageKey)
-    setValue(savedDraft ?? '')
-  }, [draftStorageKey])
-
-  useEffect(() => {
     setIsModelMenuOpen(false)
   }, [sessionKey])
 
@@ -1730,27 +1486,6 @@ function ChatComposerComponent({
       document.removeEventListener('mousedown', handleOutsideClick)
     }
   }, [isModelMenuOpen, isThinkingMenuOpen, isControlsMenuOpen])
-
-  const persistDraft = useCallback(
-    function persistDraft(nextValue: string) {
-      if (typeof window === 'undefined') return
-      if (nextValue.length === 0) {
-        window.sessionStorage.removeItem(draftStorageKey)
-        return
-      }
-      window.sessionStorage.setItem(draftStorageKey, nextValue)
-    },
-    [draftStorageKey],
-  )
-
-  const clearDraft = useCallback(
-    function clearDraft() {
-      setValue('')
-      if (typeof window === 'undefined') return
-      window.sessionStorage.removeItem(draftStorageKey)
-    },
-    [draftStorageKey],
-  )
 
   const handleValueChange = useCallback(
     function handleValueChange(nextValue: string) {
@@ -1821,6 +1556,7 @@ function ChatComposerComponent({
         files.map(
           async (file, index): Promise<ChatComposerAttachment | null> => {
             const imageFile = isImageFile(file)
+            if (imageFile && !imageInputAllowed) return null
             const textFile = isTextFile(file)
             if (!imageFile && !textFile && file.type.trim().length > 0) {
               return null
@@ -1925,7 +1661,7 @@ function ChatComposerComponent({
       setAttachmentProcessingCount((n) => Math.max(0, n - 1))
       focusPrompt()
     },
-    [disabled, focusPrompt],
+    [disabled, focusPrompt, imageInputAllowed],
   )
 
   const handlePaste = useCallback(
@@ -2014,7 +1750,7 @@ function ChatComposerComponent({
       setValue: setComposerValue,
       setAttachments: setComposerAttachments,
     }
-    let clearComposerDraft = true
+    let clearComposerDraft = clearDraftOnSubmit
 
     const finishSubmit = () => {
       setTimeout(() => {
@@ -2035,17 +1771,21 @@ function ChatComposerComponent({
       ) {
         const result = slashRuntime.execute(body)
         if (result === true) {
+          clearComposerDraft = true
           finishSubmit()
           return
         }
         if (result && typeof (result as Promise<boolean>).then === 'function') {
+          clearComposerDraft = false
           void (result as Promise<boolean>).then((handled) => {
             if (!handled) {
               const effectiveFastMode =
                 fastMode && thinkingLevel === 'off' ? true : false
               onSubmit(body, attachmentPayload, effectiveFastMode, helpers)
+            } else {
+              helpers.reset()
             }
-          })
+          }).catch((error: unknown) => toast(error instanceof Error ? error.message : 'Runtime command failed', { type: 'error' }))
           finishSubmit()
           return
         }
@@ -2105,6 +1845,7 @@ function ChatComposerComponent({
     busyMessageMode,
     canSteer,
     clearDraft,
+    clearDraftOnSubmit,
     disabled,
     fastMode,
     focusPrompt,
@@ -2134,6 +1875,7 @@ function ChatComposerComponent({
   // ⌘+Shift+M (Mac) / Ctrl+Shift+M (Win) to open model selector
   useEffect(() => {
     const handleModelShortcut = (event: KeyboardEvent) => {
+      if (isModelSwitcherDisabled) return
       if (
         (event.metaKey || event.ctrlKey) &&
         event.shiftKey &&
@@ -2147,7 +1889,7 @@ function ChatComposerComponent({
     window.addEventListener('keydown', handleModelShortcut, true)
     return () =>
       window.removeEventListener('keydown', handleModelShortcut, true)
-  }, [])
+  }, [isModelSwitcherDisabled])
 
   const hasDraft = value.trim().length > 0 || attachments.length > 0
   const [serverCommands, setServerCommands] = useState<
@@ -2232,280 +1974,43 @@ function ChatComposerComponent({
   const _isWebSearchActive = webSearchEnabled ?? isWebSearchMode
   void _isWebSearchActive // retained for future use / external prop
 
-  const sttConfig =
-    (sttConfigQuery.data?.config?.stt as Record<string, unknown> | undefined) ||
-    {}
-  const sttProvider =
-    typeof sttStatusQuery.data?.provider === 'string' &&
-    sttStatusQuery.data.provider.trim()
-      ? sttStatusQuery.data.provider.trim()
-      : typeof sttConfig.provider === 'string'
-        ? sttConfig.provider.trim()
-        : 'local'
-  const useRemoteStt = sttStatusQuery.data?.remoteReady === true
-  const remoteSttError =
-    typeof sttStatusQuery.data?.error === 'string'
-      ? sttStatusQuery.data.error.trim()
-      : ''
+  const { micCaptureAvailable, micBrowserSupported, handleMicClick, handleMicPointerDown, handleMicPointerUp, micBlockedByInsecureContext, voiceRecorder, voiceInput, micTooltip } = useComposerVoice({ sttConfigQuery, sttStatusQuery, setValue, persistDraft, setAttachments, isMobileViewport, value })
+  
+  
+  
 
-  const appendTextToDraft = useCallback(
-    (text: string, separator = ' ') => {
-      const normalized = text.trim()
-      if (!normalized) return
-      setValue((prev) => {
-        const next =
-          prev.trim().length > 0
-            ? `${prev}${separator}${normalized}`
-            : normalized
-        persistDraft(next)
-        return next
-      })
-    },
-    [persistDraft],
-  )
+  
 
-  const dictationDraftRef = useRef('')
+  
 
-  const transcribeVoiceBlob = useCallback(async (blob: Blob) => {
-    const form = new FormData()
-    const extension = blob.type.includes('mp4') ? 'mp4' : 'webm'
-    form.set('file', blob, `voice-input.${extension}`)
-
-    const response = await fetch('/api/transcribe', {
-      method: 'POST',
-      body: form,
-    })
-    const payload = (await response.json().catch(() => ({}))) as {
-      ok?: boolean
-      text?: string
-      error?: string
-    }
-    if (!response.ok || payload.ok === false) {
-      throw new Error(
-        payload.error || `Transcription failed (${response.status})`,
-      )
-    }
-    return typeof payload.text === 'string' ? payload.text : ''
-  }, [])
+  
 
   // Voice input (tap = speech-to-text)
-  const voiceInput = useVoiceInput({
-    transcribe: useRemoteStt ? transcribeVoiceBlob : undefined,
-    onResult: useCallback(
-      (text: string) => {
-        const normalized = text.trim()
-        if (!normalized) return
-        const base = dictationDraftRef.current
-        const next = base ? `${base} ${normalized}` : normalized
-        setValue(next)
-        persistDraft(next)
-        dictationDraftRef.current = next.trim()
-      },
-      [persistDraft],
-    ),
-    onInterim: useCallback(
-      (text: string) => {
-        const base = dictationDraftRef.current
-        const next = base ? `${base} ${text}` : text
-        setValue(next)
-        persistDraft(next)
-      },
-      [persistDraft],
-    ),
-    onError: useCallback(
-      (error: string) => {
-        const hint =
-          remoteSttError && !useRemoteStt
-            ? `${error} ${sttProvider === 'local' ? 'Local STT' : `Remote STT (${sttProvider})`} is not ready: ${remoteSttError}`
-            : error || 'Voice transcription failed'
-        toast(hint, { type: 'error' })
-      },
-      [remoteSttError, sttProvider, useRemoteStt],
-    ),
-  })
+  
 
   // Voice recorder (long-press = voice note)
-  const voiceRecorder = useVoiceRecorder({
-    onRecorded: useCallback(
-      (blob: Blob, durationMs: number) => {
-        const ext = blob.type.includes('webm') ? 'webm' : 'mp4'
-        const name = `voice-note-${Date.now()}.${ext}`
-        const reader = new FileReader()
-        reader.onload = () => {
-          const dataUrl = typeof reader.result === 'string' ? reader.result : ''
-          if (!dataUrl) return
-          const secs = Math.round(durationMs / 1000)
-          setAttachments((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              name,
-              contentType: blob.type || 'audio/webm',
-              size: blob.size,
-              dataUrl,
-              previewUrl: '',
-            },
-          ])
-          appendTextToDraft(`🎤 Voice note (${secs}s)`, '\n')
-          if (useRemoteStt) {
-            void transcribeVoiceBlob(blob)
-              .then((text) => {
-                if (text.trim()) {
-                  appendTextToDraft(`Transcript: ${text.trim()}`, '\n')
-                }
-              })
-              .catch((error) => {
-                toast(
-                  error instanceof Error
-                    ? error.message
-                    : 'Voice note transcription failed',
-                  { type: 'error' },
-                )
-              })
-          }
-        }
-        reader.readAsDataURL(blob)
-      },
-      [appendTextToDraft, transcribeVoiceBlob, useRemoteStt],
-    ),
-  })
+  
 
   // Long-press detection for mic button
-  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const isLongPressRef = useRef(false)
-  const skipMicClickRef = useRef(false)
-  const [micContextSecure, setMicContextSecure] = useState(true)
-  const [micBrowserSupported, setMicBrowserSupported] = useState(false)
+  
+  
+  
+  
+  
 
-  useLayoutEffect(() => {
-    setMicContextSecure(isMicrophoneContextSecure())
-    setMicBrowserSupported(detectMicrophoneBrowserSupport())
-  }, [])
+  
 
-  const micCaptureAvailable =
-    voiceInput.isSupported || voiceRecorder.isSupported
-  const micBlockedByInsecureContext = !micContextSecure
-  const micUsesLongPress = !isMobileViewport && !isCoarsePointerDevice()
-  const touchMicHandledRef = useRef(false)
+  
+  
+  
+  
 
-  const handleMicActivate = useCallback(() => {
-    if (micBlockedByInsecureContext) {
-      toast(INSECURE_MICROPHONE_MESSAGE, { type: 'error' })
-      return
-    }
-    if (skipMicClickRef.current) {
-      skipMicClickRef.current = false
-      return
-    }
-    if (voiceInput.isListening) {
-      voiceInput.stop()
-      dictationDraftRef.current = ''
-      return
-    }
-    if (voiceRecorder.isRecording) {
-      voiceRecorder.stop()
-      return
-    }
+  
 
-    dictationDraftRef.current = value.trim()
+  
+  
 
-    if (useRemoteStt && voiceInput.isSupported) {
-      voiceInput.start()
-      return
-    }
-
-    if (sttProvider === 'local' && !useRemoteStt) {
-      toast(
-        remoteSttError ||
-          'Local STT needs faster-whisper on the Mac. Run `hermes doctor` to install it.',
-        { type: 'error' },
-      )
-      return
-    }
-
-    if (detectSpeechRecognitionSupport()) {
-      voiceInput.start()
-      return
-    }
-
-    if (voiceRecorder.isSupported) {
-      voiceRecorder.start()
-      return
-    }
-
-    const hint =
-      remoteSttError && !useRemoteStt
-        ? sttProvider === 'local'
-          ? `Local STT is not ready: ${remoteSttError}`
-          : `Voice input needs OpenAI/Groq STT: ${remoteSttError}`
-        : 'Voice input is not supported in this browser'
-    toast(hint, { type: 'error' })
-  }, [
-    micBlockedByInsecureContext,
-    remoteSttError,
-    sttProvider,
-    useRemoteStt,
-    voiceInput,
-    voiceRecorder,
-  ])
-
-  const handleMicPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLButtonElement>) => {
-      if (micBlockedByInsecureContext) return
-
-      if (event.pointerType === 'touch' || isCoarsePointerDevice()) {
-        touchMicHandledRef.current = true
-        if (voiceInput.isListening || voiceRecorder.isRecording) {
-          handleMicActivate()
-          return
-        }
-        primeAudioStreamFromUserGesture()
-        handleMicActivate()
-        return
-      }
-
-      if (!micUsesLongPress) return
-      isLongPressRef.current = false
-      if (!voiceInput.isListening && !voiceRecorder.isRecording) {
-        longPressTimerRef.current = setTimeout(() => {
-          isLongPressRef.current = true
-          primeAudioStreamFromUserGesture()
-          voiceRecorder.start()
-        }, 500)
-      }
-    },
-    [
-      handleMicActivate,
-      micBlockedByInsecureContext,
-      micUsesLongPress,
-      useRemoteStt,
-      voiceRecorder,
-      voiceInput.isListening,
-    ],
-  )
-  const handleMicPointerUp = useCallback(() => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
-    }
-    if (isLongPressRef.current) {
-      voiceRecorder.stop()
-      isLongPressRef.current = false
-      skipMicClickRef.current = true
-    }
-  }, [voiceRecorder])
-
-  const handleMicClick = useCallback(
-    (event?: React.MouseEvent<HTMLButtonElement>) => {
-      if (touchMicHandledRef.current) {
-        touchMicHandledRef.current = false
-        event?.preventDefault()
-        return
-      }
-      handleMicActivate()
-    },
-    [handleMicActivate],
-  )
+  
 
   const handleAbort = useCallback(
     function handleAbort() {
@@ -2541,27 +2046,7 @@ function ChatComposerComponent({
     allowMicInsteadOfPrimary &&
     (micCaptureAvailable || micBrowserSupported)
 
-  const micTooltip = micBlockedByInsecureContext
-    ? 'Voice input needs HTTPS or localhost on this device'
-    : voiceRecorder.isRecording
-      ? `Recording… ${Math.round(voiceRecorder.durationMs / 1000)}s`
-      : voiceInput.isListening
-        ? useRemoteStt
-          ? sttProvider === 'local'
-            ? 'Recording — tap again to transcribe on Mac'
-            : 'Recording — tap again to transcribe'
-          : 'Listening — tap to stop'
-        : useRemoteStt
-          ? isMobileViewport
-            ? sttProvider === 'local'
-              ? 'Tap to record · tap again to transcribe on Mac'
-              : 'Tap to record · tap again to transcribe'
-            : 'Tap: dictate · Hold: voice note'
-          : detectSpeechRecognitionSupport()
-            ? isMobileViewport
-              ? 'Tap to dictate · tap again to stop'
-              : 'Tap: dictate · Hold: voice note'
-            : 'Tap to record a voice note'
+  
 
   const handleOpenAttachmentPicker = useCallback(
     function handleOpenAttachmentPicker(
@@ -2827,7 +2312,7 @@ function ChatComposerComponent({
       <input
         ref={attachmentInputRef}
         type="file"
-        accept="image/*,.md,.txt,.json,.csv,.ts,.tsx,.js,.py"
+        accept={imageInputAllowed ? 'image/*,.md,.txt,.json,.csv,.ts,.tsx,.js,.py' : '.md,.txt,.json,.csv,.ts,.tsx,.js,.py'}
         multiple
         className="hidden"
         onChange={handleAttachmentInputChange}

@@ -48,6 +48,9 @@
 
 ### 6. 集成 https://github.com/xingkongliang/skills-manager 功能，特别是一端修改，多端同步
 
+**阶段进展：** 已实现完整文件树（含 `scripts/`、`references/`）、附件编辑/下载、版本与冲突保护，以及 Hermes / managed 隔离文件包的同机双向同步。managed 当前按需读取隔离包，不等价于原生发现；原生目录注入、SSH 和跨设备 Git 同步仍待后续阶段。见 [同步方案](docs/platform-skills-sync-plan.md) 与 [当前合同](docs/platform-skills.md)。
+
+**部署与监听：** 已补默认 Symlink / 可选 Copy、实际模式与降级原因，以及文件事件 + 500ms 防抖 + 稳定检查 + 周期兜底；独立副本仍使用原有冲突保护。
 
 ## 🟡 中优先
 
@@ -80,7 +83,7 @@
 - 仍以 `collab.db` catalog + `agent_skills` 为真相；bind/toggle 驱动物化与清理（可复用 `.agorax-platform-skill` 标记，勿覆盖用户自有 skill）
 - 按 agent / workspace 隔离，禁止默认写入全局 home skills
 - Composer `/skill` 本轮选用：优先映射为原生 skill 触发；仅在无法落盘的 runtime 上回退注入
-- 同步更新 `docs/platform-skills.md`、`docs/managed-agent-daemon-mapping.md`
+- 同步更新 `docs/platform-skills.md` 与 `docs/platform-skills-sync-plan.md`，原生发现能力需与 managed daemon/provider 合同一起落实
 
 **落点：** `src/server/platform-skills/materialize.ts`（扩展 managed）、`prompt-inject.ts`（降级/删除）、`managed-skill-roots.ts`、activate/input 注入调用点  
 **现状锚点：** `docs/platform-skills.md` — Managed「Does not write `~/.codex/skills` or `~/.claude/skills`」

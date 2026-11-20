@@ -1,17 +1,53 @@
 /**
  * Fetch a published skill from GitHub / ClawHub / Skills.sh / raw SKILL.md URL.
  */
-import {
-  normalizeSkillBundle,
-  parseSkillFrontmatter,
-  type SkillBundle,
-} from './skill-bundle'
+import { lookup } from 'node:dns/promises'
+import { normalizeSkillBundle, parseSkillFrontmatter } from './skill-bundle'
+import { encodeSkillFile } from './skill-tree'
+import type { SkillBundle } from './skill-bundle'
 import type { PlatformSkillFile } from './types'
 
 const FETCH_TIMEOUT_MS = 30_000
 const CLAW_HUB_API = 'https://clawhub.ai/api/v1'
 
 async function fetchText(url: string, init?: RequestInit): Promise<string> {
+  return (await fetchBytes(url, init)).toString('utf8')
+}
+
+async function fetchBytes(
+  url: string,
+  init?: RequestInit,
+  redirects = 0,
+): Promise<Buffer> {
+  if (redirects > 5) throw new Error('Too many import redirects')
+  const parsed = new URL(url)
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password)
+    throw new Error('Skill imports require a public HTTPS URL')
+  const addresses = await lookup(parsed.hostname, { all: true })
+  if (
+    !addresses.length ||
+    addresses.some(({ address }) => {
+      const normalized = address.toLowerCase()
+      if (normalized.includes(':'))
+        return (
+          normalized === '::' ||
+          normalized === '::1' ||
+          /^(fc|fd|fe[89ab]|::ffff:)/.test(normalized)
+        )
+      const [first, second] = normalized.split('.').map(Number)
+      return (
+        first === 0 ||
+        first === 10 ||
+        first === 127 ||
+        first >= 224 ||
+        (first === 169 && second === 254) ||
+        (first === 172 && second >= 16 && second <= 31) ||
+        (first === 192 && second === 168) ||
+        (first === 100 && second >= 64 && second <= 127)
+      )
+    })
+  )
+    throw new Error('Private network skill import URLs are not allowed')
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
   try {
@@ -23,12 +59,32 @@ async function fetchText(url: string, init?: RequestInit): Promise<string> {
         'User-Agent': 'Agorax-PlatformSkills/1.0',
         ...(init?.headers ?? {}),
       },
-      redirect: 'follow',
+      redirect: 'manual',
     })
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location')
+      await response.body?.cancel()
+      if (!location) throw new Error('Import redirect is missing a location')
+      return fetchBytes(new URL(location, url).href, init, redirects + 1)
+    }
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} fetching ${url}`)
     }
-    return await response.text()
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error('Empty import response')
+    const chunks: Array<Buffer> = []
+    let bytes = 0
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      bytes += chunk.value.length
+      if (bytes > 8 * 1024 * 1024) {
+        await reader.cancel()
+        throw new Error('Skill download exceeds size limit')
+      }
+      chunks.push(Buffer.from(chunk.value))
+    }
+    return Buffer.concat(chunks)
   } finally {
     clearTimeout(timer)
   }
@@ -101,75 +157,63 @@ async function resolveGithubRef(
   preferred: string,
 ): Promise<string> {
   if (preferred) {
-    try {
-      await fetchText(
-        `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(preferred)}`,
-        { headers: { Accept: 'application/vnd.github+json' } },
-      )
-      return preferred
-    } catch {
-      /* try default branch */
-    }
-  }
-  try {
-    const info = await fetchJson<{ default_branch?: string }>(
-      `https://api.github.com/repos/${owner}/${repo}`,
+    const commit = await fetchJson<{ sha: string }>(
+      `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(preferred)}`,
     )
-    return info.default_branch || 'main'
-  } catch {
-    return preferred || 'main'
+    return commit.sha
   }
+  const info = await fetchJson<{ default_branch: string }>(
+    `https://api.github.com/repos/${owner}/${repo}`,
+  )
+  const commit = await fetchJson<{ sha: string }>(
+    `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(info.default_branch)}`,
+  )
+  return commit.sha
 }
 
 async function fetchGithubSkill(spec: GithubSpec): Promise<SkillBundle> {
   const ref = await resolveGithubRef(spec.owner, spec.repo, spec.ref)
   const dir = spec.dirPath.replace(/^\/+|\/+$/g, '')
-
-  // Prefer contents API for directory listing; fall back to raw SKILL.md.
-  const contentsUrl = dir
-    ? `https://api.github.com/repos/${spec.owner}/${spec.repo}/contents/${dir}?ref=${encodeURIComponent(ref)}`
-    : `https://api.github.com/repos/${spec.owner}/${spec.repo}/contents?ref=${encodeURIComponent(ref)}`
-
-  try {
-    const listing = await fetchJson<
-      Array<{ name: string; path: string; type: string; download_url?: string | null }>
-      | { message?: string }
-    >(contentsUrl)
-    if (Array.isArray(listing)) {
-      const files: Array<PlatformSkillFile> = []
-      const queue = [...listing]
-      while (queue.length > 0 && files.length < 64) {
-        const entry = queue.shift()!
-        if (entry.type === 'dir') continue
-        if (entry.type !== 'file' || !entry.download_url) continue
-        if (/\.(png|jpe?g|gif|webp|pdf|zip)$/i.test(entry.name)) continue
-        const content = await fetchText(entry.download_url)
-        const rel = dir
-          ? entry.path.replace(new RegExp(`^${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`), '')
-          : entry.path
-        files.push({ path: rel || entry.name, content })
-      }
-      if (files.some((f) => /skill\.md$/i.test(f.path))) {
-        return normalizeSkillBundle(
-          files,
-          dir.split('/').pop() || spec.repo,
-        )
-      }
-    }
-  } catch {
-    /* fall through to raw */
+  const tree = await fetchJson<{
+    sha: string
+    truncated?: boolean
+    tree: Array<{ path: string; type: string; mode: string }>
+  }>(
+    `https://api.github.com/repos/${spec.owner}/${spec.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+  )
+  if (tree.truncated)
+    throw new Error(
+      'Repository tree is incomplete; import a smaller skill source',
+    )
+  const entries = tree.tree.filter(
+    (entry) =>
+      entry.type === 'blob' && (!dir || entry.path.startsWith(`${dir}/`)),
+  )
+  if (entries.length > 256)
+    throw new Error('Skill has too many files; select one skill directory')
+  const files: Array<PlatformSkillFile> = []
+  let total = 0
+  for (const entry of entries) {
+    if (entry.mode === '120000')
+      throw new Error('Skill source contains a symbolic link')
+    const bytes = await fetchBytes(
+      `https://raw.githubusercontent.com/${spec.owner}/${spec.repo}/${ref}/${entry.path}`,
+    )
+    total += bytes.length
+    if (total > 8 * 1024 * 1024) throw new Error('Skill package is too large')
+    files.push(
+      encodeSkillFile(
+        dir ? entry.path.slice(dir.length + 1) : entry.path,
+        bytes,
+        entry.mode === '100755',
+      ),
+    )
   }
-
-  const skillMdUrl = dir
-    ? `https://raw.githubusercontent.com/${spec.owner}/${spec.repo}/${ref}/${dir}/SKILL.md`
-    : `https://raw.githubusercontent.com/${spec.owner}/${spec.repo}/${ref}/SKILL.md`
-  const content = await fetchText(skillMdUrl)
-  const fm = parseSkillFrontmatter(content)
   return {
-    name: fm.name || dir.split('/').pop() || spec.repo,
-    description: fm.description,
-    content,
-    files: [],
+    ...normalizeSkillBundle(files, dir.split('/').pop() || spec.repo),
+    resolvedCommit: ref,
+    sourcePath: dir,
+    sourceRef: spec.ref,
   }
 }
 
@@ -189,8 +233,7 @@ async function fetchClawHubSkill(rawUrl: string): Promise<SkillBundle> {
   }>(`${CLAW_HUB_API}/skills/${encodeURIComponent(slug)}`)
 
   const skill = detail.skill ?? {}
-  let version =
-    skill.tags?.latest || detail.latestVersion?.version || ''
+  const version = skill.tags?.latest || detail.latestVersion?.version || ''
   let filePaths: Array<string> = ['SKILL.md']
   if (version) {
     try {
@@ -235,9 +278,7 @@ async function fetchSkillsSh(rawUrl: string): Promise<SkillBundle> {
     const gh = parseGithubUrl(match[0])
     if (gh) return fetchGithubSkill(gh)
   }
-  throw new Error(
-    'Could not resolve Skills.sh URL to a GitHub skill directory',
-  )
+  throw new Error('Could not resolve Skills.sh URL to a GitHub skill directory')
 }
 
 async function fetchRawSkillMd(rawUrl: string): Promise<SkillBundle> {
@@ -247,8 +288,11 @@ async function fetchRawSkillMd(rawUrl: string): Promise<SkillBundle> {
   }
   const fm = parseSkillFrontmatter(content)
   const base =
-    ensureHttps(rawUrl).split('/').filter(Boolean).pop()?.replace(/\.md$/i, '') ||
-    'skill'
+    ensureHttps(rawUrl)
+      .split('/')
+      .filter(Boolean)
+      .pop()
+      ?.replace(/\.md$/i, '') || 'skill'
   return {
     name: fm.name || base,
     description: fm.description,
@@ -279,7 +323,10 @@ export async function fetchSkillFromUrl(rawUrl: string): Promise<{
   if (gh) {
     return { bundle: await fetchGithubSkill(gh), sourceUrl }
   }
-  if (/skill\.md(\?|$)/i.test(sourceUrl) || host === 'raw.githubusercontent.com') {
+  if (
+    /skill\.md(\?|$)/i.test(sourceUrl) ||
+    host === 'raw.githubusercontent.com'
+  ) {
     return { bundle: await fetchRawSkillMd(sourceUrl), sourceUrl }
   }
   throw new Error(

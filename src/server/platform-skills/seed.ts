@@ -10,11 +10,15 @@ import { loadAgentsRegistry } from '../agent-runtime/agents-config'
 import { resolveProfileHermesHome } from '../profiles-browser'
 import {
   addAgentSkills,
+  getPlatformSkill,
   listAgentSkillBindings,
+  listPlatformSkills,
+  normalizeSkillName,
   upsertPlatformSkillByName,
 } from './store'
+import { hashSkillTree } from './skill-tree'
 import { materializeHermesAgentSkills } from './materialize'
-import { scanManySkillsRoots, type ScannedSkill } from './scan-skill-fs'
+import { scanManySkillsRoots } from './scan-skill-fs'
 import {
   allPersonalManagedSkillRoots,
   personalManagedSkillRoots,
@@ -24,6 +28,7 @@ import {
   hermesProfileSkillRoots,
   skillRootsForAgentBinding,
 } from './agent-skill-roots'
+import type { ScannedSkill } from './scan-skill-fs'
 
 let seedAttempted = false
 
@@ -35,14 +40,24 @@ export function ensurePlatformSkillsSeeded(input?: {
 }): void {
   if (seedAttempted) return
   seedAttempted = true
-  try {
-    seedPlatformSkillsFromDisk(input)
-  } catch (error) {
-    console.warn(
-      '[platform-skills] seed skipped:',
-      error instanceof Error ? error.message : error,
-    )
+  const run = () => {
+    try {
+      seedPlatformSkillsFromDisk(input)
+    } catch (error) {
+      console.warn(
+        '[platform-skills] seed skipped:',
+        error instanceof Error ? error.message : error,
+      )
+    }
   }
+  // Catalog already populated: never block dashboard/skills first paint on a
+  // multi-second recursive disk scan (~20s on large Hermes homes).
+  if (listPlatformSkills({ dbPath: input?.dbPath }).length > 0) {
+    const timer = setTimeout(run, 0)
+    timer.unref?.()
+    return
+  }
+  run()
 }
 
 function readExternalSkillsDirs(hermesHome: string): Array<string> {
@@ -176,6 +191,7 @@ export type SeedResult = {
   skillsScanned: number
   bindingsAdded: number
   materialized: Array<string>
+  conflicts: Array<{ name: string; path: string; message: string }>
 }
 
 /** @deprecated Use seedPlatformSkillsFromDisk — kept for call-site compatibility. */
@@ -201,11 +217,20 @@ export function seedPlatformSkillsFromDisk(input?: {
   })
 
   let skillsUpserted = 0
+  const conflicts: SeedResult['conflicts'] = []
   const nameToId = new Map<string, string>()
   for (const skill of scanned) {
-    const { created, id } = upsertScanned(skill, dbOpts)
-    if (created) skillsUpserted += 1
-    nameToId.set(skill.name.toLowerCase(), id)
+    try {
+      const { created, id } = upsertScanned(skill, dbOpts)
+      if (created) skillsUpserted += 1
+      nameToId.set(normalizeSkillName(skill.name), id)
+    } catch (error) {
+      conflicts.push({
+        name: skill.name,
+        path: skill.sourceDir,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   let bindingsAdded = 0
@@ -254,22 +279,39 @@ export function seedPlatformSkillsFromDisk(input?: {
       skipPlatformManaged: false,
     })
     for (const skill of localSkills) {
-      let skillId = nameToId.get(skill.name.toLowerCase())
-      if (!skillId) {
-        const upserted = upsertScanned(skill, dbOpts)
-        if (upserted.created) skillsUpserted += 1
-        skillId = upserted.id
-        nameToId.set(skill.name.toLowerCase(), skillId)
+      try {
+        const key = normalizeSkillName(skill.name)
+        let skillId = nameToId.get(key)
+        if (!skillId) {
+          const upserted = upsertScanned(skill, dbOpts)
+          if (upserted.created) skillsUpserted += 1
+          skillId = upserted.id
+          nameToId.set(key, skillId)
+        }
+        const catalog = getPlatformSkill(skillId, dbOpts)
+        if (catalog && hashSkillTree(catalog) !== hashSkillTree(skill))
+          throw new Error(`Skill source conflict: ${skill.name}`)
+        skillIds.add(skillId)
+      } catch (error) {
+        conflicts.push({
+          name: skill.name,
+          path: skill.sourceDir,
+          message: error instanceof Error ? error.message : String(error),
+        })
       }
-      skillIds.add(skillId)
     }
 
     // 2) agents.yaml declared skills (stub if missing on disk).
     for (const rawName of agent.skills ?? []) {
       const name = String(rawName || '').trim()
       if (!name) continue
-      let skillId = nameToId.get(name.toLowerCase())
+      let skillId = nameToId.get(normalizeSkillName(name))
       if (!skillId) {
+        const existing = getPlatformSkill(normalizeSkillName(name), dbOpts)
+        if (existing) {
+          skillIds.add(existing.id)
+          continue
+        }
         const { skill } = upsertPlatformSkillByName(
           {
             name,
@@ -292,7 +334,7 @@ export function seedPlatformSkillsFromDisk(input?: {
     }
 
     if (skillIds.size > 0) {
-      addAgentSkills(agent.id, [...skillIds], dbOpts)
+      addAgentSkills(agent.id, [...skillIds], { ...dbOpts, discovered: true })
     }
     const after = listAgentSkillBindings(agent.id, dbOpts).length
     bindingsAdded += Math.max(0, after - before)
@@ -313,5 +355,6 @@ export function seedPlatformSkillsFromDisk(input?: {
     skillsScanned: scanned.length,
     bindingsAdded,
     materialized,
+    conflicts,
   }
 }

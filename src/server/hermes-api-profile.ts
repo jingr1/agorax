@@ -108,6 +108,7 @@ export interface HermesApiClient {
     updates: { title?: string },
   ): Promise<HermesSession>
   deleteSession(sessionId: string): Promise<void>
+  stopRun(runId: string): Promise<{ run_id: string; status: string }>
 }
 
 function normalizeUrl(u: string): string {
@@ -329,6 +330,7 @@ function buildClient(profileName: string, baseUrl: string): HermesApiClient {
 
     deleteSession: (sessionId) =>
       profileDelete(profileName, url, `/api/sessions/${sessionId}`),
+    stopRun: (runId) => profileFetch(profileName, url, 'POST', `/v1/runs/${encodeURIComponent(runId)}/stop`, {}),
   }
 }
 

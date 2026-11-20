@@ -1,6 +1,3 @@
-# Phase 2.5-002: Build + lint workflow
-# Runs on all PRs and pushes to main
-
 name: CI
 
 on:
@@ -9,73 +6,65 @@ on:
   pull_request:
     branches: [main, production]
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    name: Build & Lint
+  node:
+    name: Node / ${{ matrix.command }}
     runs-on: ubuntu-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        command: [lint, typecheck, build, test, 'test:workspace', 'docs:check']
+    env:
+      AGORAX_AUTO_START_AGENT: 'false'
+      HERMES_HOME: ${{ runner.temp }}/agorax/${{ matrix.command }}/hermes
+      HERMES_COLLAB_DB: ${{ runner.temp }}/agorax/${{ matrix.command }}/collab.db
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
           version: 12.11.2
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Run linter
-        run: pnpm run lint || echo "⚠️ Lint not configured, skipping"
-        continue-on-error: true
-
-      - name: Type check
-        run: pnpm run typecheck || pnpm exec tsc --noEmit || echo "⚠️ Typecheck not configured"
-        continue-on-error: true
-
-      - name: Build
-        run: pnpm build
-
-      - name: Verify build output
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Create isolated runtime directories
         run: |
-          if [ -d "dist" ]; then
-            echo "✅ Build output exists"
-            ls -la dist/
-          else
-            echo "❌ No dist folder found"
-            exit 1
-          fi
+          node -e "require('node:fs').mkdirSync(process.env.HERMES_HOME, { recursive: true })"
+      - run: pnpm run ${{ matrix.command }}
+      - name: Production startup and restart smoke
+        if: matrix.command == 'build'
+        run: pnpm run test:control-plane
 
-  test:
-    name: Run Tests
+  go-host:
+    name: Go Host
     runs-on: ubuntu-latest
-    needs: build
-
+    defaults:
+      run:
+        working-directory: agorax-agent-daemon
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          version: 12.11.2
+          go-version-file: agorax-agent-daemon/go.work
+          cache-dependency-path: agorax-agent-daemon/**/go.sum
+      - run: go test ./packages/agent/host/... ./packages/agent/store-sqlite/... ./packages/agent/activity-replication/...
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+  python:
+    name: Python Orchestrator
+    runs-on: ubuntu-latest
+    env:
+      HERMES_HOME: ${{ runner.temp }}/agorax-python/hermes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: '22'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Run tests
-        run: pnpm test || echo "⚠️ No tests configured"
-        continue-on-error: true
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: hermes_langgraph_orchestrator/requirements.txt
+      - run: python -m pip install -r hermes_langgraph_orchestrator/requirements.txt
+      - run: python -m pytest -q tests/test_langgraph_orchestrator.py

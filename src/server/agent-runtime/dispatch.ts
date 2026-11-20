@@ -18,6 +18,8 @@
 import {
   getSwarmMission,
   markMissionAssignmentDispatched,
+  readyQueuedAssignments,
+  recordMissionAssignmentBlocked,
 } from '../swarm-missions'
 import { issueRunToken } from '../mcp/run-tokens'
 import { createCollabId } from '../collab-db'
@@ -30,8 +32,15 @@ import {
   pushBranchToRemote,
 } from '../git-ops'
 import { countRunningRunsForAgent } from '../mcp/task-runs'
-import { detectExecutionFromProfile, getProfileSshHost } from './agents-config'
 import { appendMissionSpecFreshnessHint } from '../task-pipeline/mission-spec-freshness'
+import {
+  claimTask,
+  markTaskStarted,
+  ownsTaskClaim,
+  releaseTaskClaim,
+} from '../task-pipeline/task-scheduler'
+import { detectExecutionFromProfile, getProfileSshHost } from './agents-config'
+import type { TaskDispatchClaim } from '../task-pipeline/task-scheduler'
 
 export type DispatchResult =
   | { ok: true; runId: string; assignmentId: string }
@@ -79,13 +88,47 @@ export function getMcpEndpoint(): string {
  * Caller must have already verified the assignment is ready
  * (readyQueuedAssignments). Returns the runId on success.
  */
-export async function dispatchAssignment(input: {
+type DispatchAssignmentInput = {
   missionId: string
   assignmentId: string
   agentId?: string // defaults to assignment.workerId; agents.yaml id = workerId
   cwd?: string
   roomId?: string | null
-}): Promise<DispatchResult> {
+  schedulerClaim?: TaskDispatchClaim
+}
+
+export async function dispatchAssignment(
+  input: DispatchAssignmentInput,
+): Promise<DispatchResult> {
+  const claim = input.schedulerClaim ?? claimTask(input)
+  if (
+    !claim ||
+    claim.missionId !== input.missionId ||
+    claim.assignmentId !== input.assignmentId ||
+    !ownsTaskClaim(claim)
+  ) {
+    return {
+      ok: false,
+      error: 'Assignment is already claimed or waiting for scheduler capacity',
+    }
+  }
+  try {
+    const result = await dispatchClaimedAssignment({
+      ...input,
+      schedulerClaim: claim,
+    })
+    if (result.ok) markTaskStarted(input.assignmentId)
+    else releaseTaskClaim(input.assignmentId)
+    return result
+  } catch (error) {
+    releaseTaskClaim(input.assignmentId)
+    throw error
+  }
+}
+
+async function dispatchClaimedAssignment(
+  input: DispatchAssignmentInput,
+): Promise<DispatchResult> {
   const mission = getSwarmMission(input.missionId)
   if (!mission)
     return { ok: false, error: `Mission not found: ${input.missionId}` }
@@ -186,6 +229,16 @@ export async function dispatchAssignment(input: {
 
   const runId = createCollabId('run')
 
+  if (
+    !input.schedulerClaim ||
+    !ownsTaskClaim(input.schedulerClaim) ||
+    !readyQueuedAssignments(mission.id).some(
+      (item) => item.id === assignment.id,
+    )
+  ) {
+    return { ok: false, error: 'Assignment is no longer ready for dispatch' }
+  }
+
   // Step 1: JSON CAS queued → dispatched.  Persist capability-routed workerId.
   const dispatched = markMissionAssignmentDispatched({
     missionId: mission.id,
@@ -228,6 +281,7 @@ export async function dispatchAssignment(input: {
   // reconcile re-queues it (plan 行 462).
   try {
     await adapter.startRun({
+      subscribeEvents: false,
       runId,
       agentId,
       task: appendMissionSpecFreshnessHint(assignment.task, mission.id),
@@ -241,6 +295,13 @@ export async function dispatchAssignment(input: {
       },
     })
   } catch (error) {
+    recordMissionAssignmentBlocked({
+      missionId: mission.id,
+      assignmentId: assignment.id,
+      workerId: agentId,
+      reason: `Runtime start failed; verify execution before retry: ${error instanceof Error ? error.message : String(error)}`,
+      source: 'agent-runtime',
+    })
     return {
       ok: false,
       error: `spawn failed: ${error instanceof Error ? error.message : String(error)}`,

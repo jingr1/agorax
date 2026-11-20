@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   buildDisplayEntries,
   getTrailingToolOnlyTurnSummary,
+  openTurnProcessingHasReplySurface,
+  sortMessagesChronologically,
   streamingMessageHasVisibleContent,
 } from './chat-message-list'
+import { getMessageTimestamp } from '../utils'
 import type { ChatMessage } from '../types'
 
 function textMessage(
@@ -34,6 +37,40 @@ function toolOnlyAssistant(id: string): ChatMessage {
     timestamp: 2,
   } as ChatMessage
 }
+
+describe('sortMessagesChronologically', () => {
+  it('keeps U-A interleaving when timestamps collide (no UUUAAA clustering)', () => {
+    const messages = [
+      textMessage('u1', 'user', '你好'),
+      textMessage('a1', 'assistant', '你好！有什么我可以帮你的吗？'),
+      textMessage('u2', 'user', '你是谁？'),
+      textMessage('a2', 'assistant', '我是 Architect Agent'),
+      textMessage('u3', 'user', '你在干什么？'),
+      textMessage('a3', 'assistant', '我目前没在跑任何具体任务。'),
+    ]
+    const sorted = sortMessagesChronologically(messages)
+    expect(sorted.map((message) => message.id)).toEqual([
+      'u1',
+      'a1',
+      'u2',
+      'a2',
+      'u3',
+      'a3',
+    ])
+  })
+})
+
+describe('getMessageTimestamp', () => {
+  it('uses 0 for missing timestamps so equal-time sorts stay stable', () => {
+    expect(
+      getMessageTimestamp({
+        id: 'x',
+        role: 'user',
+        content: [{ type: 'text', text: 'hi' }],
+      } as ChatMessage),
+    ).toBe(0)
+  })
+})
 
 describe('buildDisplayEntries', () => {
   it('does not attach trailing persisted tool-only assistant messages to the last text reply', () => {
@@ -171,6 +208,43 @@ describe('streamingMessageHasVisibleContent', () => {
         { replyBodyOnly: true },
       ),
     ).toBe(true)
+  })
+})
+
+describe('openTurnProcessingHasReplySurface', () => {
+  it('clears live Thinking…/glow when Hermes reply is only on __streamingText', () => {
+    expect(
+      openTurnProcessingHasReplySurface({
+        id: 'assistant:run-1',
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'planning the greeting' }],
+        __streamingText: '你好！这次想让我做什么？',
+        __streamingStatus: 'streaming',
+        timestamp: 1,
+      } as unknown as ChatMessage),
+    ).toBe(true)
+  })
+
+  it('keeps live Thinking…/glow while only thinking/tools exist (no reply body)', () => {
+    expect(
+      openTurnProcessingHasReplySurface({
+        id: 'assistant:run-1',
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'planning the greeting' }],
+        __streamingStatus: 'streaming',
+        timestamp: 1,
+      } as unknown as ChatMessage),
+    ).toBe(false)
+    expect(
+      openTurnProcessingHasReplySurface({
+        id: 'assistant:run-1',
+        role: 'assistant',
+        content: [],
+        __streamToolCalls: [{ id: 't1', name: 'Read' }],
+        __streamingStatus: 'streaming',
+        timestamp: 1,
+      } as unknown as ChatMessage),
+    ).toBe(false)
   })
 })
 

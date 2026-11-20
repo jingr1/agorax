@@ -30,6 +30,8 @@ export const Route = createFileRoute(
           clientSubmitId?: string
           content?: string
           promptContent?: unknown
+          guidance?: boolean
+          targetTurnId?: string
         }
         const baseUrl = process.env.AGORAX_MANAGED_AGENT_URL?.trim()
         const workspaceId = process.env.AGORAX_WORKSPACE_ID?.trim()
@@ -37,9 +39,13 @@ export const Route = createFileRoute(
           !baseUrl ||
           !workspaceId ||
           !body.clientSubmitId ||
-          !body.content
+          typeof body.content !== 'string' ||
+          (!body.content.trim() && !(Array.isArray(body.promptContent) && body.promptContent.length > 0))
         ) {
           return json({ error: 'Invalid managed input' }, { status: 400 })
+        }
+        if (body.guidance && (typeof body.targetTurnId !== 'string' || !body.targetTurnId.trim())) {
+          return json({ error: 'Guidance requires a target turn' }, { status: 400 })
         }
         const identity = await resolveAgoraxManagedSessionIdentity({
           agentId: params.agentId,
@@ -89,7 +95,7 @@ export const Route = createFileRoute(
             baseUrl,
             workspaceId,
           })
-          if (workspaceCwd) {
+          if (workspaceCwd && !body.guidance) {
             // ACP pins tool cwd at session/new. When the composer folder changes
             // mid-chat, remount before send so pwd/tools follow the UI path.
             try {
@@ -129,6 +135,7 @@ export const Route = createFileRoute(
             clientSubmitId: body.clientSubmitId,
             content: scopedRuntimeText,
             ...(promptContent ? { promptContent } : {}),
+            ...(body.guidance ? { guidance: true, targetTurnId: body.targetTurnId } : {}),
             ...(scopedRuntimeText !== displayPrompt
               ? { displayPrompt }
               : {}),

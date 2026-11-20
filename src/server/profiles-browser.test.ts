@@ -406,6 +406,38 @@ describe('profile model/provider updates', () => {
       model: 'Kimi-K2.7-Code',
       provider: 'tokenx',
     })
+    // Hermes runtime only reads nested model.provider — never leave a bare string.
+    expect(readProfile('default').config.model).toEqual({
+      default: 'Kimi-K2.7-Code',
+      provider: 'tokenx',
+    })
+    expect(readProfile('writer').config.model).toEqual({
+      default: 'Kimi-K2.7-Code',
+      provider: 'tokenx',
+    })
+  })
+
+  it('upgrades a bare model string into nested model.provider Hermes can resolve', () => {
+    const hermesRoot = path.join(tempHome, '.hermes')
+    fs.mkdirSync(hermesRoot, { recursive: true })
+    fs.writeFileSync(
+      path.join(hermesRoot, 'config.yaml'),
+      'model: DeepSeek-V4-Pro\nprovider: tokenx\n',
+      'utf-8',
+    )
+
+    updateProfileModelProvider('default', 'tokenx', 'DeepSeek-V4-Pro')
+    const written = fs.readFileSync(
+      path.join(hermesRoot, 'config.yaml'),
+      'utf-8',
+    )
+    expect(written).toContain('default: DeepSeek-V4-Pro')
+    expect(written).toContain('provider: tokenx')
+    expect(written).not.toMatch(/^model:\s*DeepSeek-V4-Pro\s*$/m)
+    expect(readProfile('default').config.model).toEqual({
+      default: 'DeepSeek-V4-Pro',
+      provider: 'tokenx',
+    })
   })
 
   it('listProfiles reports the same default model/provider as each profile config', () => {

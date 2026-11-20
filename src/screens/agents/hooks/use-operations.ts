@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { agentMcpStatus } from '../agent-capability-status'
 import type { CronJob } from '@/components/cron-manager/cron-types'
 import { toast } from '@/components/ui/toast'
 import { fetchCronJobs } from '@/lib/cron-api'
@@ -89,7 +90,7 @@ export type AgentSkillItem = {
 export type AgentMcpItem = {
   name: string
   enabled: boolean
-  status?: 'ok' | 'error' | 'disabled'
+  status?: 'ok' | 'error' | 'disabled' | 'assigned' | 'unknown'
   error?: string
   /** Platform library binding id when sourced from agent_mcp_servers. */
   serverId?: string
@@ -990,13 +991,8 @@ export function useOperations() {
           ? caps.mcpServers.map((m) => ({
               name: m.name,
               enabled: m.enabled,
-              status: (m.status === 'connected'
-                ? 'ok'
-                : m.status === 'failed'
-                  ? 'error'
-                  : m.enabled
-                    ? 'ok'
-                    : 'disabled') as 'ok' | 'error' | 'disabled',
+              status: agentMcpStatus(m.status, m.enabled),
+              error: m.error,
               serverId: m.serverId,
               source: m.source,
             }))
@@ -1004,7 +1000,7 @@ export function useOperations() {
             ? Array.from({ length: agent.mcpCount }, (_, i) => ({
                 name: `mcp-${i + 1}`,
                 enabled: true,
-                status: 'ok' as const,
+                status: 'unknown' as const,
               }))
             : [],
         toolsets: caps?.toolsets ?? [],

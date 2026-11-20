@@ -9,6 +9,8 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as SwarmDispatchModule from '../swarm-dispatch-service'
+import type * as CollabDbModule from '../collab-db'
 
 let tempRoot: string
 
@@ -17,6 +19,11 @@ async function loadModule() {
   tempRoot = mkdtempSync(join(tmpdir(), 'dispatch-ready-test-'))
   mkdirSync(join(tempRoot, '.runtime'), { recursive: true })
 
+  vi.doMock('../collab-db', async () => {
+    const actual = await vi.importActual<typeof CollabDbModule>('../collab-db')
+    return { ...actual, getCollabDbPath: () => join(tempRoot, 'collab.db') }
+  })
+
   vi.doMock('../swarm-environment', () => ({
     SWARM_CANONICAL_REPO: tempRoot,
     SWARM_MISSIONS_PATH: join(tempRoot, '.runtime', 'swarm-missions.json'),
@@ -24,7 +31,7 @@ async function loadModule() {
     SWARM_LEGACY_OUTPUT_ROOT: join(tempRoot, 'output'),
   }))
 
-  vi.doMock('../../routes/api/swarm-dispatch', () => ({
+  vi.doMock('../swarm-dispatch-service', () => ({
     dispatchSwarmAssignments: vi.fn(),
   }))
 
@@ -46,7 +53,7 @@ async function loadModule() {
 
   const mod = await import('./dispatch-ready')
   const swarm = await import('../swarm-missions')
-  const swarmDispatch = await import('../../routes/api/swarm-dispatch')
+  const swarmDispatch = await import('../swarm-dispatch-service')
   const agentDispatch = await import('../agent-runtime/dispatch')
   const router = await import('../agent-runtime/router')
   const kanban = await import('../kanban-backend')
@@ -71,10 +78,12 @@ describe('dispatch-ready', () => {
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../swarm-environment')
-    vi.doUnmock('../../routes/api/swarm-dispatch')
+    vi.doUnmock('../collab-db')
+    vi.doUnmock('../swarm-dispatch-service')
     vi.doUnmock('../agent-runtime/dispatch')
     vi.doUnmock('../agent-runtime/router')
     vi.doUnmock('../kanban-backend')
+    vi.doUnmock('../swarm-roster')
     try {
       rmSync(tempRoot, { recursive: true, force: true })
     } catch {
@@ -96,6 +105,307 @@ describe('dispatch-ready', () => {
 
     expect(result.dispatched).toHaveLength(0)
     expect(result.ok).toBe(true)
+  })
+
+  it('only dispatches assignments that fit the remaining scheduler capacity', async () => {
+    const { mod, swarm, swarmDispatch, router } = await loadModule()
+    const scheduler = await import('./task-scheduler')
+    for (let index = 0; index < 9; index++) {
+      scheduler.markTaskRunning({
+        missionId: 'occupied',
+        assignmentId: `occupied-${index}`,
+      })
+    }
+    vi.mocked(router.getAgentRuntimeRouter).mockReturnValue(
+      mockRouter([
+        { id: 'researcher', runtime: 'hermes' },
+        { id: 'architect', runtime: 'hermes' },
+      ]) as never,
+    )
+    vi.mocked(swarmDispatch.dispatchSwarmAssignments).mockResolvedValue({
+      results: [{ ok: true, workerId: 'researcher', error: null }],
+    } as never)
+    const mission = swarm.createOrUpdateMission({
+      missionId: 'mission-capacity',
+      title: 'Capacity',
+      assignments: [
+        { workerId: 'researcher', task: 'Research' },
+        { workerId: 'architect', task: 'Design' },
+      ],
+    })
+
+    const result = await mod.dispatchReadyAssignments(mission.id)
+
+    expect(result.dispatched).toHaveLength(1)
+    expect(swarmDispatch.dispatchSwarmAssignments).toHaveBeenCalledWith(
+      expect.objectContaining({ assignments: expect.any(Array) }),
+      expect.any(Map),
+    )
+    const request = vi.mocked(swarmDispatch.dispatchSwarmAssignments).mock
+      .calls[0][0]
+    expect(request.assignments).toHaveLength(1)
+    expect(scheduler.availableSlots()).toBe(0)
+  })
+
+  it('does not dispatch the same assignment during concurrent kickoff requests', async () => {
+    const { mod, swarm, swarmDispatch, router } = await loadModule()
+    vi.mocked(router.getAgentRuntimeRouter).mockReturnValue(
+      mockRouter([{ id: 'researcher', runtime: 'hermes' }]) as never,
+    )
+    let finishDispatch!: () => void
+    vi.mocked(swarmDispatch.dispatchSwarmAssignments).mockImplementation(
+      async () => {
+        await new Promise<void>((resolve) => {
+          finishDispatch = resolve
+        })
+        return {
+          results: [{ ok: true, workerId: 'researcher', error: null }],
+        } as never
+      },
+    )
+    const mission = swarm.createOrUpdateMission({
+      missionId: 'mission-concurrent',
+      title: 'Concurrent',
+      assignments: [{ workerId: 'researcher', task: 'Research' }],
+    })
+
+    const first = mod.dispatchReadyAssignments(mission.id)
+    const second = await mod.dispatchReadyAssignments(mission.id)
+
+    expect(second.dispatched).toEqual([])
+    expect(swarmDispatch.dispatchSwarmAssignments).toHaveBeenCalledTimes(1)
+    finishDispatch()
+    expect((await first).dispatched).toHaveLength(1)
+  })
+
+  it('releases failed dispatches and records an actionable blocked assignment', async () => {
+    const { mod, swarm, agentDispatch, router } = await loadModule()
+    const scheduler = await import('./task-scheduler')
+    vi.mocked(router.getAgentRuntimeRouter).mockReturnValue(
+      mockRouter([{ id: 'cc-impl', runtime: 'claude-code' }]) as never,
+    )
+    vi.mocked(agentDispatch.dispatchAssignment).mockImplementation(
+      ({ missionId, assignmentId }) => {
+        swarm.markMissionAssignmentDispatched({
+          missionId,
+          assignmentId,
+          workerId: 'cc-impl',
+          task: 'Implement',
+        })
+        return Promise.resolve({ ok: false, error: 'daemon unavailable' })
+      },
+    )
+    const mission = swarm.createOrUpdateMission({
+      missionId: 'mission-failed',
+      title: 'Failed',
+      assignments: [{ workerId: 'cc-impl', task: 'Implement' }],
+    })
+
+    expect((await mod.dispatchReadyAssignments(mission.id)).ok).toBe(false)
+    expect(scheduler.availableSlots()).toBe(10)
+    expect(swarm.getSwarmMission(mission.id)?.assignments[0]).toMatchObject({
+      state: 'blocked',
+      checkpoint: { blocker: 'daemon unavailable' },
+    })
+  })
+
+  it('dispatches waiting work after a completed assignment releases capacity', async () => {
+    const { mod, swarm, swarmDispatch, router } = await loadModule()
+    const scheduler = await import('./task-scheduler')
+    for (let index = 0; index < 9; index++) {
+      scheduler.markTaskRunning({
+        missionId: 'occupied',
+        assignmentId: `occupied-${index}`,
+      })
+    }
+    vi.mocked(router.getAgentRuntimeRouter).mockReturnValue(
+      mockRouter([
+        { id: 'researcher', runtime: 'hermes' },
+        { id: 'architect', runtime: 'hermes' },
+      ]) as never,
+    )
+    vi.mocked(swarmDispatch.dispatchSwarmAssignments).mockImplementation(
+      (request) => {
+        const assignments = request.assignments as Array<{
+          assignmentId: string
+          workerId: string
+          task: string
+        }>
+        for (const assignment of assignments) {
+          swarm.markMissionAssignmentDispatched({
+            missionId: String(request.missionId),
+            ...assignment,
+          })
+        }
+        return Promise.resolve({
+          results: assignments.map((assignment) => ({
+            ok: true,
+            workerId: assignment.workerId,
+            error: null,
+          })),
+        } as never)
+      },
+    )
+    const mission = swarm.createOrUpdateMission({
+      missionId: 'mission-refill',
+      title: 'Refill',
+      assignments: [
+        { workerId: 'researcher', task: 'Research' },
+        { workerId: 'architect', task: 'Design' },
+      ],
+    })
+    const first = await mod.dispatchReadyAssignments(mission.id)
+    expect(first.dispatched).toHaveLength(1)
+    swarm.recordMissionCheckpoint({
+      missionId: mission.id,
+      assignmentId: first.dispatched[0].assignmentId,
+      workerId: first.dispatched[0].workerId,
+      checkpoint: {
+        stateLabel: 'DONE',
+        runtimeState: 'idle',
+        checkpointStatus: 'done',
+        result: 'Finished',
+        filesChanged: null,
+        commandsRun: null,
+        blocker: null,
+        nextAction: null,
+        reviewOutcome: null,
+        raw: 'STATE: DONE\nRESULT: Finished',
+      },
+    })
+
+    await scheduler.tickTaskScheduler()
+
+    expect(swarmDispatch.dispatchSwarmAssignments).toHaveBeenCalledTimes(2)
+    expect(
+      swarm
+        .getSwarmMission(mission.id)
+        ?.assignments.filter((assignment) => assignment.state === 'dispatched'),
+    ).toHaveLength(1)
+    expect(scheduler.availableSlots()).toBe(0)
+  })
+
+  it('fills capacity with the requested assignment rather than another ready sibling', async () => {
+    const { mod, swarm, swarmDispatch, router } = await loadModule()
+    const scheduler = await import('./task-scheduler')
+    for (let index = 0; index < 10; index++) {
+      scheduler.markTaskRunning({
+        missionId: 'occupied',
+        assignmentId: `occupied-${index}`,
+      })
+    }
+    vi.mocked(router.getAgentRuntimeRouter).mockReturnValue(
+      mockRouter([
+        { id: 'researcher', runtime: 'hermes' },
+        { id: 'architect', runtime: 'hermes' },
+      ]) as never,
+    )
+    vi.mocked(swarmDispatch.dispatchSwarmAssignments).mockResolvedValue({
+      results: [{ ok: true, workerId: 'architect', error: null }],
+    } as never)
+    const mission = swarm.createOrUpdateMission({
+      missionId: 'mission-targeted',
+      title: 'Targeted continuation',
+      assignments: [
+        { workerId: 'researcher', task: 'Not requested yet' },
+        { workerId: 'architect', task: 'Prepared continuation' },
+      ],
+    })
+    const target = mission.assignments.find(
+      (assignment) => assignment.workerId === 'architect',
+    )!
+    await mod.dispatchReadyAssignments(mission.id, { assignmentId: target.id })
+    scheduler.releaseTaskClaim('occupied-0')
+
+    await scheduler.tickTaskScheduler()
+
+    expect(swarmDispatch.dispatchSwarmAssignments).toHaveBeenCalledTimes(1)
+    expect(swarmDispatch.dispatchSwarmAssignments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assignments: [expect.objectContaining({ assignmentId: target.id })],
+      }),
+      expect.any(Map),
+    )
+  })
+
+  it('retries only unstarted work with backoff and stops after three retries', async () => {
+    const { mod, swarm, agentDispatch, router } = await loadModule()
+    const scheduler = await import('./task-scheduler')
+    vi.mocked(router.getAgentRuntimeRouter).mockReturnValue(
+      mockRouter([{ id: 'cc-impl', runtime: 'claude-code' }]) as never,
+    )
+    vi.mocked(agentDispatch.dispatchAssignment).mockResolvedValue({
+      ok: false,
+      error: 'temporarily unavailable',
+    })
+    const mission = swarm.createOrUpdateMission({
+      missionId: 'mission-retry',
+      title: 'Retry',
+      assignments: [{ workerId: 'cc-impl', task: 'Implement' }],
+    })
+
+    await mod.dispatchReadyAssignments(mission.id)
+    expect(scheduler.getSchedulerSnapshot().retrying[0].attempt).toBe(1)
+    await mod.dispatchReadyAssignments(mission.id)
+    expect(agentDispatch.dispatchAssignment).toHaveBeenCalledTimes(1)
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const retry = scheduler.getSchedulerSnapshot().retrying[0]
+      expect(retry.attempt).toBe(attempt)
+      await scheduler.processDueRetries(retry.dueAtMs)
+    }
+
+    expect(agentDispatch.dispatchAssignment).toHaveBeenCalledTimes(4)
+    expect(scheduler.getSchedulerSnapshot().retrying).toEqual([])
+    expect(scheduler.availableSlots()).toBe(10)
+    expect(swarm.getSwarmMission(mission.id)?.assignments[0].state).toBe(
+      'blocked',
+    )
+  })
+
+  it('enforces capacity on direct Hermes dispatch without rewriting the mission', async () => {
+    const { swarm } = await loadModule()
+    const scheduler = await import('./task-scheduler')
+    vi.doMock('../swarm-roster', () => ({
+      rosterByWorkerId: vi.fn(() => new Map()),
+    }))
+    const direct = await vi.importActual<typeof SwarmDispatchModule>(
+      '../swarm-dispatch-service',
+    )
+    for (let index = 0; index < 10; index++) {
+      scheduler.markTaskRunning({
+        missionId: 'occupied',
+        assignmentId: `occupied-${index}`,
+      })
+    }
+    const mission = swarm.createOrUpdateMission({
+      missionId: 'mission-direct',
+      title: 'Preserved mission',
+      spec: 'Preserve this specification',
+      acceptanceCriteria: ['Preserve this acceptance criterion'],
+      assignments: [{ workerId: 'researcher', task: 'Research' }],
+    })
+
+    const result = await direct.dispatchSwarmAssignments({
+      missionId: mission.id,
+      waitForCheckpoint: true,
+      assignments: [
+        {
+          assignmentId: mission.assignments[0].id,
+          workerId: 'researcher',
+          task: 'Research',
+        },
+      ],
+    })
+
+    expect(result.results[0]).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('scheduler capacity'),
+    })
+    expect(swarm.getSwarmMission(mission.id)).toMatchObject({
+      spec: mission.spec,
+      acceptanceCriteria: mission.acceptanceCriteria,
+      assignments: [{ id: mission.assignments[0].id, state: 'queued' }],
+    })
   })
 
   it('dispatches hermes assignments via swarm-dispatch', async () => {
@@ -136,6 +446,7 @@ describe('dispatch-ready', () => {
           }),
         ]),
       }),
+      expect.any(Map),
     )
   })
 
@@ -175,7 +486,8 @@ describe('dispatch-ready', () => {
   })
 
   it('routes hermes and managed assignments separately in one call', async () => {
-    const { mod, swarm, swarmDispatch, agentDispatch, router } = await loadModule()
+    const { mod, swarm, swarmDispatch, agentDispatch, router } =
+      await loadModule()
     vi.mocked(router.getAgentRuntimeRouter).mockReturnValue(
       mockRouter([
         { id: 'researcher', runtime: 'hermes' },
@@ -222,12 +534,18 @@ describe('dispatch-ready', () => {
         { id: 'architect', runtime: 'hermes' },
       ]) as never,
     )
-    vi.mocked(swarmDispatch.dispatchSwarmAssignments).mockResolvedValue({
-      results: [
-        { ok: true, workerId: 'researcher', error: null },
-        { ok: false, workerId: 'architect', error: 'tmux unavailable' },
-      ],
-    } as never)
+    vi.mocked(swarmDispatch.dispatchSwarmAssignments).mockImplementation(
+      (request) =>
+        Promise.resolve({
+          results: (request.assignments as Array<{ workerId: string }>).map(
+            ({ workerId }) => ({
+              ok: workerId !== 'architect',
+              workerId,
+              error: workerId === 'architect' ? 'tmux unavailable' : null,
+            }),
+          ),
+        } as never),
+    )
 
     const mission = swarm.createOrUpdateMission({
       missionId: 'mission-partial',
@@ -471,7 +789,8 @@ agents:
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(swarmDispatch.dispatchSwarmAssignments).toHaveBeenCalled()
-    const call = vi.mocked(swarmDispatch.dispatchSwarmAssignments).mock.calls[0][0] as {
+    const call = vi.mocked(swarmDispatch.dispatchSwarmAssignments).mock
+      .calls[0][0] as {
       assignments: Array<{ workerId: string }>
     }
     expect(call.assignments.map((a) => a.workerId)).toEqual(['architect'])

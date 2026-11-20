@@ -66,6 +66,7 @@ export function parseAgoraxManagedActivityFrame(
 }
 
 export type AgoraxManagedAgentActivitySocket = {
+  onClose?: (listener: () => void) => void
   onMessage: (listener: (raw: unknown) => void) => void
   onError: (listener: (error: Error) => void) => void
   close: () => void
@@ -85,6 +86,7 @@ export class AgoraxManagedAgentActivityStream {
       workspaceId: string
       agentSessionId: string
       runId: string
+      turnId?: string
       socketFactory: AgoraxManagedAgentActivitySocketFactory
       onEvents: (events: Array<AgentStreamEvent>) => void
       onError?: (error: Error) => void
@@ -105,6 +107,7 @@ export class AgoraxManagedAgentActivityStream {
         this.input.agentSessionId,
       )
       if (!activity) return
+      if (this.input.turnId && activity.eventType === 'turn_update' && activity.data.turn.turnId !== this.input.turnId) return
       const events = agoraxEventsFromManagedActivity(
         this.input.runId,
         activity,
@@ -113,10 +116,16 @@ export class AgoraxManagedAgentActivityStream {
       if (events.length > 0) this.input.onEvents(events)
     })
     socket.onError((error) => this.input.onError?.(error))
+    socket.onClose?.(() => {
+      if (this.socket !== socket) return
+      this.socket = null
+      this.input.onError?.(new Error('Managed activity subscription closed before terminal state'))
+    })
   }
 
   close(): void {
-    this.socket?.close()
+    const socket = this.socket
     this.socket = null
+    socket?.close()
   }
 }

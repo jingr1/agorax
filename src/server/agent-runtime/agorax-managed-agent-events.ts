@@ -1,6 +1,6 @@
 import type { AgentStreamEvent } from './types'
 import type {
-  AgentActivityEventMessage,
+  AgentActivityMessage as AgentActivityEventMessage,
   AgentActivityUpdatedEvent,
 } from '@agorax/agent-activity-core'
 

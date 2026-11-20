@@ -758,32 +758,6 @@ function getMessageRealtimeSequence(
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
-function hasToolCalls(msg: ChatMessage | null | undefined): boolean {
-  if (!msg) return false
-  if (Array.isArray(msg.content)) {
-    const contentHasToolCalls = msg.content.some(
-      (part) => part.type === 'toolCall',
-    )
-    if (contentHasToolCalls) return true
-  }
-
-  const raw = msg as Record<string, unknown>
-  return (
-    (Array.isArray(raw.streamToolCalls) && raw.streamToolCalls.length > 0) ||
-    (Array.isArray(raw.__streamToolCalls) && raw.__streamToolCalls.length > 0)
-  )
-}
-
-function getMessageChronologyRank(msg: ChatMessage): number {
-  const role = normalizeString(msg.role).toLowerCase()
-  if (role === 'user') return 0
-  if (role === 'assistant' && hasToolCalls(msg)) return 1
-  if (role === 'tool' || role === 'toolresult' || role === 'tool_result')
-    return 2
-  if (role === 'assistant') return 3
-  return 4
-}
-
 function compareMessagesByTime(left: ChatMessage, right: ChatMessage): number {
   const leftTime = getMessageEventTime(left) ?? getMessageReceiveTime(left) ?? 0
   const rightTime =
@@ -800,10 +774,6 @@ function compareMessagesByTime(left: ChatMessage, right: ChatMessage): number {
     return leftHistoryIndex - rightHistoryIndex
   }
 
-  const leftRank = getMessageChronologyRank(left)
-  const rightRank = getMessageChronologyRank(right)
-  if (leftRank !== rightRank) return leftRank - rightRank
-
   const leftRealtimeSequence = getMessageRealtimeSequence(left)
   const rightRealtimeSequence = getMessageRealtimeSequence(right)
   if (
@@ -814,9 +784,11 @@ function compareMessagesByTime(left: ChatMessage, right: ChatMessage): number {
     return leftRealtimeSequence - rightRealtimeSequence
   }
 
-  const leftId = getMessageId(left) ?? ''
-  const rightId = getMessageId(right) ?? ''
-  return leftId.localeCompare(rightId)
+  // Equal wall-clock: keep caller source order (sortMessagesChronologically
+  // falls through to index). Id localeCompare / role-rank used to scramble
+  // multi-turn histories that share one timestamp into UUUAAA (or A…U…),
+  // after which foldAssistantsPerUserTurn could mash reply bodies.
+  return 0
 }
 
 function sortMessagesChronologically(

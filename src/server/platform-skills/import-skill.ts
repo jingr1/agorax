@@ -3,13 +3,14 @@
  */
 import { createPlatformSkill } from './store'
 import { extractZipTextFiles } from './parse-zip'
-import {
-  MAX_SKILL_ARCHIVE_BYTES,
-  normalizeSkillBundle,
-  type SkillBundle,
-} from './skill-bundle'
+import { MAX_SKILL_ARCHIVE_BYTES, normalizeSkillBundle } from './skill-bundle'
 import { fetchSkillFromUrl } from './import-from-url'
-import type { PlatformSkill, PlatformSkillFile, PlatformSkillOrigin } from './types'
+import type { SkillBundle } from './skill-bundle'
+import type {
+  PlatformSkill,
+  PlatformSkillFile,
+  PlatformSkillOrigin,
+} from './types'
 
 function createFromBundle(
   bundle: SkillBundle,
@@ -20,7 +21,16 @@ function createFromBundle(
     description: bundle.description,
     content: bundle.content,
     files: bundle.files,
-    origin,
+    origin: {
+      ...origin,
+      ...(bundle.resolvedCommit
+        ? {
+            resolvedCommit: bundle.resolvedCommit,
+            sourcePath: bundle.sourcePath,
+            sourceRef: bundle.sourceRef,
+          }
+        : {}),
+    },
   })
 }
 

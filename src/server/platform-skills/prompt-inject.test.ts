@@ -25,6 +25,7 @@ describe('platform-skills prompt-inject', () => {
       {
         id: '1',
         name: 'reviewer',
+        category: 'General',
         description: 'Review code',
         content: 'Be careful.',
         origin: { kind: 'manual' },
@@ -42,6 +43,7 @@ describe('platform-skills prompt-inject', () => {
         {
           id: '1',
           name: 'reviewer',
+          category: 'General',
           description: 'Review code',
           content: 'Be careful. ' + 'x'.repeat(10_000),
           origin: { kind: 'manual' },
@@ -69,5 +71,21 @@ describe('platform-skills prompt-inject', () => {
       { type: 'text', text: '<!-- skills -->\n\n你好' },
       { type: 'image', name: 'a.png' },
     ])
+  })
+
+  it('keeps multiline user input and unknown slash commands intact', () => {
+    const multiline = 'Please review:\n\n```ts\n  const value = 1\n```'
+    expect(
+      extractLeadingSkillTriggers(
+        `/reviewer ${multiline}`,
+        new Set(['reviewer']),
+      ).remainder,
+    ).toBe(multiline)
+    expect(
+      extractLeadingSkillTriggers(
+        '/reviewer /unknown keep this',
+        new Set(['reviewer']),
+      ),
+    ).toEqual({ skillNames: ['reviewer'], remainder: '/unknown keep this' })
   })
 })

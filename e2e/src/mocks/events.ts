@@ -13,7 +13,7 @@ export async function installEventSourceMock(page: Page) {
       constructor(url) {
         this.url = url
         sources.add(this)
-        queueMicrotask(() => this.emit('connected', {}))
+        window.setTimeout(() => this.emit('connected', { workspaceId: 'e2e-workspace' }), 0)
       }
       addEventListener(type, handler) {
         if (!this.handlers.has(type)) this.handlers.set(type, new Set())
@@ -23,6 +23,7 @@ export async function installEventSourceMock(page: Page) {
         this.handlers.get(type)?.delete(handler)
       }
       emit(type, data) {
+        if (this.readyState === 2) return
         for (const handler of this.handlers.get(type) ?? []) handler({ data: JSON.stringify(data) })
       }
       close() {
@@ -31,6 +32,7 @@ export async function installEventSourceMock(page: Page) {
       }
     }
     Object.assign(window, {
+      __agoraxInspectSse: () => [...sources].map(source => ({ url: source.url, events: [...source.handlers.keys()] })),
       EventSource: MockEventSource,
       __agoraxEmitSse: (type, data) => {
         for (const source of sources) source.emit(type, data)

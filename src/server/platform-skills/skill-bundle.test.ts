@@ -43,4 +43,32 @@ Do things.
       normalizeSkillBundle([{ path: 'readme.md', content: 'hi' }]),
     ).toThrow(/SKILL\.md/)
   })
+
+  it('preserves scripts, references and binary assets', () => {
+    const bundle = normalizeSkillBundle([
+      {
+        path: 'package/SKILL.md',
+        content:
+          '---\nname: full\ndescription: >-\n  Multiple\n  lines\n---\nBody',
+      },
+      { path: 'package/scripts/run.sh', content: 'echo hi', executable: true },
+      { path: 'package/references/guide.md', content: '# Guide' },
+      { path: 'package/assets/image.png', content: 'AP8A', encoding: 'base64' },
+    ])
+    expect(bundle.description).toBe('Multiple lines')
+    expect(bundle.files).toEqual([
+      { path: 'scripts/run.sh', content: 'echo hi', executable: true },
+      { path: 'references/guide.md', content: '# Guide' },
+      { path: 'assets/image.png', content: 'AP8A', encoding: 'base64' },
+    ])
+  })
+
+  it('rejects traversal rather than silently dropping files', () => {
+    expect(() =>
+      normalizeSkillBundle([
+        { path: 'SKILL.md', content: '# Skill' },
+        { path: '../escape', content: 'bad' },
+      ]),
+    ).toThrow(/Invalid skill file path/)
+  })
 })

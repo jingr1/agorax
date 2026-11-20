@@ -2,6 +2,7 @@ import { Then, When } from '@cucumber/cucumber'
 import { expect } from '@playwright/test'
 
 import { ensureChatComposerReady } from '../../helpers/chat-page'
+import { PRIOR_REPLY } from '../mocks/chat'
 import type { AgoraxWorld } from '../support/world'
 
 When('服务端完成本轮回复', async function (this: AgoraxWorld) {
@@ -101,6 +102,7 @@ When(
     const documentId = await this.page.evaluate(() => performance.timeOrigin)
     this.operations.push(`seed=${seed}; rounds=${rounds}`)
     console.log(`Soak seed=${seed}; rounds=${rounds}`)
+    const expectedTranscript = ['Previous question', PRIOR_REPLY]
     for (let round = 0; round < rounds; round += 1) {
       if (round > 0 && round % 25 === 0) {
         await this.context.tracing.stopChunk()
@@ -130,6 +132,12 @@ When(
       await expect(
         this.page.getByRole('button', { name: 'Stop generation', exact: true }),
       ).toHaveCount(0)
+      const earlierMessages = this.page.getByRole('button', {
+        name: /^Show \d+ earlier messages/,
+      })
+      while (await earlierMessages.count()) {
+        await earlierMessages.click()
+      }
       await expect(
         this.page.locator('[data-chat-message-bubble="user"]'),
       ).toHaveCount(round + 2)
@@ -141,6 +149,10 @@ When(
           .locator('[data-chat-message-bubble="assistant"]')
           .filter({ hasText: reply }),
       ).toHaveCount(1)
+      expectedTranscript.push(prompt, reply)
+      await expect(
+        this.page.locator('[data-chat-message-bubble]'),
+      ).toContainText(expectedTranscript)
       await expect(this.page.getByTestId('chat-composer-input')).toHaveValue(
         randomState % 2 === 0 ? `draft-${round}` : '',
       )

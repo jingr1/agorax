@@ -183,7 +183,9 @@ export function getMessageTimestamp(message: ChatMessage): number {
     if (normalized) return normalized
   }
 
-  return Date.now()
+  // Missing timestamps must not all collapse to Date.now() (same ms → role-rank
+  // clustering). 0 lets the caller keep stable source order on ties.
+  return 0
 }
 
 function deriveTitleStatus(

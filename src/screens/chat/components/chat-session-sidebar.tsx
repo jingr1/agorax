@@ -45,7 +45,7 @@ type ChatSessionSidebarProps = {
   /** Override Hermes rename (e.g. Claude Code localStorage index). */
   onRenameSession?: (session: SessionMeta, newTitle: string) => void
   /** Override Hermes delete. */
-  onDeleteSession?: (session: SessionMeta) => void
+  onDeleteSession?: (session: SessionMeta) => void | boolean | Promise<boolean | void>
 }
 
 const SIDEBAR_MIN_WIDTH = 220
@@ -125,19 +125,19 @@ export const ChatSessionSidebar = memo(function ChatSessionSidebar({
     setDeleteDialogOpen(true)
   }, [])
 
-  const handleConfirmDelete = useCallback(() => {
+  const handleConfirmDelete = useCallback(async () => {
     if (deleteSessionKey && deleteFriendlyId) {
       const isActive = deleteFriendlyId === activeFriendlyId
-      if (isActive) {
-        onActiveSessionDelete?.()
-      }
       if (onDeleteSession) {
-        onDeleteSession({
+        const deleted = await onDeleteSession({
           key: deleteSessionKey,
           friendlyId: deleteFriendlyId,
           title: deleteSessionTitle,
         })
+        if (deleted === false) return
+        if (isActive) onActiveSessionDelete?.()
       } else {
+        if (isActive) onActiveSessionDelete?.()
         void deleteSession(deleteSessionKey, deleteFriendlyId, isActive)
       }
     }

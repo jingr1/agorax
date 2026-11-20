@@ -7,6 +7,7 @@
 
 import type { AgentActivityMessage } from '@agorax/agent-activity-core'
 import {
+  stripReplyEchoThinking,
   thinkingTextFromMessage,
   thinkingTextFromPayload,
 } from '@/lib/chat-message-parts'
@@ -163,10 +164,13 @@ function foldActivityFamilyToChat(
           family.some((row) => row.messageId === streamingMessageId))),
     timestamp: timestamp || Date.now(),
   })
+  const familyTurnId =
+    family.map((row) => row.turnId?.trim()).find((id) => Boolean(id)) || null
   return {
     ...projected,
     id: hostId,
     messageId: hostId,
+    ...(familyTurnId ? { turnId: familyTurnId } : {}),
   }
 }
 
@@ -180,10 +184,12 @@ function mapSingleton(message: AgentActivityMessage): ChatMessage {
     status: message.status,
     semantics: message.semantics ?? null,
   })
+  const turnId = message.turnId?.trim()
   return {
     ...chat,
     id: message.messageId,
     messageId: message.messageId,
+    ...(turnId ? { turnId } : {}),
   }
 }
 
@@ -239,7 +245,17 @@ export function projectActivityMessagesToChat(
   }
   // Safety nets: (1) suffix text echoes (2) every post-user assistant fragment
   // into one host — thinking-only + reply must not paint as two MessageItems.
+  // (3) drop thinking that is only a mirror of the reply body (Activity mash).
   return foldAssistantsPerUserTurn(collapseAdjacentAssistantEchoes(out))
+    .map((message) =>
+      message.role === 'assistant' ? stripReplyEchoThinking(message) : message,
+    )
+    .filter((message) => {
+      if (message.role !== 'assistant') return true
+      if (assistantBodyText(message).trim()) return true
+      if (thinkingTextFromMessage(message).trim()) return true
+      return toolCallsFromChatMessage(message).length > 0
+    })
 }
 
 function assistantBodyText(message: ChatMessage): string {
@@ -478,9 +494,50 @@ function mergeAssistantHostGroup(hosts: readonly ChatMessage[]): ChatMessage {
 }
 
 /**
+ * Fold key for adjacent assistant hosts. Prefer durable turnId / runId so a
+ * UUUAAA chronology bug cannot concatenate unrelated reply bodies.
+ */
+function assistantFoldKey(message: ChatMessage): string | null {
+  const turnId =
+    typeof (message as { turnId?: unknown }).turnId === 'string'
+      ? (message as { turnId: string }).turnId.trim()
+      : ''
+  if (turnId) return `turn:${turnId}`
+  const runId =
+    typeof (message as { runId?: unknown }).runId === 'string'
+      ? (message as { runId: string }).runId.trim()
+      : ''
+  if (runId && runId !== 'pending') return `run:${runId}`
+  const id = String(message.messageId ?? message.id ?? '').trim()
+  if (id.startsWith('assistant:')) {
+    let rest = id.slice('assistant:'.length)
+    if (rest.endsWith(':thinking')) rest = rest.slice(0, -':thinking'.length)
+    const textSep = rest.indexOf(':text:')
+    if (textSep >= 0) rest = rest.slice(0, textSep)
+    if (
+      rest &&
+      !rest.startsWith('history:') &&
+      !rest.startsWith('pending:')
+    ) {
+      const run = rest.split(':')[0] ?? ''
+      if (run) return `run:${run}`
+    }
+  }
+  return null
+}
+
+function isTextlessAssistantFragment(message: ChatMessage): boolean {
+  if (assistantBodyText(message).trim()) return false
+  if (thinkingTextFromMessage(message).trim()) return true
+  return toolCallsFromChatMessage(message).length > 0
+}
+
+/**
  * Contract §2/§4: one assistant list host per user turn. Thinking-only rows
  * that landed beside the reply (different Activity family / turnId) must fold
  * back — otherwise MessageItem paints a stray Activity under the bubble.
+ *
+ * Never concatenate two text-bearing hosts from different durable turns.
  */
 export function foldAssistantsPerUserTurn(
   messages: readonly ChatMessage[],
@@ -500,7 +557,15 @@ export function foldAssistantsPerUserTurn(
       cursor < messages.length &&
       messages[cursor]?.role === 'assistant'
     ) {
-      group.push(messages[cursor]!)
+      const next = messages[cursor]!
+      const groupKey = assistantFoldKey(group[0]!)
+      const nextKey = assistantFoldKey(next)
+      if (groupKey && nextKey && groupKey !== nextKey) {
+        // Different turns. Only absorb a textless thinking/tool fragment into
+        // the current host — never another reply body.
+        if (!isTextlessAssistantFragment(next)) break
+      }
+      group.push(next)
       cursor += 1
     }
     out.push(

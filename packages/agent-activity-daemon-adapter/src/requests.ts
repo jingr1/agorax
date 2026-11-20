@@ -88,8 +88,8 @@ export function daemonCreateAgentSessionRequestFromActivation(
 
 /**
  * Outbound projection for POST .../input. The daemon decode struct accepts
- * clientSubmitId, content, and displayPrompt; guidance/targetTurnId,
- * capabilityRefs, and submitDiagnostics are dropped
+ * clientSubmitId, content, displayPrompt, and exact-target guidance.
+ * capabilityRefs and submitDiagnostics are dropped
  * TODO(daemon-endpoint).
  */
 export function daemonSendAgentSessionInputRequestFromActivity(
@@ -99,7 +99,8 @@ export function daemonSendAgentSessionInputRequestFromActivity(
   return {
     clientSubmitId: input.clientSubmitId,
     content: daemonPromptContentBlocksFromActivity(input.content),
-    ...(displayPrompt ? { displayPrompt } : {})
+    ...(displayPrompt ? { displayPrompt } : {}),
+    ...(input.guidance ? { guidance: true, targetTurnId: input.targetTurnId ?? undefined } : {})
   };
 }
 

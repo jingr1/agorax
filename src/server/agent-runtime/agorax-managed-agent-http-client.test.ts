@@ -123,6 +123,23 @@ describe('AgoraxManagedAgentHttpClient', () => {
     })
   })
 
+  it('preserves guidance and the exact target turn in daemon input', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ kind: 'turn', turnId: 'turn-1' }), { status: 200 }),
+    )
+    const client = new AgoraxManagedAgentHttpClient({
+      baseUrl: 'http://127.0.0.1:9120', workspaceId: 'workspace-1', fetchImpl,
+    })
+    await client.sendInput('session-1', {
+      clientSubmitId: 'guidance-1', content: 'Use the smaller change',
+      guidance: true, targetTurnId: 'turn-1',
+    })
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      clientSubmitId: 'guidance-1', content: [{ type: 'text', text: 'Use the smaller change' }],
+      guidance: true, targetTurnId: 'turn-1',
+    })
+  })
+
   it('responds to an interaction using its complete canonical identity', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), { status: 200 }),

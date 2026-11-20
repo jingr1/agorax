@@ -162,6 +162,19 @@ export function waitForHermesSendCompleted(
   })
 }
 
+/** Prefer the fresher mapping so a slow GET cannot clobber a just-written create. */
+function rememberMapping(mapping: AgoraxRunMapping): AgoraxRunMapping {
+  const existing = mappingCache.get(mapping.agentSessionId)
+  if (
+    existing &&
+    (existing.updatedAtUnixMs ?? 0) > (mapping.updatedAtUnixMs ?? 0)
+  ) {
+    return existing
+  }
+  mappingCache.set(mapping.agentSessionId, mapping)
+  return mapping
+}
+
 async function fetchMapping(
   agentSessionId: string,
 ): Promise<AgoraxRunMapping | null> {
@@ -174,8 +187,7 @@ async function fetchMapping(
     if (!res.ok) return null
     const body = (await res.json()) as { mapping?: AgoraxRunMapping | null }
     if (body.mapping?.agentSessionId) {
-      mappingCache.set(body.mapping.agentSessionId, body.mapping)
-      return body.mapping
+      return rememberMapping(body.mapping)
     }
   } catch {
     // offline / route not generated yet
@@ -186,7 +198,7 @@ async function fetchMapping(
 async function persistMapping(
   mapping: AgoraxRunMapping,
 ): Promise<AgoraxRunMapping> {
-  mappingCache.set(mapping.agentSessionId, mapping)
+  const retained = rememberMapping(mapping)
   try {
     const res = await fetch('/api/agorax-run-mapping', {
       method: 'PUT',
@@ -196,14 +208,13 @@ async function persistMapping(
     if (res.ok) {
       const body = (await res.json()) as { mapping?: AgoraxRunMapping }
       if (body.mapping?.agentSessionId) {
-        mappingCache.set(body.mapping.agentSessionId, body.mapping)
-        return body.mapping
+        return rememberMapping(body.mapping)
       }
     }
   } catch {
     // keep memory cache even if DB write fails
   }
-  return mapping
+  return retained
 }
 
 export function getHermesChatRuntime(
@@ -382,6 +393,17 @@ export function resetHermesChatRuntimesForTests(): void {
 export function forgetHermesMappingCache(agentSessionId: string): void {
   const id = agentSessionId.trim()
   if (id) mappingCache.delete(id)
+}
+
+/**
+ * Hot-path read for createSession: activateSession writes the cache before the
+ * DB round-trip. Polling GET would waste requests and can race a stale response.
+ */
+export function peekHermesMappingCache(
+  agentSessionId: string,
+): AgoraxRunMapping | null {
+  const id = agentSessionId.trim()
+  return id ? (mappingCache.get(id) ?? null) : null
 }
 
 /**

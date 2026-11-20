@@ -19,6 +19,7 @@ export {
   listEnabledSkillsWithContent,
   listPlatformSkills,
   listSkillAgentBindings,
+  pruneExcludedPlatformSkillFiles,
   removeAgentSkill,
   setAgentSkillEnabled,
   setAgentSkills,

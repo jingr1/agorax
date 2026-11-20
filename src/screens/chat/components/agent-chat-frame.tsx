@@ -22,6 +22,7 @@ import type {
   ThinkingLevel,
 } from './chat-composer'
 import type { ContextUsageOverride } from './context-indicator'
+import type { AgentActivitySessionCapabilities } from '@agorax/agent-activity-core'
 import type { BusyMessageMode } from '@/screens/chat/lib/composer-primary-action'
 import type { AgentChatBrand } from '../agent-chat-brands'
 import type { SlashCommandRuntime } from '../slash-commands/types'
@@ -80,6 +81,8 @@ export type AgentChatFrameProps = {
     modelsEndpoint?: string
     modelKeyMode?: 'provider-prefixed' | 'bare'
     gatewayQueriesEnabled?: boolean
+    runtimeCapabilities?: AgentActivitySessionCapabilities | null
+    clearDraftOnSubmit?: boolean
     slashRuntime?: SlashCommandRuntime
     skillsAgentId?: string
     thinkingLevel?: ThinkingLevel

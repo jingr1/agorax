@@ -79,7 +79,8 @@ function getChronologyRank(message: ChatMessage): number {
   return 4
 }
 
-function sortMessagesChronologically(
+/** Exported for regression tests — equal-timestamp tiebreak must stay stable. */
+export function sortMessagesChronologically(
   messages: Array<ChatMessage>,
 ): Array<ChatMessage> {
   return messages
@@ -90,18 +91,22 @@ function sortMessagesChronologically(
       if (leftTimestamp !== rightTimestamp)
         return leftTimestamp - rightTimestamp
 
-      const leftRank = getChronologyRank(left.message)
-      const rightRank = getChronologyRank(right.message)
-      if (leftRank !== rightRank) return leftRank - rightRank
-
       const leftHistoryIndex =
-        typeof (left.message as any).__historyIndex === 'number'
-          ? (left.message as any).__historyIndex
-          : undefined
+        typeof (left.message as { __historyIndex?: unknown }).__historyIndex ===
+        'number'
+          ? (left.message as { __historyIndex: number }).__historyIndex
+          : typeof (left.message as { historyIndex?: unknown }).historyIndex ===
+              'number'
+            ? (left.message as { historyIndex: number }).historyIndex
+            : undefined
       const rightHistoryIndex =
-        typeof (right.message as any).__historyIndex === 'number'
-          ? (right.message as any).__historyIndex
-          : undefined
+        typeof (right.message as { __historyIndex?: unknown })
+          .__historyIndex === 'number'
+          ? (right.message as { __historyIndex: number }).__historyIndex
+          : typeof (right.message as { historyIndex?: unknown })
+                .historyIndex === 'number'
+            ? (right.message as { historyIndex: number }).historyIndex
+            : undefined
       if (
         leftHistoryIndex !== undefined &&
         rightHistoryIndex !== undefined &&
@@ -126,7 +131,14 @@ function sortMessagesChronologically(
         return leftRealtimeSequence - rightRealtimeSequence
       }
 
-      return left.index - right.index
+      // Same timestamp: keep arrival/source order. Role-rank used to force every
+      // user before every assistant (UUUAAA); foldAssistantsPerUserTurn then
+      // concatenated all reply bodies into one bubble.
+      if (left.index !== right.index) return left.index - right.index
+
+      const leftRank = getChronologyRank(left.message)
+      const rightRank = getChronologyRank(right.message)
+      return leftRank - rightRank
     })
     .map(({ message }) => message)
 }
@@ -187,6 +199,22 @@ export function streamingMessageHasVisibleContent(
   // Sidecar thinking/tools count so the MessageItem host stays visible.
   if (assistantHasWorkingSurface(message)) return true
   return false
+}
+
+/**
+ * Open-turn processing face: Thinking… + avatar glow share one lifecycle.
+ * Off as soon as a reply body exists beside the face (Hermes writes that body
+ * on `__streamingText` / content — never wait on portable streamingText props).
+ * Thinking/tools alone must not clear the pulse (Activity card ≠ live chrome).
+ */
+export function openTurnProcessingHasReplySurface(
+  message: ChatMessage,
+  options?: { streamingText?: string },
+): boolean {
+  return streamingMessageHasVisibleContent(message, {
+    streamingText: options?.streamingText,
+    replyBodyOnly: true,
+  })
 }
 
 export function buildDisplayEntries(
@@ -1054,20 +1082,22 @@ function ChatMessageListComponent({
         break
       }
       const hasBody = bodyIndices.length > 0
-      const bodyHasSurface = bodyIndices.some((bodyIndex) => {
+      // Reply body only — Hermes 1:1 has no streamingText sidecar; content may
+      // land on `__streamingText` before content[].text. Thinking/tools keep
+      // the Activity card but must not be mistaken for live-chrome unmount.
+      const bodyHasReplySurface = bodyIndices.some((bodyIndex) => {
         const bodyRow = visibleTranscriptRows[bodyIndex]
         if (!bodyRow || bodyRow.kind !== 'message') return false
-        const message = bodyRow.message
-        if (textFromMessage(message).trim()) return true
-        if (assistantHasWorkingSurface(message)) return true
-        if (isMessageStreaming(message, bodyRow.sourceIndex)) {
-          if (streamingText?.trim() || streamingThinking?.trim()) return true
-          if (normalizedStreamingToolCalls.length > 0) return true
-        }
-        return false
+        const streaming = isMessageStreaming(
+          bodyRow.message,
+          bodyRow.sourceIndex,
+        )
+        return openTurnProcessingHasReplySurface(bodyRow.message, {
+          streamingText: streaming ? streamingText : undefined,
+        })
       })
       // Glow ring + Thinking… share one lifecycle; static face stays mounted.
-      const showLivePulse = !bodyHasSurface
+      const showLivePulse = !bodyHasReplySurface
 
       return (
         <div

@@ -10,6 +10,7 @@
  *   - Publishes room events on chat-event-bus.
  */
 import { publishChatEvent } from '../chat-event-bus'
+import { cancelRoomTurns } from './turn-control'
 import { ensureCollabDb, getCollabDbPath } from '../collab-db'
 import { openSqliteDatabase } from '../sqlite-helper'
 import {
@@ -89,6 +90,7 @@ import {
   setRoomRunning,
   setStranded,
   setTurnInFlight,
+  updateTurnInFlight,
   shouldLogRoomError,
 } from './runner-state'
 import { getMemberSessionMessages } from './agent-session-manager'
@@ -259,9 +261,9 @@ export function applyUserHoldDirective(input: {
 
 /**
  * Pause a room: bump epoch (abort in-flight drive at next boundary), hold
- * every agent, set state=paused. Tick may still harvest stranded replies.
+ * every agent, set state=paused, and await precise runtime cancellation.
  */
-export function pauseRoom(roomId: string): ReturnType<typeof getRoom> {
+export async function pauseRoom(roomId: string): Promise<ReturnType<typeof getRoom>> {
   const room = getRoom(roomId)
   if (!room) return null
   const members = listParticipants(roomId)
@@ -280,6 +282,8 @@ export function pauseRoom(roomId: string): ReturnType<typeof getRoom> {
     state: 'paused',
     updatedAt: Date.now(),
   })
+  await cancelRoomTurns(roomId)
+  for (const member of members) clearStranded(roomId, member)
   publishChatEvent('group_chat_cancelled', { roomId })
   console.log(`[group-chat-runner] room ${roomId} paused`)
   return updated
@@ -287,20 +291,22 @@ export function pauseRoom(roomId: string): ReturnType<typeof getRoom> {
 
 /**
  * Resume a paused room. Clears sticky holds by default (UI Resume button).
- * Does not auto-drive — wait for the next human message / triggerRoomRun.
+ * Waits for canceled turns to exit, then drives preserved unread context.
  */
-export function resumeRoom(
+export async function resumeRoom(
   roomId: string,
   opts?: { clearHolds?: boolean },
-): ReturnType<typeof getRoom> {
+): Promise<ReturnType<typeof getRoom>> {
   const room = getRoom(roomId)
   if (!room) return null
+  await cancelRoomTurns(roomId)
   if (opts?.clearHolds !== false) clearRoomHolds(roomId)
   const updated = updateRoom(roomId, {
     state: 'active',
     updatedAt: Date.now(),
   })
   console.log(`[group-chat-runner] room ${roomId} resumed`)
+  triggerRoomRun(roomId)
   return updated
 }
 
@@ -497,6 +503,7 @@ async function runGroupChatRounds(
       if (delta.length === 0) continue
 
       const turnResult = await runMemberTurn(room, member, delta, members, cwd)
+      if (!isCurrent()) return
 
       if (turnResult.kind === 'blocked') {
         // Human gate was raised; stop the drive.
@@ -650,6 +657,7 @@ async function runGroupChatRounds(
             : roomLog2.slice(-GROUP_CHAT_HISTORY_LIMIT)
         if (delta.length === 0) continue
         const turnResult = await runMemberTurn(room, member, delta, members, cwd)
+        if (!isCurrent()) return
         if (turnResult.kind === 'reply') {
           const newMessage = insertMessage({
             roomId: room.id,
@@ -771,7 +779,7 @@ async function runMemberTurn(
     member: member.displayName,
   })
 
-  setTurnInFlight(room.id, member, 'pending')
+  if (!setTurnInFlight(room.id, member, 'pending')) return { kind: 'pass' }
   let result: GroupTurnResult | undefined
   try {
     result = await executeMemberTurn({
@@ -780,6 +788,8 @@ async function runMemberTurn(
       member,
       prompt,
       cwd,
+      onSessionPrepared: (sessionId, before) => updateTurnInFlight(room.id, member, { sessionId, ...(before === null ? {} : { before }) }),
+      onManagedRun: (runId) => updateTurnInFlight(room.id, member, { runId }),
     })
     return result
   } catch (error) {
@@ -817,6 +827,14 @@ async function harvestStrandedReply(
 ): Promise<boolean> {
   // Managed runtimes have no Hermes session transcript to harvest.
   if (member.runtime !== 'hermes') {
+    const turn = getRoomRunnerState(room.id).inFlight.get(groupMemberKey(member))
+    if (turn?.recovered && turn.runId) {
+      const { reconcileManagedRunActivity } = await import('../agent-runtime/reconcile-managed-run-activity')
+      const result = await reconcileManagedRunActivity(turn.runId).catch(() => null)
+      if (!result?.settled) return false
+      clearTurnInFlight(room.id, member)
+      if (result.text.trim() && !isGroupPassText(result.text)) return appendHarvestedReply(room, member, result.text)
+    }
     const marker = getStranded(room.id, member)
     if (marker) clearStranded(room.id, member)
     return false
@@ -827,7 +845,7 @@ async function harvestStrandedReply(
     // Expire very old in-flight markers (hard cap) even without stranded.
     const state = getRoomRunnerState(room.id)
     const turn = state.inFlight.get(groupMemberKey(member))
-    if (turn && Date.now() - turn.startedAt > GROUP_TURN_HARD_CAP_MS) {
+    if (turn && !turn.recovered && Date.now() - turn.startedAt > GROUP_TURN_HARD_CAP_MS) {
       clearTurnInFlight(room.id, member)
     }
     return false
@@ -843,9 +861,11 @@ async function harvestStrandedReply(
     // Still grinding — keep waiting.
     return false
   }
+  if (messages.length <= marker.before) return false
 
   // Done (or dead): consume the marker either way.
   clearStranded(room.id, member)
+  if (getRoomRunnerState(room.id).inFlight.get(groupMemberKey(member))?.recovered) clearTurnInFlight(room.id, member)
 
   if (messages.length <= marker.before) {
     return false
@@ -864,6 +884,10 @@ async function harvestStrandedReply(
     return false
   }
 
+  return appendHarvestedReply(room, member, reply)
+}
+
+function appendHarvestedReply(room: Room, member: GroupMember, reply: string): boolean {
   const roomLog = getLatestMessages(room.id, { limit: 200 })
   if (isDuplicateAppend(roomLog[roomLog.length - 1], member, reply)) {
     return false

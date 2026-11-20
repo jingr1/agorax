@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   deleteManagedSession,
   fetchSessionsForAgent,
@@ -41,7 +41,7 @@ export function useExternalAgentSessions(
   const sessionsLoading = useAgentStore((s) =>
     agentId ? s.sessionsLoading.has(agentId) : false,
   )
-  const sessionsError = useAgentStore((s) => s.agentsError)
+  const [sessionsError, setSessionsError] = useState<string | null>(null)
   const loadGenerationRef = useRef(0)
 
   const storeSessions = agentId
@@ -56,15 +56,16 @@ export function useExternalAgentSessions(
   const reload = useCallback(() => {
     if (!agentId) return
     const generation = ++loadGenerationRef.current
+    setSessionsError(null)
     setSessionsLoading(agentId, true)
     void fetchSessionsForAgent(agentId)
       .then((data) => {
         if (generation !== loadGenerationRef.current) return
         setSessions(agentId, data.sessions)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (generation !== loadGenerationRef.current) return
-        setSessions(agentId, [])
+        setSessionsError(error instanceof Error ? error.message : 'Failed to load sessions')
       })
       .finally(() => {
         if (generation !== loadGenerationRef.current) return
@@ -74,7 +75,11 @@ export function useExternalAgentSessions(
 
   useEffect(() => {
     reload()
-  }, [reload])
+    return () => {
+      loadGenerationRef.current += 1
+      if (agentId) setSessionsLoading(agentId, false)
+    }
+  }, [agentId, reload, setSessionsLoading])
 
   const onNewChat = useCallback(() => {
     setActiveSessionId(null)
@@ -95,19 +100,33 @@ export function useExternalAgentSessions(
   const onRename = useCallback(
     (session: SessionMeta, title: string) => {
       if (!agentId) return
+      const generation = loadGenerationRef.current
+      setSessionsError(null)
       void renameManagedSession(agentId, session.friendlyId, title)
         .then((updated) => upsertSession(agentId, updated))
-        .catch(() => undefined)
+        .catch((error: unknown) => {
+          if (generation !== loadGenerationRef.current) return
+          setSessionsError(error instanceof Error ? error.message : 'Failed to rename session')
+        })
     },
     [agentId, upsertSession],
   )
 
   const onDelete = useCallback(
-    (session: SessionMeta) => {
-      if (!agentId) return
-      void deleteManagedSession(agentId, session.friendlyId)
-        .then(() => removeSession(agentId, session.friendlyId))
-        .catch(() => undefined)
+    async (session: SessionMeta) => {
+      if (!agentId) return false
+      const generation = loadGenerationRef.current
+      setSessionsError(null)
+      return deleteManagedSession(agentId, session.friendlyId)
+        .then(() => {
+          removeSession(agentId, session.friendlyId)
+          return generation === loadGenerationRef.current
+        })
+        .catch((error: unknown) => {
+          if (generation !== loadGenerationRef.current) return false
+          setSessionsError(error instanceof Error ? error.message : 'Failed to delete session')
+          return false
+        })
     },
     [agentId, removeSession],
   )

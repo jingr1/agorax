@@ -5,7 +5,7 @@ import { join, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
-const ENV_PATH = join(__dirname, '.env')
+const ENV_PATH = process.env.AGORAX_ENV_FILE || join(__dirname, '.env')
 
 /** Parse KEY=VALUE lines; only fills keys not already in process.env. */
 function loadDotEnvFile(filePath) {
@@ -39,7 +39,8 @@ if (!existsSync(ENV_PATH)) {
 }
 loadDotEnvFile(ENV_PATH)
 
-const { default: server } = await import('./dist/server/server.js')
+const { default: server } = await import('./dist/server/server-entry.js')
+await server.initialize()
 const CLIENT_DIR = join(__dirname, 'dist', 'client')
 
 // Content Security Policy — emitted as an HTTP response header on EVERY
@@ -350,12 +351,25 @@ function listenOn(bindHost) {
   return httpServer
 }
 
-listenOn(host)
-
-// The Bot Mode group-chat runner is started automatically when the server
-// module loads (see src/routes/api/connection-status.ts). It is idempotent,
-// so this keeps production and dev behavior identical without relying on a
-// separate bundled entry point that may be tree-shaken away.
+const ownedServers = [listenOn(host)]
+let stopping = false
+function shutdown() {
+  if (stopping) return
+  stopping = true
+  server.shutdown()
+  const deadline = setTimeout(() => {
+    for (const owned of ownedServers) owned.closeAllConnections()
+    process.exit(0)
+  }, 5000)
+  deadline.unref()
+  let remaining = ownedServers.length
+  for (const owned of ownedServers) owned.close(() => {
+    remaining--
+    if (remaining === 0) { clearTimeout(deadline); process.exit(0) }
+  })
+}
+process.once('SIGINT', shutdown)
+process.once('SIGTERM', shutdown)
 
 // Cloudflared remote-managed ingress currently points at http://localhost:10280.
 // On macOS, localhost may resolve to ::1 before 127.0.0.1; if Workspace only
@@ -363,5 +377,5 @@ listenOn(host)
 // `dial tcp [::1]:10280: connect: connection refused`. Keep the default
 // local-only security posture while also serving IPv6 loopback.
 if (host === '127.0.0.1') {
-  listenOn('::1')
+  ownedServers.push(listenOn('::1'))
 }

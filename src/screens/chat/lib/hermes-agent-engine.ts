@@ -974,14 +974,14 @@ export function mergeHermesHistoryWhileBusy(input: {
   const session = normalizeAgentActivitySession({
     ...(liveSession ??
       createHermesSessionSkeleton({ workspaceId, agentSessionId })),
-    activeTurn: activeTurn ?? liveSession?.activeTurn ?? null,
+    activeTurn: activeTurn ?? null,
     activeTurnId: activeTurn?.turnId ?? liveSession?.activeTurnId ?? null,
     latestTurn:
       latestTurn && latestTurn.turnId !== activeTurn?.turnId
         ? latestTurn
-        : (liveSession?.latestTurn ?? null),
-    latestTurnInteractions: liveSession?.latestTurnInteractions ?? [],
-    pendingInteractions: liveSession?.pendingInteractions ?? [],
+        : null,
+      latestTurnInteractions: selectEngineInteractionsForSession(snap, agentSessionId).filter((interaction) => interaction.turnId === latestTurn?.turnId),
+      pendingInteractions: selectEngineInteractionsForSession(snap, agentSessionId).filter((interaction) => interaction.status === 'pending'),
   })
   const historyMapped =
     input.historyMessages.length === 0
@@ -1057,8 +1057,8 @@ export function reconcileHermesHistoryIntoEngine(input: {
   const session = normalizeAgentActivitySession({
     ...(live ??
       createHermesSessionSkeleton({ workspaceId, agentSessionId })),
-    latestTurnInteractions: live?.latestTurnInteractions ?? [],
-    pendingInteractions: live?.pendingInteractions ?? [],
+    latestTurnInteractions: selectEngineInteractionsForSession(input.engine.getSnapshot(), agentSessionId).filter((interaction) => interaction.turnId === selectEngineLatestTurn(input.engine.getSnapshot(), agentSessionId)?.turnId),
+    pendingInteractions: selectEngineInteractionsForSession(input.engine.getSnapshot(), agentSessionId).filter((interaction) => interaction.status === 'pending'),
   })
 
   const historyMapped = hermesHistoryMessagesToActivity({

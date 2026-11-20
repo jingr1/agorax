@@ -79,7 +79,17 @@ AgentSessionEngine
 - **禁止**在成功 `done` 瞬间开输入框（须等 settled）
 - **开 turn / settling 期间**：`foldOpenTurnIntoLiveHost` 把 last-user 之后的工具/中间正文并进唯一 host；有线程内 host 时底部 Thinking pill 必须关（禁止 `liveToolActivity` 单独点亮）
 
-### 2.4 Chat turn 分阶段（A–D）
+### 2.4 Managed composer 与能力状态
+
+- 运行中 follow-up 使用 Engine prompt queue；排队项不提前写入消息列表，清空队列不留下乐观用户消息。等待审批等非 `active_turn` 阻塞仍禁止提交。
+- Steer 只在 canonical `activeTurnGuidance=true` 时开放，`guidance` 与精确 `targetTurnId` 通过 Workspace input API、daemon HTTP 转交既有 Host；不得降为普通新 turn。部署此功能须同时更新 daemon 二进制。
+- 中断后发送只在 `interrupt=true` 时开放；先请求 Stop，再排队新消息，权威 turn settled 前不发送。不可用的 busy mode 回退到排队。
+- 图片与会话模型切换由 canonical capability 控制；`null` 表示未知，不假定支持。文本附件保持可用；Hermes 未传 managed capability 时沿用原有控件行为。Plan/Compact 的能力声明不等于已提供对应命令入口。
+- managed 会话请求失败保留已有列表并显示错误；重试清除错误，删除成功后才退出当前会话。提交失败保留 composer 草稿。
+- MCP 平台绑定返回 `assigned` 或 `disabled`；只有真实 `connected/ok` 状态显示 Connected，缺少连接证据显示 unknown，禁止以 enabled 或绑定数量推断连接成功。
+- managed slash 菜单使用 `GET /api/agents/:id/commands?sessionId=...` 的会话/provider composer-options；daemon 返回实际 `SessionCommandSnapshot`，不再共用 Claude Code 的固定目录。可选命令需同时满足 provider 目录与 canonical capability；`/help` 展示当前目录，异步命令失败保留草稿。
+
+### 2.5 Chat turn 分阶段（A–D）
 
 | Phase | 内容 | 状态 |
 | --- | --- | --- |
@@ -124,13 +134,21 @@ Workspace 侧（或 collab.db）维护稳定映射，避免把 gateway id 直接
 | Native Swarm / tmux | **禁止 C-c 杀 TUI**；cancel = 停止编排等待 + 标记 Turn/assignment 结算 |
 | 未知 / 无映射 | fail closed，不报告假成功 |
 
+### 群聊 Pause / Resume
+
+- Pause 先持久化 `paused`、递增 epoch 并持有所有成员，再等待实际运行时取消。Hermes 只调用该成员 profile 下精确 run 的 `/v1/runs/:id/stop`；run ID 尚未到达时保留取消意图，收到 started 后再停止，不使用 profile 级停止。
+- managed 按 display run 的 binding 解析 canonical Session/Turn，interrupt 后仍等待该精确 Turn settled；不能用旧轮次已结束或取消请求已接受代替完成。
+- 取消登记跨 HMR 保留。等待有上限；失败/超时返回 409、房间保持 paused，可重复 Pause/Resume 重试。UI 显示等待状态和错误，不把失败当成功。
+- 旧 epoch 的回复、失败和水位线更新全部丢弃。Resume 等待旧 turn 收尾后解除 holds，主动驱动保留的未读内容；继续使用成员的同一会话，但不复活已取消的 run。超时后仍在后台运行的 Hermes stream 也保留取消句柄。
+- 完整进程重启或跨节点远程取消仍需要持久化的 run 控制映射；进程内取消登记不冒充跨节点权威。
+
 ## 6. Native bridge 分阶段
 
 | Phase | 范围 | 本文件状态 |
 | --- | --- | --- |
 | **0** | 映射类型 + 包边界；不改执行路径 | ✅ skeleton |
 | **1** | gateway 1:1：Create/Send/Cancel/stream → activity 事件 + Engine | ✅ `createHermesCommandPort`：activate→`/api/sessions`；sendInput→`/api/send-stream` SSE→`hermesSseToActivityEvents`→ingest；cancelTurn→`/api/runs/:id/stop` + `phase=settled` `canceled`；映射落库 |
-| **2** | 群聊 Hermes 成员 Turn 投影 + 精确 cancel/resume | 文档预留 |
+| **2** | 群聊 Hermes 成员 Turn 投影 + 精确 cancel/resume | 精确 Pause/Resume 已接线并覆盖身份/竞态/恢复测试；完整群聊 Activity 投影仍待补齐 |
 | **3** | Swarm assignment ↔ Turn；Human Gate 仍属 Hermes | 文档预留 |
 | **4** | Interaction：gateway `approval.request` → Interaction 投影 + `AgentInteractionPanel` + `POST /v1/runs/{id}/approval` 回写 | ✅ 1:1 Hermes chat（见 `hermes-approval.ts` / send-stream / hermes-agent-engine） |
 | **4+** | Goal/Fork 后置 | 文档预留 |

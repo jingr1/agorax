@@ -1,17 +1,26 @@
 /** @vitest-environment node */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const streamChat = vi.fn()
+const stopRun = vi.fn()
 const getMessages = vi.fn()
 const getOrCreateSession = vi.fn()
 const forgetSession = vi.fn()
 const ensureProfileGateway = vi.fn(async () => undefined)
 const runManagedTurn = vi.fn()
+const interrupt = vi.fn()
+const getSessionDetail = vi.fn()
+const getRunBinding = vi.fn()
+
+vi.mock('../../agent-runtime/router', () => ({ getAgentRuntimeRouter: () => ({ getAdapter: () => ({ interrupt }) }) }))
+vi.mock('../../agent-runtime/agorax-managed-run-store', () => ({ AgoraxManagedRunStore: class { get = getRunBinding } }))
+vi.mock('../../agent-runtime/agorax-managed-agent-http-client', () => ({ AgoraxManagedAgentHttpClient: class { getSessionDetail = getSessionDetail } }))
 
 vi.mock('../../hermes-api-profile', () => ({
   getHermesApiClient: () => ({
     baseUrl: 'http://127.0.0.1:8644',
     streamChat,
+    stopRun,
     getMessages,
     deleteSession: vi.fn(),
   }),
@@ -19,6 +28,7 @@ vi.mock('../../hermes-api-profile', () => ({
 
 vi.mock('../../hermes-api', () => ({
   streamChat,
+  stopRun,
   getMessages,
 }))
 
@@ -67,12 +77,89 @@ describe('executeMemberTurn timeout / stranded', () => {
   beforeEach(() => {
     vi.resetModules()
     streamChat.mockReset()
+    stopRun.mockReset()
     getMessages.mockReset()
     getOrCreateSession.mockReset()
     forgetSession.mockReset()
     ensureProfileGateway.mockClear()
     runManagedTurn.mockReset()
+    interrupt.mockReset()
+    getSessionDetail.mockReset()
+    getRunBinding.mockReset()
     upsertManagedInteractionCard.mockReset()
+  })
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('waits for the exact managed canonical turn after interrupt is requested', async () => {
+    vi.stubEnv('AGORAX_MANAGED_AGENT_URL', 'http://127.0.0.1:8788')
+    vi.stubEnv('AGORAX_WORKSPACE_ID', 'workspace-1')
+    interrupt.mockResolvedValue(undefined)
+    getRunBinding.mockResolvedValue({ agentSessionId: 'managed-session', turnId: 'target-turn' })
+    let confirm!: (detail: unknown) => void
+    getSessionDetail.mockResolvedValueOnce({ turns: [{ turnId: 'older-turn', phase: 'settled' }, { turnId: 'target-turn', phase: 'running' }] })
+      .mockImplementationOnce(() => new Promise((resolve) => { confirm = resolve }))
+    runManagedTurn.mockImplementation((input) => {
+      input.onEvent({ type: 'run_started', runId: 'managed-room-run', agentId: 'cc-impl' })
+      return new Promise((resolve) => input.signal.addEventListener('abort', () => resolve({ kind: 'failed', runId: 'managed-room-run', reason: 'aborted', events: [] }), { once: true }))
+    })
+    const { executeMemberTurn } = await import('../turn-executor')
+    const { cancelRoomTurns, hasActiveRoomTurns } = await import('../turn-control')
+    const turn = executeMemberTurn({ roomId: 'managed-pause', roomTitle: 'Pause', prompt: 'work', member: {
+      id: 'cc', kind: 'agent', participantId: 'cc-impl', displayName: 'Claude', name: 'Claude', mentionName: 'claude', runtime: 'claude-code', isBot: true, profile: null,
+    } })
+    let paused = false
+    const pause = cancelRoomTurns('managed-pause').then(() => { paused = true })
+    await vi.waitFor(() => expect(getSessionDetail).toHaveBeenCalledTimes(2), { interval: 1 })
+    expect(interrupt).toHaveBeenCalledWith('managed-room-run', 'room paused')
+    expect(getSessionDetail).toHaveBeenCalledWith('managed-session')
+    expect(paused).toBe(false)
+    expect(hasActiveRoomTurns('managed-pause')).toBe(true)
+    confirm({ turns: [{ turnId: 'target-turn', phase: 'settled' }] })
+    await pause
+    await expect(turn).resolves.toEqual({ kind: 'pass' })
+  })
+
+  it('stops the exact Hermes run when Pause precedes the started event', async () => {
+    getOrCreateSession.mockResolvedValue({ sessionId: 'room-session', profile: 'developer' })
+    getMessages.mockResolvedValue([])
+    let release!: () => void
+    let started!: () => void
+    const stream = new Promise<void>((resolve) => { release = resolve })
+    streamChat.mockImplementation((_session, _body, options) => {
+      started = () => options.onEvent({ event: 'started', data: { run_id: 'precise-room-run' } })
+      return stream
+    })
+    stopRun.mockImplementation(() => { release(); return Promise.resolve({ status: 'canceled' }) })
+    const { executeMemberTurn } = await import('../turn-executor')
+    const { cancelRoomTurns } = await import('../turn-control')
+    const turn = executeMemberTurn({ roomId: 'precise-room', roomTitle: 'Pause race', prompt: 'work', member: {
+      id: 'row', kind: 'agent', participantId: 'developer', displayName: 'developer', name: 'developer', mentionName: 'developer', runtime: 'hermes', isBot: true, profile: 'developer',
+    } })
+    await vi.waitFor(() => expect(streamChat).toHaveBeenCalledOnce(), { interval: 1 })
+    const pause = cancelRoomTurns('precise-room')
+    expect(stopRun).not.toHaveBeenCalled()
+    started()
+    await pause
+    expect(stopRun).toHaveBeenCalledExactlyOnceWith('precise-room-run')
+    await expect(turn).resolves.toEqual({ kind: 'pass' })
+  })
+
+  it('does not submit a Hermes turn when Pause wins during the history read', async () => {
+    getOrCreateSession.mockResolvedValue({ sessionId: 'not-submitted', profile: 'developer' })
+    let release!: (messages: Array<unknown>) => void
+    getMessages.mockReturnValue(new Promise((resolve) => { release = resolve }))
+    const { executeMemberTurn } = await import('../turn-executor')
+    const { cancelRoomTurns } = await import('../turn-control')
+    const turn = executeMemberTurn({ roomId: 'before-submit', roomTitle: 'Pause race', prompt: 'work', member: {
+      id: 'row', kind: 'agent', participantId: 'developer', displayName: 'developer', name: 'developer', mentionName: 'developer', runtime: 'hermes', isBot: true, profile: 'developer',
+    } })
+    await vi.waitFor(() => expect(getMessages).toHaveBeenCalledOnce(), { interval: 1 })
+    const pause = cancelRoomTurns('before-submit')
+    release([])
+    await pause
+    await expect(turn).resolves.toEqual({ kind: 'pass' })
+    expect(streamChat).not.toHaveBeenCalled()
+    expect(stopRun).not.toHaveBeenCalled()
   })
 
   it('returns timeout without treating early ack as reply when soft deadline elapses', async () => {

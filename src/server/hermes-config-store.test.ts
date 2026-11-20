@@ -36,7 +36,7 @@ afterEach(() => {
 })
 
 describe('applyHermesConfigPatch', () => {
-  it('set-default-model writes flat provider/model when no nested model exists', () => {
+  it('set-default-model writes nested model.provider Hermes can resolve', () => {
     const paths = resolveHermesConfigPaths()
     applyHermesConfigPatch(paths, {
       action: 'set-default-model',
@@ -47,7 +47,10 @@ describe('applyHermesConfigPatch', () => {
     const parsed = YAML.parse(
       fs.readFileSync(path.join(tmpHome, 'config.yaml'), 'utf-8'),
     )
-    expect(parsed).toMatchObject({ provider: 'openrouter', model: 'auto' })
+    expect(parsed).toMatchObject({
+      provider: 'openrouter',
+      model: { default: 'auto', provider: 'openrouter' },
+    })
   })
 
   it('set-default-model preserves nested-model extension fields and updates default/provider', () => {
@@ -186,7 +189,10 @@ describe('profile-scoped config paths', () => {
     const parsed = YAML.parse(
       fs.readFileSync(path.join(tmpHome, 'profiles', 'dev', 'config.yaml'), 'utf-8'),
     )
-    expect(parsed).toMatchObject({ provider: 'openrouter', model: 'auto' })
+    expect(parsed).toMatchObject({
+      provider: 'openrouter',
+      model: { default: 'auto', provider: 'openrouter' },
+    })
     // Global config must not be created by the profile write.
     expect(fs.existsSync(path.join(tmpHome, 'config.yaml'))).toBe(false)
   })

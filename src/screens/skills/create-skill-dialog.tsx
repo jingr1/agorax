@@ -2,13 +2,7 @@
  * Multica-style create-skill chooser:
  * 手动创建 / 从本地导入 / 从 URL 导入 / 从 Agent 已有的 skill 复制
  */
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ChangeEvent,
-} from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   AiComputerIcon,
@@ -18,6 +12,8 @@ import {
   Folder01Icon,
   PlusSignIcon,
 } from '@hugeicons/core-free-icons'
+import type { ChangeEvent } from 'react'
+import type { PlatformSkillFile } from '@/server/platform-skills/types'
 import { Button } from '@/components/ui/button'
 import {
   DialogContent,
@@ -52,19 +48,21 @@ type LocalSkillRow = {
   alreadyInCatalog: boolean
 }
 
-type PreparedLocal = {
-  ok: true
-  source: 'folder' | 'archive'
-  displayName: string
-  skillName: string
-  description: string
-  fileCount: number
-  files?: Array<{ path: string; content: string }>
-  archiveFile?: File
-} | {
-  ok: false
-  error: string
-}
+type PreparedLocal =
+  | {
+      ok: true
+      source: 'folder' | 'archive'
+      displayName: string
+      skillName: string
+      description: string
+      fileCount: number
+      files?: Array<PlatformSkillFile>
+      archiveFile?: File
+    }
+  | {
+      ok: false
+      error: string
+    }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -94,14 +92,19 @@ function agentLabel(agent: AgentSummary): string {
 }
 
 function normalizeRelPath(raw: string): string {
-  return raw.replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '')
+  return raw
+    .replace(/\\/g, '/')
+    .replace(/^\.\/+/, '')
+    .replace(/^\/+/, '')
 }
 
 function isSkillMd(path: string): boolean {
   return /(?:^|\/)skill\.md$/i.test(path)
 }
 
-async function prepareFromFolderFiles(files: File[]): Promise<PreparedLocal> {
+async function prepareFromFolderFiles(
+  files: Array<File>,
+): Promise<PreparedLocal> {
   if (files.length === 0) {
     return { ok: false, error: '文件夹是空的。' }
   }
@@ -136,15 +139,29 @@ async function prepareFromFolderFiles(files: File[]): Promise<PreparedLocal> {
     return { ok: false, error: '这个文件夹不是 skill——里面没有 SKILL.md。' }
   }
 
-  const out: Array<{ path: string; content: string }> = []
+  const out: Array<PlatformSkillFile> = []
+  let total = 0
   for (const entry of entries) {
     if (prefix && !entry.path.startsWith(prefix)) continue
     const rel = prefix ? entry.path.slice(prefix.length) : entry.path
     if (!rel || rel.endsWith('/')) continue
-    if (/\.(png|jpe?g|gif|webp|pdf|zip|woff2?)$/i.test(rel)) continue
-    if (entry.file.size > 1 << 20) continue
-    const content = await entry.file.text()
-    out.push({ path: rel, content })
+    total += entry.file.size
+    if (entry.file.size > 1 << 20 || total > 8 << 20 || out.length >= 256)
+      return { ok: false, error: '技能包超过文件数量或大小限制' }
+    const bytes = new Uint8Array(await entry.file.arrayBuffer())
+    try {
+      const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+      if (bytes.includes(0)) throw new Error('binary')
+      out.push({ path: rel, content })
+    } catch {
+      out.push({
+        path: rel,
+        content: btoa(
+          Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''),
+        ),
+        encoding: 'base64',
+      })
+    }
   }
   const skillMd = out.find((f) => isSkillMd(f.path))
   if (!skillMd) {
@@ -158,10 +175,8 @@ async function prepareFromFolderFiles(files: File[]): Promise<PreparedLocal> {
     ok: true,
     source: 'folder',
     displayName: wrapper,
-    skillName:
-      nameMatch?.[1]?.trim().replace(/^["']|["']$/g, '') || wrapper,
-    description:
-      descMatch?.[1]?.trim().replace(/^["']|["']$/g, '') || '',
+    skillName: nameMatch?.[1]?.trim().replace(/^["']|["']$/g, '') || wrapper,
+    description: descMatch?.[1]?.trim().replace(/^["']|["']$/g, '') || '',
     fileCount: out.length,
     files: out,
   }
@@ -325,7 +340,12 @@ function ManualForm({
         ) : null}
       </div>
       <div className="mt-4 flex justify-end gap-2">
-        <Button type="button" variant="ghost" onClick={onCancel} disabled={loading}>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={onCancel}
+          disabled={loading}
+        >
           取消
         </Button>
         <Button
@@ -389,9 +409,7 @@ function LocalForm({
   }
 
   const displayError =
-    error ||
-    (prepared && !prepared.ok ? prepared.error : '') ||
-    ''
+    error || (prepared && !prepared.ok ? prepared.error : '') || ''
 
   return (
     <>
@@ -447,7 +465,12 @@ function LocalForm({
         ) : null}
       </div>
       <div className="mt-4 flex justify-end gap-2">
-        <Button type="button" variant="ghost" onClick={onCancel} disabled={loading}>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={onCancel}
+          disabled={loading}
+        >
           取消
         </Button>
         <Button
@@ -564,7 +587,12 @@ function UrlForm({
         ) : null}
       </div>
       <div className="mt-4 flex justify-end gap-2">
-        <Button type="button" variant="ghost" onClick={onCancel} disabled={loading}>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={onCancel}
+          disabled={loading}
+        >
           取消
         </Button>
         <Button
@@ -610,7 +638,7 @@ function AgentCopyForm({
     )
       .then((payload) => {
         if (cancelled) return
-        setSkills(payload.skills ?? [])
+        setSkills(payload.skills)
         setSelected(new Set())
       })
       .catch((err) => {
@@ -628,9 +656,7 @@ function AgentCopyForm({
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const list = skills.filter(
-      (s) => !s.platformManaged && !s.alreadyInCatalog,
-    )
+    const list = skills.filter((s) => !s.platformManaged && !s.alreadyInCatalog)
     if (!q) return list
     return list.filter(
       (s) =>
@@ -660,10 +686,9 @@ function AgentCopyForm({
         method: 'POST',
         body: JSON.stringify({ skillNames: [...selected] }),
       })
-      const created = payload.created ?? []
+      const created = payload.created
       if (created.length === 0) {
-        const reason =
-          payload.skipped?.[0]?.reason || '没有可导入的 skill'
+        const reason = payload.skipped[0]?.reason || '没有可导入的 skill'
         throw new Error(reason)
       }
       toast(
@@ -793,9 +818,7 @@ export function CreateSkillDialog({
   onCreated?: (skill: CreatedSkill) => void
 }) {
   const [method, setMethod] = useState<Method>('chooser')
-  const [localPrepared, setLocalPrepared] = useState<PreparedLocal | null>(
-    null,
-  )
+  const [localPrepared, setLocalPrepared] = useState<PreparedLocal | null>(null)
   const [localPreparing, setLocalPreparing] = useState(false)
   const folderInputRef = useRef<HTMLInputElement>(null)
   const archiveInputRef = useRef<HTMLInputElement>(null)

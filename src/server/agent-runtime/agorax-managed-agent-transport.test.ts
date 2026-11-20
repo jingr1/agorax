@@ -1,8 +1,69 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createAgoraxManagedAgentTransport } from './agorax-managed-agent-transport'
 import { AgoraxManagedRunStore } from './agorax-managed-run-store'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 describe('createAgoraxManagedAgentTransport', () => {
+  it.each(['terminal', 'disconnect', 'error'] as const)('cleans the owning subscription on %s and rejects a competing consumer', async (ending) => {
+    const root = mkdtempSync(join(tmpdir(), 'transport-terminal-'))
+    let emit: (raw: unknown) => void = () => undefined
+    let disconnect: () => void = () => undefined
+    let fail: (error: Error) => void = () => undefined
+    const close = vi.fn()
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ session: { id: 'session-1', activeTurnId: 'turn-1' } }), { status: 201 }))
+    const transport = createAgoraxManagedAgentTransport({
+      baseUrl: 'http://managed-agent.test', workspaceId: 'workspace-1', fetchImpl,
+      runStore: new AgoraxManagedRunStore(root),
+      socketFactory: () => ({ onMessage: (listener) => { emit = listener }, onError: (listener) => { fail = listener }, onClose: (listener) => { disconnect = listener }, close }),
+    })
+    const frame = (eventType: string, data: unknown) => ({ kind: 'event', event: { topic: 'agent.activity.updated', payload: { workspaceId: 'workspace-1', agentSessionId: 'session-1', eventType, data } } })
+    try {
+      await transport.startRun({ backend: 'codex', run: { runId: 'run-1', agentId: 'codex', task: 'hello' }, mcp: { endpoint: '', runToken: '', toolAllowlist: [] } })
+      emit(frame('turn_update', { turn: { turnId: 'old-turn', phase: 'settled', outcome: 'succeeded' } }))
+      expect(close).not.toHaveBeenCalled()
+      emit(frame('message_delta', { agentSessionId: 'session-1', messageId: 'message-1', turnId: 'turn-1', role: 'assistant', kind: 'text', content: { operation: 'append_text', text: 'hi' } }))
+      const iterator = transport.streamEvents({ backend: 'codex', runId: 'run-1' })[Symbol.asyncIterator]()
+      await iterator.next()
+      const competing = transport.streamEvents({ backend: 'codex', runId: 'run-1' })[Symbol.asyncIterator]()
+      await expect(competing.next()).rejects.toThrow('already has an event subscriber')
+      expect(close).not.toHaveBeenCalled()
+      if (ending === 'terminal') emit(frame('turn_update', { turn: { turnId: 'turn-1', phase: 'settled', outcome: 'succeeded' } }))
+      else if (ending === 'disconnect') disconnect()
+      else fail(new Error('socket failed'))
+      let next = await iterator.next()
+      while (!next.done) next = await iterator.next()
+      expect(transport.subscriptionStats()).toEqual({ queues: 0, bufferedEvents: 0 })
+      if (ending !== 'disconnect') expect(close).toHaveBeenCalledOnce()
+      expect(fetchImpl).toHaveBeenCalledOnce()
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('releases sockets on repeated early subscription exits without cancelling runs', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'transport-cleanup-'))
+    let open = 0
+    let emit: (raw: unknown) => void = () => undefined
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ session: { id: 'session-1', activeTurnId: 'turn-1' } }), { status: 201 }))
+    const transport = createAgoraxManagedAgentTransport({
+      baseUrl: 'http://managed-agent.test', workspaceId: 'workspace-1', fetchImpl,
+      runStore: new AgoraxManagedRunStore(root),
+      socketFactory: () => { open++; return { onMessage: (listener) => { emit = listener }, onError: () => undefined, close: () => { open-- } } },
+    })
+    try {
+      for (let index = 0; index < 30; index++) {
+        const runId = `run-${index}`
+        await transport.startRun({ backend: 'codex', run: { runId, agentId: 'codex', task: 'hello' }, mcp: { endpoint: '', runToken: '', toolAllowlist: [] } })
+        const iterator = transport.streamEvents({ backend: 'codex', runId })[Symbol.asyncIterator]()
+        emit({ kind: 'event', event: { topic: 'agent.activity.updated', payload: { workspaceId: 'workspace-1', agentSessionId: 'session-1', eventType: 'message_delta', data: { agentSessionId: 'session-1', messageId: 'message-1', turnId: 'turn-1', role: 'assistant', kind: 'text', content: { operation: 'append_text', text: 'hi' } } } } })
+        await iterator.next()
+        await iterator.return?.()
+        expect(open).toBe(0)
+        expect(transport.subscriptionStats()).toEqual({ queues: 0, bufferedEvents: 0 })
+      }
+      expect(fetchImpl.mock.calls.some(([url]) => String(url).includes('/cancel'))).toBe(false)
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
   it('creates a canonical session and projects activity events', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ session: { id: 'session-1', activeTurnId: 'turn-1' } }), { status: 201 }))

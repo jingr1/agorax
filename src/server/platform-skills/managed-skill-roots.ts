@@ -34,10 +34,21 @@ function resolveCodexHome(home: string): string {
 }
 
 /** Project-scoped skill dirs under a workspace/repo root. */
-export function projectManagedSkillRoots(repoRoot: string): Array<string> {
+export function projectManagedSkillRoots(
+  repoRoot: string,
+  runtime?: string,
+): Array<string> {
   if (!repoRoot) return []
   const out: Array<string> = []
   const seen = new Set<string>()
+  const runtimeDirectories: Record<string, Array<string>> = {
+    'claude-code': ['.claude', '.agents'],
+    codex: ['.codex', '.agents'],
+    cursor: ['.cursor', '.agents'],
+    opencode: ['.opencode', '.claude', '.agents'],
+    kimi: ['.kimi', '.agents'],
+    'deepseek-harness': ['.agents'],
+  }
   for (const rel of [
     path.join('.claude', 'skills'),
     path.join('.codex', 'skills'),
@@ -46,7 +57,13 @@ export function projectManagedSkillRoots(repoRoot: string): Array<string> {
     path.join('.agents', 'skills'),
     path.join('.hermes', 'skills'),
     path.join('.gemini', 'skills'),
+    path.join('.kimi', 'skills'),
   ]) {
+    if (
+      runtime &&
+      !(runtimeDirectories[runtime] ?? []).includes(rel.split(path.sep)[0])
+    )
+      continue
     pushIfDir(out, seen, path.join(repoRoot, rel))
   }
   return out
@@ -100,9 +117,7 @@ export function personalManagedSkillRoots(
 }
 
 /** All personal managed roots across known runtimes (catalog sync). */
-export function allPersonalManagedSkillRoots(
-  home = homedir(),
-): Array<string> {
+export function allPersonalManagedSkillRoots(home = homedir()): Array<string> {
   const runtimes: Array<AgentRuntimeKind | string> = [
     'claude-code',
     'codex',

@@ -72,9 +72,28 @@ Runtime stub: `GET /api/missions/:missionId/tasks/:taskId/runtime`
 | YAML front matter + Markdown prompt | `pipelines.yaml` + `pipelines/<id>/stages/<key>.md` |
 | `issue` / `attempt` template vars | `mission` / `task` / `stage` / `attempt` / `upstream` |
 | tracker poll as work source | Mission-decomposed Tasks (internal) |
-| claim / retry / stall | `task-scheduler.ts` on top of `dispatchReadyAssignments` |
+| claim / retry / stall | shared `task-scheduler.ts` admission for batch, MCP continuation and direct runtime dispatch |
 
 Skills keep `SKILL.md` YAML front matter; optional `metadata.hermes.pipeline_stages` and `outcomes` bind stages ↔ skills via `skillRefs`.
+
+### Dispatch admission and recovery
+
+- All Mission Task execution uses `task-scheduler.ts` capacity admission before runtime startup, including direct Hermes dispatch and direct managed dispatch. Chat turns are outside this scheduler.
+- The single Workspace process reserves a Task synchronously before asynchronous preparation. An internal claim object is passed separately from HTTP input and validated by the runtime dispatcher; a second kickoff cannot reuse the same Task while its claim is held.
+- Global capacity defaults to 10 Tasks. A pipeline's `runtime.maxConcurrentTasks` additionally limits that Mission, not unrelated Missions. Dependency, review and human gates remain authoritative; capacity never makes an ineligible Task runnable.
+- A one-second scheduler tick releases terminal/cancelled Task reservations and reservations of completed executions explicitly requeued for rework. It fills capacity using the exact Assignment IDs that previously requested dispatch, not arbitrary ready siblings. It does not launch untouched Missions created with auto-dispatch disabled.
+- At startup, the scheduler restores leases, retry deadlines and waiting Assignment identities from `collab.db`, then reads every Mission page and counts existing `dispatched` / `reviewing` Tasks before admitting new work. Claim acquisition uses SQLite owner/token fencing and capacity checks. An expired/recovered unknown execution stays reserved until its canonical outcome is confirmed; it is not replayed merely because the previous process disappeared.
+- A failed dispatch that remains `queued` can retry with exponential backoff, starting at 10 seconds, capped by `runtime.maxRetryBackoffMs`. Three automatic retries are allowed; exhaustion records a blocked Task. Capacity waits do not consume retry attempts.
+- A runtime-start error after the Task became `dispatched` records a blocker requiring execution verification before retry. Neither a lost response nor a silent runtime proves that no work occurred.
+- `runtime.stallTimeoutMs` produces one `assignment_stalled` diagnostic per inactivity period. It does not release the claim or automatically rerun work: even a queued Task may still be preparing a worktree. Confirm the runtime outcome before manually retrying.
+- Hermes dispatch preserves the exact Assignment ID and existing Mission Spec, acceptance criteria and pipeline metadata. Managed dispatch rechecks eligibility after asynchronous worktree preparation so cancellation or gate changes prevent startup.
+- SQLite Mission writes no longer synchronously rebuild JSON. `exportToJson()` explicitly exports every Mission independent of pagination; list APIs use summary-only reads. JSON remains the selected repository when `AGORAX_MISSION_SQLITE_SOT` is not `1`.
+
+Focused regression command (fake runtimes and isolated state; no real provider login required):
+
+```bash
+AGORAX_AUTO_START_AGENT=false pnpm exec vitest run src/server/task-pipeline/task-scheduler.test.ts src/server/task-pipeline/dispatch-ready.test.ts src/server/agent-runtime/e2e-dispatch.test.ts src/routes/api/-swarm-dispatch.test.ts
+```
 
 ## APIs
 

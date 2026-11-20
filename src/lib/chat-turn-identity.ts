@@ -5,7 +5,11 @@
  * See docs/hermes-native-bridge.md §2.
  */
 
-import { normalizeToolCallArgs } from './chat-message-parts'
+import {
+  normalizeAssistantThinkingAgainstReply,
+  normalizeToolCallArgs,
+} from './chat-message-parts'
+import type { MessageContent } from '../screens/chat/types'
 
 export function assistantMessageIdForRun(
   runId: string | null | undefined,
@@ -109,7 +113,7 @@ export function projectLiveAssistantMessage(
   id: string
   messageId: string
   role: 'assistant'
-  content: Array<Record<string, unknown>>
+  content: Array<MessageContent>
   timestamp: number
   runId: string | null
   __streamingStatus: 'streaming' | 'complete'
@@ -117,8 +121,12 @@ export function projectLiveAssistantMessage(
   __streamingThinking: string
   __streamToolCalls: LiveAssistantProjection['toolCalls']
 } {
-  const content: Array<Record<string, unknown>> = []
-  const thinking = projection.thinking.trim()
+  const content: Array<MessageContent> = []
+  const text = projection.text.trim()
+  const thinking = normalizeAssistantThinkingAgainstReply(
+    projection.thinking,
+    text,
+  )
   if (thinking) {
     content.push({ type: 'thinking', thinking })
   }
@@ -131,7 +139,6 @@ export function projectLiveAssistantMessage(
       arguments: args,
     })
   }
-  const text = projection.text.trim()
   if (text) {
     content.push({ type: 'text', text })
   }
@@ -145,7 +152,7 @@ export function projectLiveAssistantMessage(
     runId: projection.runId,
     __streamingStatus: projection.streaming ? 'streaming' : 'complete',
     __streamingText: projection.text,
-    __streamingThinking: projection.thinking,
+    __streamingThinking: thinking,
     __streamToolCalls: projection.toolCalls,
   }
 }

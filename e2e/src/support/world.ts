@@ -11,6 +11,7 @@ export class AgoraxWorld extends World {
   operations: Array<string> = []
   prompt = ''
   previousUserCount = 0
+  previousItemCount = 0
   groupMock?: Awaited<ReturnType<typeof installGroupChatMocks>>
   chatMock!: Awaited<ReturnType<typeof installChatMocks>>
   finalReply = ''

@@ -15,6 +15,7 @@ import type { GroupMember, GroupTurnResult } from '../types'
 import { resetCollabDbForTests } from '../room-store'
 import {
   createRoom,
+  getRoom,
   addParticipant,
   insertMessage,
   getLatestMessages,
@@ -214,6 +215,41 @@ describe('group-chat clean baseline', () => {
       expect(devDelta.length).toBe(5)
       expect(architectDelta.map((m) => m.content)).toEqual(['m-3', 'm-4'])
     })
+  })
+
+  it('keeps Pause and Resume pending until the precise old turn exits', async () => {
+    const runner = await importRunner()
+    const { registerRoomTurn } = await import('../turn-control')
+    const turn = registerRoomTurn(room.id)
+    const stop = vi.fn().mockResolvedValue(undefined)
+    turn.bindCancel(stop)
+    const pausing = runner.pauseRoom(room.id)
+    const resuming = runner.resumeRoom(room.id)
+    expect(getRoom(room.id, { dbPath })?.state).toBe('paused')
+    await Promise.resolve()
+    expect(stop).toHaveBeenCalledOnce()
+    expect(mockExecuteMemberTurn).not.toHaveBeenCalled()
+    turn.finish()
+    await pausing
+    await resuming
+    expect(getRoom(room.id, { dbPath })?.state).toBe('active')
+  })
+
+  it('does not append a pre-Pause reply or consume its unread context', async () => {
+    insertMessage({ roomId: room.id, senderKind: 'human', senderParticipantId: 'user', senderName: 'user', content: '@architect continue', mentions: ['architect'], dbPath })
+    let finish!: (result: GroupTurnResult) => void
+    mockExecuteMemberTurn.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    const runner = await importRunner()
+    const driving = runner.runRoom({ ...room, dbPath } as any)
+    await vi.waitFor(() => expect(mockExecuteMemberTurn).toHaveBeenCalledOnce())
+    await runner.pauseRoom(room.id)
+    finish({ kind: 'reply', text: 'obsolete pre-Pause reply' })
+    await driving
+    expect(getLatestMessages(room.id, { dbPath, limit: 200 }).some((message) => message.content === 'obsolete pre-Pause reply')).toBe(false)
+    expect(getWatermark(room.id, 'architect', { dbPath })).toBe(0)
+    mockExecuteMemberTurn.mockResolvedValue({ kind: 'reply', text: 'resumed reply' })
+    await runner.resumeRoom(room.id)
+    await vi.waitFor(() => expect(getLatestMessages(room.id, { dbPath, limit: 200 }).some((message) => message.content === 'resumed reply')).toBe(true))
   })
 
   describe('invariant 2: summary compression marks older messages without loss', () => {

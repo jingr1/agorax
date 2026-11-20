@@ -60,6 +60,7 @@ export type McpHandshake = {
 }
 
 export type AgentRunInput = {
+  subscribeEvents?: boolean
   runId: string
   agentId: string
   /** The rendered instruction text for this stage/run. */
@@ -100,6 +101,7 @@ export type AgentProbeResult = {
 }
 
 export interface AgentRuntimeAdapter {
+  closeEvents?: (runId: string) => void
   kind: AgentRuntimeKind
   probe: () => Promise<AgentProbeResult>
   /** Inject MCP endpoint + runToken, spawn the managed per-run process. */

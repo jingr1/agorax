@@ -12,25 +12,24 @@ managed runtime code for Agorax's local agent Host (Session / Turn / activity).
 - `packages/agent/session-replay`: replay and provider history contracts
 - `packages/connector/daemon/core`: connector runtime core
 - `packages/events/stream-go`: event stream transport primitives
-- Claude Code is intentionally excluded from the Go runtime migration. Agorax
-  uses the existing TypeScript `claude -p --output-format stream-json` adapter
-  for Claude Code, the same CLI boundary used by the other managed backends.
+- Claude Code is hosted by the daemon's CLI adapter using the local Claude CLI.
+  The Workspace does not launch a fallback Claude process.
 
 The Go modules use the local vanity path `agorax.local/agent-daemon/...`.
 This is a logical module identity, not a GitHub or network endpoint. The
 workspace file maps it to the local `agorax-agent-daemon` directory, so the Go
 code is not coupled to the repository hosting URL.
 
-## Remaining work
+## Composition
 
-`packages/agent/daemon` is copied as source and points at the migrated local
-dependencies. A minimal Agorax composition root is available at
-`packages/agent/daemon/cmd/agorax-agentd`; it exposes `/health` and the initial
-Agent target probe endpoint.
+`packages/agent/daemon/cmd/agorax-agentd` composes the SQLite canonical store,
+Go Host, runtime controller, providers and durable activity reporter. It exposes
+health, provider status/catalog, Session/input/cancel, interaction and activity
+interfaces used by the Workspace.
 
-The embedded daemon now exposes Session creation, Input, Turn cancel, and the
-canonical activity WebSocket. The remaining higher-level work is interactive
-approval/question response, full history paging, and recovery/reconciliation UI.
+Session and Turn lifecycle is owned by Go Host. Product Missions, room scheduling
+and workflow human gates remain Workspace concerns. The boundary and current
+coverage are documented in [daemon mapping](../docs/managed-agent-daemon-mapping.md).
 
 The development composition is available from the Agorax repository root:
 
@@ -46,9 +45,9 @@ through the embedded Managed Agent bridge.
 The Claude SDK sidecar is not part of this migration. Do not install
 `@anthropic-ai/claude-agent-sdk`; use the Agorax CLI adapter instead.
 
-Until the full API/event wiring is complete, the embedded daemon should only be
-used for local composition and health checks. The TypeScript Managed Agent
-transport remains the contract test surface for the unfinished endpoints.
+The embedded daemon is the managed execution path, not a probe-only stub.
+Transport contract tests complement Go Host tests; neither alone proves a real
+provider login or external CLI behavior.
 
 ## Validation
 

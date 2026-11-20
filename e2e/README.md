@@ -90,6 +90,8 @@ scenarios is not a successful verification.
 | `@CHAT-SEND-001`      | Rapid double submission adds one user message                        |
 | `@CHAT-TURN-001`      | Busy follow-up stays queued; the prior reply keeps its ownership     |
 | `@CHAT-TURN-002`      | Sending preserves the prior reply and does not duplicate the user    |
+| `@CHAT-DISPLAY-001`   | Equal-timestamp multi-turn history stays interleaved; no mashed bubble |
+| `@CHAT-DISPLAY-002`   | Thinking… clears when reply text arrives; idle after settle          |
 | `@CHAT-RECOVERY-001`  | Completed history renders once in an idle state                      |
 | `@CHAT-RECOVERY-002`  | Reload removes stale waiting state for a completed session           |
 | `@GROUP-SEND-001`     | SSE refresh before POST completion does not duplicate a room message |
@@ -98,6 +100,72 @@ scenarios is not a successful verification.
 | `@CHAT-LIFECYCLE-003` | Switching sessions mid-stream does not mix transcripts               |
 | `@CHAT-LIFECYCLE-004` | Stopping generation permits another successful turn                  |
 | `@CHAT-SOAK-001`      | Seeded same-page multi-turn chat preserves messages and drafts       |
+
+### Workspace Pages
+
+Run the page baseline independently with `pnpm test:e2e --tags @workspace`.
+It uses the same isolated browser lifecycle and fails on uncaught page errors.
+
+| Surface         | Browser checks                                                                                                   | Tags                                                                                 |
+| --------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Dashboard       | Main content and New Chat navigation                                                                             | `@PAGE-DASHBOARD-001`                                                                |
+| Main navigation | Agents, Skills, MCP, Jobs, Memory, Missions, Swarm, Files, Settings, Echo Studio                                 | `@PAGE-NAVIGATION-001`                                                               |
+| Legacy routes   | Operations/Profiles, Tasks/Mission Control/Conductor, Swarm2, managed settings deep link                         | `@PAGE-REDIRECT-001`                                                                 |
+| Agents          | Workspace/Hermes and managed roster entries; New Agent form cancellation                                         | `@PAGE-AGENTS-001`, `@PAGE-FORMS-001`                                                |
+| Skills          | Search and clear, Hermes/managed enable state after reload, detail/edit cancellation, creation chooser dismissal | `@PAGE-SEARCH-001`, `@PAGE-SKILLS-002`, `@PAGE-SKILLS-DETAIL-001`, `@PAGE-FORMS-001` |
+| MCP             | Library search, Hermes/managed assignment panels, creation form cancellation                                     | `@PAGE-SEARCH-001`, `@PAGE-MCP-001`, `@PAGE-FORMS-001`                               |
+| Jobs            | Search and clear, pause/reload/resume, creation form cancellation                                                | `@PAGE-SEARCH-001`, `@PAGE-JOBS-002`, `@PAGE-FORMS-001`                              |
+| Files           | Workspace tree and Markdown file preview                                                                         | `@PAGE-FILES-001`                                                                    |
+| Memory          | Agent memory content, Knowledge and External providers tabs                                                      | `@PAGE-MEMORY-001`, `@PAGE-MEMORY-002`                                               |
+| Missions        | Page load and creation form cancellation                                                                         | `@PAGE-NAVIGATION-001`, `@PAGE-FORMS-001`                                            |
+| Swarm           | Page load and workflow help open/close                                                                           | `@PAGE-NAVIGATION-001`, `@PAGE-SWARM-001`                                            |
+| Settings        | Root/provider pages and no-match search                                                                          | `@PAGE-NAVIGATION-001`, `@PAGE-SETTINGS-001`                                         |
+| Terminal        | Mock PTY stream and new tab creation                                                                             | `@PAGE-TERMINAL-001`                                                                 |
+| Group Chat      | Empty-room state and New room entry; existing send race regression                                               | `@PAGE-GROUP-001`, `@GROUP-SEND-001`                                                 |
+| Echo Studio     | Page load and required-field generation gate                                                                     | `@PAGE-NAVIGATION-001`, `@PAGE-ECHO-001`                                             |
+
+The main workspace baseline is not full functional coverage. Creation-form
+cancellation does not prove creation, update, or deletion succeeds. Real PTY
+processes, live agents, login/onboarding, mobile/Electron variants, reservation
+and VT Capital pages, and arbitrary user-generated pages are outside this
+baseline. Skills and MCP browser fixtures do not prove on-disk materialization
+or real managed adapter injection. Add those as
+separate journeys rather than counting a page heading as full feature coverage.
+
+Page fixtures are local to each scenario. State-changing checks update those
+fixtures and verify refetched UI state, without touching actual files, jobs,
+agent profiles, or model accounts. Capability probes are mocked explicitly;
+do not accept a backend-unavailable placeholder as the normal page outcome.
+
+### Core Journeys
+
+| Journey | Implemented browser checks | Remaining scope |
+| --- | --- | --- |
+| MCP dual runtime | Passed: `@BIND-MCP-001` default/Hermes and managed add, reload, remove | Binding failures and rollback, duplicate operations, cross-agent isolation, real configuration delivery and runtime injection |
+| Skills dual runtime | Passed: `@BIND-SKILL-001` add from detail, reload, remove; existing enable-state checks | Binding failures and rollback, duplicate operations, cross-agent isolation, real file materialization and provider-specific loading |
+| Managed chat | Passed: `@MANAGED-CHAT-001` canonical input response, assistant reply, reload | Streamed intermediate states, cancel and resend, failure recovery, approvals and questions, consecutive turns and session switching |
+| Session CRUD | `@MANAGED-SESSION-CRUD-001` authored from an empty list, not browser-verified | Complete managed verification; implement Hermes creation, rename, deletion and reload persistence |
+| Group chat | Existing send ordering regression and empty-room page | Room creation and rename, member add/remove, mention dispatch, agent reply/settlement, pause/resume, human responses and room deletion |
+| Agents CRUD | Both runtime roster entries and New Agent form cancellation | Create Hermes and managed agents, save configuration changes, verify reload persistence, delete agents and reject builtin deletion |
+
+These statuses describe the last verified runs, not a fresh full-suite result.
+Prioritize the remaining work in this order:
+
+1. Session CRUD for both runtimes.
+2. The complete group-chat journey.
+3. Agents CRUD for both runtimes.
+4. Managed chat lifecycle and failure paths.
+5. Binding failure handling and cross-agent isolation, then real backend
+  integration for Skill files, MCP configuration and managed launch injection.
+
+Keep the passing binding add/reload/remove and managed send/reply/reload checks
+as regressions; extend them rather than duplicating their happy paths. Browser
+mocks do not verify filesystem writes, daemon behavior or Agent CLI injection.
+
+Do not count an authored or dry-run-only scenario as verified coverage.
+Run the new binding checks with `pnpm test:e2e --tags @bindings` and managed
+checks with `pnpm test:e2e --tags @managed`. The runtime mock uses canonical
+snapshots; it does not launch a user-installed Agent CLI.
 
 `@smoke` selects the small baseline; `@regression` selects regression scenarios.
 The default configuration excludes `@skip` and `@soak` and disables retries.
@@ -113,7 +181,10 @@ pnpm test:e2e:soak --dry-run
 `E2E_SOAK_ROUNDS` accepts 1..10000; `E2E_SEED` accepts an integer. The seed
 determines prompt values and whether an in-progress draft is entered. The run
 checks message counts, exact replies, draft preservation, request counts, and
-the unchanged document identity. It does not reload the page between rounds.
+the unchanged document identity and transcript order. Before checking the full
+transcript it expands earlier messages through the existing UI control; the
+default 64-message render window is not a data-loss signal. It does not reload
+the page between rounds.
 This is a deterministic state endurance test, not randomized network chaos or a
 memory-leak measurement. Real reconnects, multi-tab behavior, mobile layouts,
 and managed-runtime protocols still need separate coverage.
@@ -145,6 +216,8 @@ pnpm exec playwright show-trace e2e/reports/artifacts/<session-id>.zip
 Reports use fixed filenames and are overwritten on the next run. Archive the
 relevant artifacts before rerunning when investigating an intermittent failure.
 Treat screenshots and traces as potentially sensitive; do not commit them.
+Vite excludes `e2e/reports/` from its file watcher so incremental HTML report
+writes cannot reload the page under test. Keep that exclusion when moving reports.
 
 ## Adding Scenarios
 

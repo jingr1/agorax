@@ -1,27 +1,29 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { toast } from '@/components/ui/toast'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { createManagedSlashRuntime } from '../slash-commands/managed'
 import { ChatScreen } from '../chat-screen'
-import { AgentChatFrame } from './agent-chat-frame'
-import { AgentChatMessagePane } from './agent-chat-message-pane'
-import { AgentInteractionPanel } from './agent-interaction-panel'
-import { ChatEmptyState } from './chat-empty-state'
 import { chatBrandForRuntime } from '../agent-chat-brands'
-import { createClaudeCodeSlashRuntime } from '../slash-commands/claude-code'
 import { useExternalAgentSessions } from '../hooks/use-external-agent-sessions'
 import { useManagedAgentChat } from '../hooks/use-managed-agent-chat'
 import { useChatMobile } from '../hooks/use-chat-mobile'
-import { AssistantAvatarProvider } from '@/components/avatars'
-import { resolveAgentAvatarSrc } from '@/lib/agent-avatar'
-import { useQueryClient } from '@tanstack/react-query'
 import { CHAT_OPEN_SETTINGS_EVENT, CHAT_PENDING_MESSAGE_STORAGE_KEY } from '../chat-events'
+import { ChatEmptyState } from './chat-empty-state'
+import { AgentInteractionPanel } from './agent-interaction-panel'
+import { AgentChatMessagePane } from './agent-chat-message-pane'
+import { AgentChatFrame } from './agent-chat-frame'
+import type { AgentActivityComposerOptions, AgentActivitySessionCapabilities } from '@agorax/agent-activity-core'
 import type { AgentWithStatus } from '@/lib/agent-types'
 import type {
   ChatComposerAttachment,
   ChatComposerHandle,
   ChatComposerHelpers,
 } from './chat-composer'
+import { resolveAgentAvatarSrc } from '@/lib/agent-avatar'
+import { AssistantAvatarProvider } from '@/components/avatars'
+import { toast } from '@/components/ui/toast'
+import { useChatSettingsStore } from '@/hooks/use-chat-settings'
 
 type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'adaptive'
 
@@ -82,6 +84,23 @@ export function ManagedAgentChatView({
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() =>
     readStoredThinking(sessionId),
   )
+  const busyMessageMode = useChatSettingsStore((state) => state.settings.busyMessageMode)
+  const commandsQuery = useQuery({
+    queryKey: ['agent-commands', agent.agentId, sessionId],
+    queryFn: async ({ signal }) => {
+      const query = sessionId && !sessionId.startsWith('new') ? `?sessionId=${encodeURIComponent(sessionId)}` : ''
+      const response = await fetch(`/api/agents/${encodeURIComponent(agent.agentId)}/commands${query}`, { signal })
+      const payload = await response.json() as { commands: AgentActivityComposerOptions['commands']; capabilities: AgentActivitySessionCapabilities | null; error?: string }
+      if (!response.ok) throw new Error(payload.error || 'Failed to load runtime commands')
+      return payload
+    },
+    refetchInterval: 15_000,
+  })
+  const capabilities = chat.composer.capabilities ?? commandsQuery.data?.capabilities ?? null
+  const canSteer = capabilities?.activeTurnGuidance === true
+  const canInterrupt = capabilities?.interrupt === true
+  const canSubmit = chat.composer.availability !== 'blocked' || chat.composer.blockedReason === 'active_turn'
+  const resolvedBusyMode = (busyMessageMode === 'steer' && !canSteer) || (busyMessageMode === 'interrupt' && !canInterrupt) ? 'queue' : busyMessageMode
 
   useEffect(() => {
     setThinkingLevel(readStoredThinking(sessionId))
@@ -124,7 +143,7 @@ export function ManagedAgentChatView({
 
   const slashRuntime = useMemo(
     () =>
-      createClaudeCodeSlashRuntime({
+      createManagedSlashRuntime({
         onNew: () => {
           chat.startNewSession()
           toast('New chat', { type: 'success' })
@@ -141,11 +160,13 @@ export function ManagedAgentChatView({
           )
           openModelPickerRef.current?.()
         },
-        onHelp: () => {
-          toast('Commands: /new, /clear, /model, /help', { type: 'success' })
+        onHelp: (catalog) => {
+          toast(`Commands: ${catalog.map((command) => command.command).join(', ')}`, { type: 'success' })
         },
-      }),
-    [chat.startNewSession, chat.clearMessages],
+        onRuntimeCommand: (command) => chat.submit(command, [], { effort: thinkingLevel }),
+        onUnavailable: (command) => toast(`${command} is unavailable for this runtime`, { type: 'warning' }),
+      }, { capabilities, commands: commandsQuery.data?.commands }),
+    [chat.startNewSession, chat.clearMessages, chat.submit, capabilities, commandsQuery.data?.commands, thinkingLevel],
   )
 
   const handleSubmit = useCallback(
@@ -155,10 +176,7 @@ export function ManagedAgentChatView({
       _fastMode: boolean,
       helpers: ChatComposerHelpers,
     ) => {
-      // Hermes onSubmit always helpers.reset(); managed must too — composer
-      // clearDraft() only drops sessionStorage, not the controlled value.
-      helpers.reset()
-      void chat.submit(value, attachments, { effort: thinkingLevel })
+      void chat.submit(value, attachments, { effort: thinkingLevel }).then(() => helpers.reset()).catch(() => undefined)
     },
     [chat, thinkingLevel],
   )
@@ -284,12 +302,25 @@ export function ManagedAgentChatView({
               onSubmit: handleSubmit,
               // Match Hermes: keep composer interactive while streaming so the
               // primary control becomes the red Stop button (via isLoading).
-              // No onQueue/onSteer → resolveComposerBusyUi keeps Stop (not Queue).
               isLoading: chat.isStreaming,
               // Engine-owned submit admission: blocked while the runtime
               // reports unavailable or a pending interaction holds the turn.
-              disabled: chat.composer.availability === 'blocked',
+              disabled: !canSubmit,
               queuedCount: chat.composer.queuedCount,
+              onClearQueue: chat.clearQueue,
+              onQueue: canSubmit ? (value, attachments, helpers) => {
+                void chat.submit(value, attachments, { effort: thinkingLevel, mode: 'queue' }).then(() => helpers.reset()).catch(() => undefined)
+              } : undefined,
+              onSteer: canSubmit && canSteer ? (value, attachments, helpers) => {
+                return chat.submit(value, attachments, { effort: thinkingLevel, mode: 'steer' }).then(() => helpers.reset()).catch(() => undefined)
+              } : undefined,
+              onInterruptSend: canSubmit && canInterrupt ? (value, attachments, helpers) => {
+                void chat.submit(value, attachments, { effort: thinkingLevel, mode: 'interrupt' }).then(() => helpers.reset()).catch(() => undefined)
+              } : undefined,
+              busyMessageMode: resolvedBusyMode,
+              canSteer,
+              runtimeCapabilities: capabilities,
+              clearDraftOnSubmit: false,
               onAbort: chat.abort,
               sessionKey: chat.activeSessionId,
               embedded: true,
@@ -309,6 +340,11 @@ export function ManagedAgentChatView({
             }}
             topNotices={
               <>
+                {commandsQuery.error ? (
+                  <div role="status" className="my-2 mx-4 text-xs text-warning">
+                    Commands unavailable: {commandsQuery.error.message}
+                  </div>
+                ) : null}
                 {chat.error ? (
                   <div className="my-2 mx-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
                     {chat.error}
@@ -347,7 +383,7 @@ export function ManagedAgentChatView({
                   suggestions={brand.suggestions}
                   compact={isMobile}
                   onSuggestionClick={(prompt) =>
-                    void chat.submit(prompt, [], { effort: thinkingLevel })
+                    void chat.submit(prompt, [], { effort: thinkingLevel }).catch(() => undefined)
                   }
                 />
               }

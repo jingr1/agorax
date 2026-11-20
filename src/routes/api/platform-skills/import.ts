@@ -3,12 +3,12 @@ import { json } from '@tanstack/react-start'
 import { isAuthenticated } from '../../../server/auth-middleware'
 import { requireJsonContentType } from '../../../server/rate-limit'
 import {
+  MAX_SKILL_ARCHIVE_BYTES,
   importSkillFromArchive,
   importSkillFromFiles,
   importSkillFromUrl,
-  MAX_SKILL_ARCHIVE_BYTES,
-  type PlatformSkillFile,
 } from '../../../server/platform-skills'
+import type { PlatformSkillFile } from '../../../server/platform-skills'
 
 function parseFiles(value: unknown): Array<PlatformSkillFile> {
   if (!Array.isArray(value)) return []
@@ -21,6 +21,8 @@ function parseFiles(value: unknown): Array<PlatformSkillFile> {
     files.push({
       path,
       content: typeof record.content === 'string' ? record.content : '',
+      ...(record.encoding === 'base64' ? { encoding: 'base64' } : {}),
+      ...(record.executable === true ? { executable: true } : {}),
     })
   }
   return files
@@ -33,7 +35,9 @@ export const Route = createFileRoute('/api/platform-skills/import')({
         if (!isAuthenticated(request)) {
           return json({ error: 'Unauthorized' }, { status: 401 })
         }
-        const contentType = (request.headers.get('content-type') || '').toLowerCase()
+        const contentType = (
+          request.headers.get('content-type') || ''
+        ).toLowerCase()
 
         try {
           if (contentType.includes('multipart/form-data')) {
@@ -41,12 +45,17 @@ export const Route = createFileRoute('/api/platform-skills/import')({
             const file = form.get('file')
             if (!(file instanceof File)) {
               return json(
-                { error: 'a skill archive file is required (form field "file")' },
+                {
+                  error: 'a skill archive file is required (form field "file")',
+                },
                 { status: 400 },
               )
             }
             if (file.size > MAX_SKILL_ARCHIVE_BYTES) {
-              return json({ error: 'Archive exceeds 16 MiB limit' }, { status: 413 })
+              return json(
+                { error: 'Archive exceeds 16 MiB limit' },
+                { status: 413 },
+              )
             }
             const buffer = Buffer.from(await file.arrayBuffer())
             const skill = importSkillFromArchive(buffer, file.name)

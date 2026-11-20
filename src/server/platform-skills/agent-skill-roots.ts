@@ -5,12 +5,12 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as YAML from 'yaml'
-import type { AgentRuntimeKind } from '../agent-runtime/types'
 import { resolveProfileHermesHome } from '../profiles-browser'
 import {
   personalManagedSkillRoots,
   projectManagedSkillRoots,
 } from './managed-skill-roots'
+import type { AgentRuntimeKind } from '../agent-runtime/types'
 
 function readExternalSkillsDirs(hermesHome: string): Array<string> {
   const configPath = path.join(hermesHome, 'config.yaml')
@@ -92,7 +92,7 @@ export function skillRootsForAgentBinding(input: {
   }
   const roots = [...personalManagedSkillRoots(runtime)]
   if (input.repoRoot) {
-    roots.push(...projectManagedSkillRoots(input.repoRoot))
+    roots.push(...projectManagedSkillRoots(input.repoRoot, runtime))
   }
   return roots
 }

@@ -8,9 +8,9 @@ import {
   Status,
   setDefaultTimeout,
 } from '@cucumber/cucumber'
-import {  chromium } from '@playwright/test'
+import { chromium } from '@playwright/test'
 import { installEventSourceMock } from '../mocks/events'
-import type {Browser} from '@playwright/test';
+import type { Browser } from '@playwright/test'
 
 import type { AgoraxWorld } from './world'
 
@@ -34,6 +34,12 @@ Before(async function (this: AgoraxWorld) {
     viewport: { width: 1280, height: 720 },
     serviceWorkers: 'block',
   })
+  await this.context.routeWebSocket(
+    /^wss?:\/\/[^/]+\/\?token=[^&]+$/,
+    (socket) => {
+      socket.onMessage(() => undefined)
+    },
+  )
   await this.context.tracing.start({
     screenshots: true,
     snapshots: true,

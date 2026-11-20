@@ -22,7 +22,7 @@ export type TextContent = {
 }
 
 export type ThinkingContent = {
-  type: 'thinking'
+  type: 'thinking' | 'redacted_thinking'
   thinking?: string
   thinkingSignature?: string
 }

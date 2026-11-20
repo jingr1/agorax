@@ -16,7 +16,10 @@ export const Route = createFileRoute('/api/missions/')({
       GET: async ({ request }) => {
         if (!isAuthenticated(request))
           return json({ error: 'Unauthorized' }, { status: 401 })
-        const missions = listSwarmMissions(500)
+        const url = new URL(request.url)
+        const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit')) || 100))
+        const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0)
+        const missions = listSwarmMissions(limit, offset, { summaryOnly: true })
         const list = missions.map((mission) =>
           buildMissionSummary({ mission }),
         )

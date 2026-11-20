@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Start agorax managed-agent daemon on the host network (not Cursor sandbox).
 #
-# Prefer a prebuilt binary under .agorax/ (fast, durable). Fall back to
-# scripts/dev-managed-agent.sh --force (go run). Always detach so
-# `pnpm dev:ui`'s concurrently task can exit without killing the daemon.
+# Prefer a prebuilt binary; keep newly started daemons in the foreground.
+# A validated existing daemon is external and is never stopped by this script.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOG="${AGORAX_AGENT_LOG:-/tmp/agorax-daemon.log}"
@@ -24,7 +23,8 @@ for arg in "$@"; do
 done
 
 health_ok() {
-  curl -fsS --max-time 1 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1
+  curl -fsS --max-time 1 "http://127.0.0.1:${PORT}/health" 2>/dev/null |
+    node -e 'let text="";process.stdin.on("data",data=>text+=data);process.stdin.on("end",()=>{try{const health=JSON.parse(text);process.exit(health.ok===true&&health.runtime==="agorax-managed-agent"?0:1)}catch{process.exit(1)}})'
 }
 
 if [[ "$FORCE" -ne 1 ]] && health_ok; then
@@ -32,36 +32,17 @@ if [[ "$FORCE" -ne 1 ]] && health_ok; then
   exit 0
 fi
 
-# Best-effort free our own stale listeners before relaunch.
-if command -v ss >/dev/null 2>&1; then
-  for pid in $(ss -ltnp 2>/dev/null | awk -v port=":${PORT}" '
-    index($4, port) {
-      while (match($0, /pid=[0-9]+/)) {
-        print substr($0, RSTART + 4, RLENGTH - 4)
-        $0 = substr($0, RSTART + RLENGTH)
-      }
-    }' | sort -u); do
-    cmd=$(ps -p "$pid" -o args= 2>/dev/null || true)
-    case "$cmd" in
-      *agorax-agentd* | *packages/agent/daemon/cmd/agorax-agentd* | *cmd/agorax-agentd*)
-        echo "managed-agent-host: replacing stale pid=$pid"
-        kill "$pid" 2>/dev/null || true
-        ;;
-    esac
-  done
-  sleep 0.4
+if [[ "$FORCE" -eq 1 ]]; then
+  exec bash "$ROOT/scripts/dev-managed-agent.sh" --force
 fi
 
 if [[ -x "$BIN" ]]; then
   echo "managed-agent-host: starting $BIN on :${PORT} (log=$LOG)"
-  nohup "$BIN" >>"$LOG" 2>&1 &
-  echo "started pid=$! log=$LOG"
-  exit 0
+  exec "$BIN"
 fi
 
 echo "managed-agent-host: no prebuilt binary at $BIN — falling back to go run"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/ensure-go.sh"
 agorax_ensure_go
-nohup bash "$ROOT/scripts/dev-managed-agent.sh" --force >>"$LOG" 2>&1 &
-echo "started pid=$! log=$LOG"
+exec bash "$ROOT/scripts/dev-managed-agent.sh"

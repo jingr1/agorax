@@ -104,66 +104,6 @@ const config = defineConfig(({ mode, command }) => {
     }
   }
   const hermesApiUrl = env.HERMES_API_URL?.trim() || 'http://127.0.0.1:8642'
-  // /api/connection-status is handled by the real route file at
-  // src/routes/api/connection-status.ts; the dev server no longer
-  // intercepts that path with a slim shortcut. See #285.
-
-  // Hermes Agent auto-start state
-  let claudeAgentStarted = false
-
-  const startClaudeAgent = async () => {
-    if (claudeAgentStarted) return
-    const explicitUrl = (
-      env.HERMES_API_URL ||
-      process.env.HERMES_API_URL ||
-      hermesApiUrl ||
-      ''
-    ).trim()
-    let remote = false
-    try {
-      const host = new URL(
-        explicitUrl || 'http://127.0.0.1:8642',
-      ).hostname.toLowerCase()
-      remote =
-        Boolean(explicitUrl) &&
-        host !== '127.0.0.1' &&
-        host !== 'localhost' &&
-        host !== '::1'
-    } catch {
-      remote = false
-    }
-    if (remote) {
-      console.log(
-        `[hermes-agent] Skipping auto-start — using external API: ${explicitUrl}`,
-      )
-      claudeAgentStarted = true
-      return
-    }
-
-    try {
-      const { ensureActiveProfileGateway } =
-        await import('./src/server/gateway-pool')
-      const result = await ensureActiveProfileGateway()
-      claudeAgentStarted = true
-      if (result.ok) {
-        console.log(
-          `[hermes-agent] ✓ ${result.profile ?? 'default'} ${result.message}${
-            'url' in result && result.url ? ` on ${result.url}` : ''
-          }`,
-        )
-      } else {
-        console.warn(
-          `[hermes-agent] ${'error' in result ? result.error : 'failed to start'}`,
-        )
-      }
-    } catch (error) {
-      console.warn(
-        `[hermes-agent] Auto-start failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      )
-    }
-  }
 
   // Allow access from Tailscale, LAN, or custom domains via env var
   // e.g. CLAUDE_ALLOWED_HOSTS=my-server.tail1234.ts.net,192.168.1.50
@@ -368,6 +308,7 @@ const config = defineConfig(({ mode, command }) => {
           // Test/coverage outputs.
           '**/coverage/**',
           '**/playwright-report/**',
+          '**/e2e/reports/**',
           '**/test-results/**',
           // Editor / agent metadata.
           '**/.vscode/**',
@@ -403,7 +344,7 @@ const config = defineConfig(({ mode, command }) => {
       // so a phone on Tailscale can reach data-app-ready.
       ...(process.env.VITEST
         ? []
-        : [tanstackStart({ router: { autoCodeSplitting: true } })]),
+        : [tanstackStart({ router: { autoCodeSplitting: true }, server: { entry: './server-entry.ts' } })]),
       viteReact(),
       {
         name: 'hermes-dev-no-cache',
@@ -631,11 +572,6 @@ const config = defineConfig(({ mode, command }) => {
           // Auto-start hermes-agent when dev server launches.
           // Skip when launchd manages the gateway (AGORAX_AUTO_START_AGENT=false)
           // to avoid SIGTERM cycle on close that nukes the launchd-managed process.
-          const autoStartAgent =
-            process.env.AGORAX_AUTO_START_AGENT !== 'false'
-          if (command === 'serve' && autoStartAgent) {
-            void startClaudeAgent()
-          }
 
           // The group-chat runner is started by the server module import in
           // src/routes/api/connection-status.ts, so no extra startup is needed here.

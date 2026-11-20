@@ -239,6 +239,7 @@ import { Route as ApiAgentsAgentIdSessionsRouteImport } from './routes/api/agent
 import { Route as ApiAgentsAgentIdModelsRouteImport } from './routes/api/agents/$agentId/models'
 import { Route as ApiAgentsAgentIdMcpRouteImport } from './routes/api/agents/$agentId/mcp'
 import { Route as ApiAgentsAgentIdLocalSkillsRouteImport } from './routes/api/agents/$agentId/local-skills'
+import { Route as ApiAgentsAgentIdCommandsRouteImport } from './routes/api/agents/$agentId/commands'
 import { Route as ApiAgentsAgentIdChatRouteImport } from './routes/api/agents/$agentId/chat'
 import { Route as ApiAgentsAgentIdCapabilitiesRouteImport } from './routes/api/agents/$agentId/capabilities'
 import { Route as ApiAgentRuntimeDaemonRestartRouteImport } from './routes/api/agent-runtime/daemon.restart'
@@ -1443,6 +1444,12 @@ const ApiAgentsAgentIdLocalSkillsRoute =
     path: '/api/agents/$agentId/local-skills',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiAgentsAgentIdCommandsRoute =
+  ApiAgentsAgentIdCommandsRouteImport.update({
+    id: '/api/agents/$agentId/commands',
+    path: '/api/agents/$agentId/commands',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiAgentsAgentIdChatRoute = ApiAgentsAgentIdChatRouteImport.update({
   id: '/api/agents/$agentId/chat',
   path: '/api/agents/$agentId/chat',
@@ -1829,6 +1836,7 @@ export interface FileRoutesByFullPath {
   '/api/agent-runtime/daemon/restart': typeof ApiAgentRuntimeDaemonRestartRoute
   '/api/agents/$agentId/capabilities': typeof ApiAgentsAgentIdCapabilitiesRoute
   '/api/agents/$agentId/chat': typeof ApiAgentsAgentIdChatRoute
+  '/api/agents/$agentId/commands': typeof ApiAgentsAgentIdCommandsRoute
   '/api/agents/$agentId/local-skills': typeof ApiAgentsAgentIdLocalSkillsRoute
   '/api/agents/$agentId/mcp': typeof ApiAgentsAgentIdMcpRouteWithChildren
   '/api/agents/$agentId/models': typeof ApiAgentsAgentIdModelsRoute
@@ -2087,6 +2095,7 @@ export interface FileRoutesByTo {
   '/api/agent-runtime/daemon/restart': typeof ApiAgentRuntimeDaemonRestartRoute
   '/api/agents/$agentId/capabilities': typeof ApiAgentsAgentIdCapabilitiesRoute
   '/api/agents/$agentId/chat': typeof ApiAgentsAgentIdChatRoute
+  '/api/agents/$agentId/commands': typeof ApiAgentsAgentIdCommandsRoute
   '/api/agents/$agentId/local-skills': typeof ApiAgentsAgentIdLocalSkillsRoute
   '/api/agents/$agentId/mcp': typeof ApiAgentsAgentIdMcpRouteWithChildren
   '/api/agents/$agentId/models': typeof ApiAgentsAgentIdModelsRoute
@@ -2349,6 +2358,7 @@ export interface FileRoutesById {
   '/api/agent-runtime/daemon/restart': typeof ApiAgentRuntimeDaemonRestartRoute
   '/api/agents/$agentId/capabilities': typeof ApiAgentsAgentIdCapabilitiesRoute
   '/api/agents/$agentId/chat': typeof ApiAgentsAgentIdChatRoute
+  '/api/agents/$agentId/commands': typeof ApiAgentsAgentIdCommandsRoute
   '/api/agents/$agentId/local-skills': typeof ApiAgentsAgentIdLocalSkillsRoute
   '/api/agents/$agentId/mcp': typeof ApiAgentsAgentIdMcpRouteWithChildren
   '/api/agents/$agentId/models': typeof ApiAgentsAgentIdModelsRoute
@@ -2612,6 +2622,7 @@ export interface FileRouteTypes {
     | '/api/agent-runtime/daemon/restart'
     | '/api/agents/$agentId/capabilities'
     | '/api/agents/$agentId/chat'
+    | '/api/agents/$agentId/commands'
     | '/api/agents/$agentId/local-skills'
     | '/api/agents/$agentId/mcp'
     | '/api/agents/$agentId/models'
@@ -2870,6 +2881,7 @@ export interface FileRouteTypes {
     | '/api/agent-runtime/daemon/restart'
     | '/api/agents/$agentId/capabilities'
     | '/api/agents/$agentId/chat'
+    | '/api/agents/$agentId/commands'
     | '/api/agents/$agentId/local-skills'
     | '/api/agents/$agentId/mcp'
     | '/api/agents/$agentId/models'
@@ -3131,6 +3143,7 @@ export interface FileRouteTypes {
     | '/api/agent-runtime/daemon/restart'
     | '/api/agents/$agentId/capabilities'
     | '/api/agents/$agentId/chat'
+    | '/api/agents/$agentId/commands'
     | '/api/agents/$agentId/local-skills'
     | '/api/agents/$agentId/mcp'
     | '/api/agents/$agentId/models'
@@ -3359,6 +3372,7 @@ export interface RootRouteChildren {
   ApiAgentRuntimeDaemonRestartRoute: typeof ApiAgentRuntimeDaemonRestartRoute
   ApiAgentsAgentIdCapabilitiesRoute: typeof ApiAgentsAgentIdCapabilitiesRoute
   ApiAgentsAgentIdChatRoute: typeof ApiAgentsAgentIdChatRoute
+  ApiAgentsAgentIdCommandsRoute: typeof ApiAgentsAgentIdCommandsRoute
   ApiAgentsAgentIdLocalSkillsRoute: typeof ApiAgentsAgentIdLocalSkillsRoute
   ApiAgentsAgentIdMcpRoute: typeof ApiAgentsAgentIdMcpRouteWithChildren
   ApiAgentsAgentIdModelsRoute: typeof ApiAgentsAgentIdModelsRoute
@@ -4993,6 +5007,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAgentsAgentIdLocalSkillsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/agents/$agentId/commands': {
+      id: '/api/agents/$agentId/commands'
+      path: '/api/agents/$agentId/commands'
+      fullPath: '/api/agents/$agentId/commands'
+      preLoaderRoute: typeof ApiAgentsAgentIdCommandsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/agents/$agentId/chat': {
       id: '/api/agents/$agentId/chat'
       path: '/api/agents/$agentId/chat'
@@ -5807,6 +5828,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAgentRuntimeDaemonRestartRoute: ApiAgentRuntimeDaemonRestartRoute,
   ApiAgentsAgentIdCapabilitiesRoute: ApiAgentsAgentIdCapabilitiesRoute,
   ApiAgentsAgentIdChatRoute: ApiAgentsAgentIdChatRoute,
+  ApiAgentsAgentIdCommandsRoute: ApiAgentsAgentIdCommandsRoute,
   ApiAgentsAgentIdLocalSkillsRoute: ApiAgentsAgentIdLocalSkillsRoute,
   ApiAgentsAgentIdMcpRoute: ApiAgentsAgentIdMcpRouteWithChildren,
   ApiAgentsAgentIdModelsRoute: ApiAgentsAgentIdModelsRoute,

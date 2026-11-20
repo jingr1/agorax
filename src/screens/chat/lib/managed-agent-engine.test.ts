@@ -10,9 +10,63 @@ import {
   syncPendingApprovalsIntoEngine,
 } from './managed-agent-engine'
 import { selectEngineInteractionsForSession } from '@agorax/agent-activity-core'
-import type { AgentActivityMessage } from '@agorax/agent-activity-core'
+import type { AgentActivityMessage, AgentActivitySessionCapabilities } from '@agorax/agent-activity-core'
 
 describe('Managed Agent Engine adapter', () => {
+  it('queues follow-ups until the canonical active turn settles', () => {
+    const sendInput = vi.fn().mockReturnValue(new Promise(() => undefined))
+    const engine = createManagedAgentEngine({ workspaceId: 'workspace-1', commandPort: {
+      kind: 'typed', effects: { ...unsupportedEffects(), sendInput }, execute: () => Promise.resolve(undefined),
+    } })
+    hydrateManagedAgentEngine(engine, { ...detailDefaults, workspaceId: 'workspace-1', session: session(), turns: [turn()], messages: [], interactions: [] })
+    expect(engine.submitPrompt({ agentSessionId: 'session-1', clientSubmitId: 'queued-1', content: [{ type: 'text', text: 'next' }] })).toEqual({ accepted: true, queued: true })
+    expect(sendInput).not.toHaveBeenCalled()
+    const settledTurn = { ...turn(), phase: 'settled' as const, outcome: 'completed' as const }
+    engine.dispatch({ type: 'session/snapshotReceived', sessions: [{ ...session(), activeTurnId: null, activeTurn: null, latestTurn: settledTurn }] })
+    expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({ clientSubmitId: 'queued-1', content: [{ type: 'text', text: 'next' }] }), expect.anything())
+    engine.dispose()
+  })
+
+  it('sends capability-backed guidance to the exact canonical turn', () => {
+    const sendInput = vi.fn().mockReturnValue(new Promise(() => undefined))
+    const engine = createManagedAgentEngine({ workspaceId: 'workspace-1', commandPort: {
+      kind: 'typed', effects: { ...unsupportedEffects(), sendInput }, execute: () => Promise.resolve(undefined),
+    } })
+    const capabilities = { activeTurnGuidance: true, interrupt: true, imageInput: false, modelSwitch: false } as AgentActivitySessionCapabilities
+    hydrateManagedAgentEngine(engine, { ...detailDefaults, workspaceId: 'workspace-1', session: { ...session(), capabilities }, turns: [turn()], messages: [], interactions: [] })
+    engine.submitPrompt({ agentSessionId: 'session-1', clientSubmitId: 'steer-1', content: [{ type: 'text', text: 'smaller change' }], routing: 'send_now', targetTurnId: 'turn-1' })
+    expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({ guidance: true, targetTurnId: 'turn-1' }), expect.anything())
+    engine.dispose()
+  })
+
+  it('keeps interrupt follow-ups queued until cancellation is settled', () => {
+    const sendInput = vi.fn().mockReturnValue(new Promise(() => undefined))
+    const cancelTurn = vi.fn().mockReturnValue(new Promise(() => undefined))
+    const engine = createManagedAgentEngine({ workspaceId: 'workspace-1', commandPort: {
+      kind: 'typed', effects: { ...unsupportedEffects(), sendInput, cancelTurn }, execute: () => Promise.resolve(undefined),
+    } })
+    hydrateManagedAgentEngine(engine, { ...detailDefaults, workspaceId: 'workspace-1', session: session(), turns: [turn()], messages: [], interactions: [] })
+    engine.stopSession({ agentSessionId: 'session-1' })
+    expect(cancelTurn).toHaveBeenCalledOnce()
+    engine.submitPrompt({ agentSessionId: 'session-1', clientSubmitId: 'interrupt-1', content: [{ type: 'text', text: 'replacement' }] })
+    expect(sendInput).not.toHaveBeenCalled()
+    const settledTurn = { ...turn(), phase: 'settled' as const, outcome: 'canceled' as const }
+    engine.dispatch({ type: 'session/snapshotReceived', sessions: [{ ...session(), activeTurnId: null, activeTurn: null, latestTurn: settledTurn }] })
+    expect(sendInput).toHaveBeenCalledOnce()
+    engine.dispose()
+  })
+
+  it('preserves guidance identity in the workspace input request', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ result: {}, activity: {
+      workspaceId: 'workspace-1',
+      session: { ID: 'session-1', Provider: 'codex', Kind: 'root', ActiveTurnID: 'turn-1', Settings: {}, Metadata: { visible: true }, RailSectionKey: '', MessageVersion: 1 },
+      turns: [{ TurnID: 'turn-1', AgentSessionID: 'session-1', Phase: 'running', Origin: 'user_prompt' }], messages: [], interactions: [],
+    } }) }))
+    const port = createManagedAgentCommandPort('codex-impl', vi.fn())
+    await port.effects.sendInput({ workspaceId: 'workspace-1', agentSessionId: 'session-1', clientSubmitId: 'steer-1', content: [{ type: 'text', text: 'smaller change' }], guidance: true, targetTurnId: 'turn-1' }, { commandId: 'send-1', origin: 'engine' })
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body))).toMatchObject({ guidance: true, targetTurnId: 'turn-1' })
+  })
+
   it('upserts waiting_approval tool rows into pending Interactions for respond admit', () => {
     const engine = createManagedAgentEngine({
       workspaceId: 'workspace-1',

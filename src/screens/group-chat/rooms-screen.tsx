@@ -33,6 +33,7 @@ import {
   answerPendingTurn,
   sendMessage as apiSendMessage,
   dismissPendingTurn,
+  getRoom,
   listMessages,
   listPendingTurns,
   updateRoom,
@@ -63,6 +64,28 @@ export function RoomsScreen() {
   const [pendingTurns, setPendingTurns] = useState<Array<PendingTurn>>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [transitioningRoomId, setTransitioningRoomId] = useState<string | null>(null)
+  const activeRoomIdRef = useRef(roomId)
+  activeRoomIdRef.current = roomId
+  const transitionRoom = async (state: 'active' | 'paused') => {
+    if (!roomId || transitioningRoomId === roomId) return
+    const requestedRoomId = roomId
+    setTransitioningRoomId(requestedRoomId)
+    try {
+      const response = await updateRoom(requestedRoomId, { state })
+      if (activeRoomIdRef.current === requestedRoomId) setActiveRoom(response.room)
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Room state update failed', { type: 'error' })
+      try {
+        const response = await getRoom(requestedRoomId)
+        if (activeRoomIdRef.current === requestedRoomId) setActiveRoom(response.room)
+      } catch (refreshError) {
+        console.warn('Failed to refresh room after state update', refreshError)
+      }
+    } finally {
+      setTransitioningRoomId((current) => current === requestedRoomId ? null : current)
+    }
+  }
   // Ephemeral turn status is per-room: switching rooms shows that room's last
   // known status instead of leaking another room's or wiping this room's.
   const [statusByRoom, setStatusByRoom] = useState<
@@ -336,25 +359,23 @@ export function RoomsScreen() {
                 <Button
                   size="sm"
                   variant="secondary"
-                  onClick={() => {
-                    void updateRoom(roomId, { state: 'active' }).then((res) => {
-                      setActiveRoom(res.room)
-                    })
-                  }}
+                  disabled={transitioningRoomId === roomId}
+                  aria-busy={transitioningRoomId === roomId}
+                  className="min-w-[88px]"
+                  onClick={() => { void transitionRoom('active') }}
                 >
-                  Resume
+                  {transitioningRoomId === roomId ? 'Resuming...' : 'Resume'}
                 </Button>
               ) : (
                 <Button
                   size="sm"
                   variant="secondary"
-                  onClick={() => {
-                    void updateRoom(roomId, { state: 'paused' }).then((res) => {
-                      setActiveRoom(res.room)
-                    })
-                  }}
+                  disabled={transitioningRoomId === roomId}
+                  aria-busy={transitioningRoomId === roomId}
+                  className="min-w-[88px]"
+                  onClick={() => { void transitionRoom('paused') }}
                 >
-                  Pause
+                  {transitioningRoomId === roomId ? 'Pausing...' : 'Pause'}
                 </Button>
               )}
             </div>

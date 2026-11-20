@@ -326,15 +326,23 @@ func routesWithOps(runtime *agentdaemon.Runtime, host *agenthost.Host, db *sql.D
 			Content        json.RawMessage `json:"content"`
 			// UI-only text when Content carries injected skills / bundles.
 			DisplayPrompt  string          `json:"displayPrompt"`
+			Guidance       bool            `json:"guidance"`
+			TargetTurnID   string          `json:"targetTurnId"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 			writeJSON(response, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if input.Guidance && strings.TrimSpace(input.TargetTurnID) == "" {
+			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "guidance requires an exact target turn"})
 			return
 		}
 		result, err := host.SendInput(request.Context(), agenthost.SessionRef{WorkspaceID: request.PathValue("workspaceID"), AgentSessionID: request.PathValue("agentSessionID")}, agenthost.SendInput{
 			ClientSubmitID: input.ClientSubmitID,
 			Content:        promptText(input.Content),
 			DisplayPrompt:  strings.TrimSpace(input.DisplayPrompt),
+			Guidance:       input.Guidance,
+			TurnID:         strings.TrimSpace(input.TargetTurnID),
 		})
 		if err != nil {
 			writeJSON(response, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -519,7 +527,17 @@ func routesWithOps(runtime *agentdaemon.Runtime, host *agenthost.Host, db *sql.D
 		if settings := composerSettingsFromMap(session.Canonical.Settings); settings.Model != "" {
 			requestedModel = settings.Model
 		}
-		writeJSON(response, http.StatusOK, projectComposerOptions(provider, requestedModel))
+		options := projectComposerOptions(provider, requestedModel)
+		options["capabilities"] = session.Canonical.Capabilities
+		if runtime != nil {
+			if commands, ok := runtime.Controller().SessionCommands(workspaceID, agentSessionID); ok {
+				options["commands"] = nonNilSlice(commands)
+				options["slashCommandPolicy"] = map[string]any{
+					"fallbackCommands": []any{}, "commandEffects": []any{}, "commandCatalogAuthoritative": true,
+				}
+			}
+		}
+		writeJSON(response, http.StatusOK, options)
 	})
 	mux.HandleFunc("GET /v1/agent-providers/{provider}/composer-options", func(response http.ResponseWriter, request *http.Request) {
 		provider := strings.TrimSpace(request.PathValue("provider"))

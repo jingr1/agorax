@@ -14,7 +14,7 @@ Given(
     await this.page.goto(`/group-chat/${this.sessionId}`)
     await expect(
       this.page.getByRole('textbox', { name: 'Group chat message' }),
-    ).toBeVisible()
+    ).toBeVisible({ timeout: 15_000 })
   },
 )
 
@@ -65,4 +65,7 @@ When('the POST response is released', async function (this: AgoraxWorld) {
 
 When('the group chat is reloaded', async function (this: AgoraxWorld) {
   await this.page.reload()
+  await expect(
+    this.page.getByRole('textbox', { name: 'Group chat message' }),
+  ).toBeVisible({ timeout: 15_000 })
 })

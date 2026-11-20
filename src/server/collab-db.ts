@@ -19,9 +19,7 @@ import { getHermesRoot } from './hermes-paths'
  */
 
 export function getCollabDbPath(): string {
-  return (
-    process.env.HERMES_COLLAB_DB ?? path.join(getHermesRoot(), 'collab.db')
-  )
+  return process.env.HERMES_COLLAB_DB ?? path.join(getHermesRoot(), 'collab.db')
 }
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
@@ -459,6 +457,62 @@ CREATE INDEX IF NOT EXISTS idx_agorax_run_mapping_gateway
   ON agorax_run_mapping(gateway_session_id);
 CREATE INDEX IF NOT EXISTS idx_agorax_run_mapping_run
   ON agorax_run_mapping(hermes_run_id);
+`,
+  },
+  {
+    version: 12,
+    sql: `
+ALTER TABLE platform_skills ADD COLUMN revision_id TEXT;
+ALTER TABLE platform_skill_files ADD COLUMN encoding TEXT NOT NULL DEFAULT 'utf8';
+ALTER TABLE platform_skill_files ADD COLUMN executable INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE skill_revisions (
+  id TEXT PRIMARY KEY,
+  skill_id TEXT NOT NULL,
+  parent_id TEXT,
+  tree_hash TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_skill_revisions_skill ON skill_revisions(skill_id, created_at);
+CREATE TABLE skill_deployments (
+  skill_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  path TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  observed_hash TEXT,
+  revision_id TEXT,
+  message TEXT,
+  checked_at INTEGER NOT NULL,
+  PRIMARY KEY (skill_id, agent_id)
+);
+CREATE TABLE skill_sync_operations (
+  id TEXT PRIMARY KEY,
+  skill_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  results_json TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_skill_sync_operations_skill ON skill_sync_operations(skill_id, created_at);
+CREATE TABLE skill_sync_leases (
+  resource TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE agent_skill_exclusions (
+  agent_id TEXT NOT NULL,
+  skill_id TEXT NOT NULL,
+  PRIMARY KEY (agent_id, skill_id)
+);
+`,
+  },
+  {
+    version: 13,
+    sql: `
+ALTER TABLE platform_skills ADD COLUMN deployment_mode TEXT NOT NULL DEFAULT 'symlink';
+ALTER TABLE platform_skills ADD COLUMN allow_copy_fallback INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE skill_deployments ADD COLUMN actual_mode TEXT;
+ALTER TABLE skill_deployments ADD COLUMN source_path TEXT;
 `,
   },
 ]

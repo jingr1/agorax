@@ -43,6 +43,7 @@ import {
 import {
   mergeStreamToolCallRecords,
   normalizeToolCallArgs,
+  stripReplyEchoThinking,
   thinkingTextFromMessage,
 } from '@/lib/chat-message-parts'
 import { cn } from '@/lib/utils'
@@ -484,7 +485,8 @@ function rawTimestamp(message: ChatMessage): number | null {
 }
 
 function thinkingFromMessage(msg: ChatMessage): string | null {
-  const thinking = thinkingTextFromMessage(msg)
+  const stripped = stripReplyEchoThinking(msg)
+  const thinking = thinkingTextFromMessage(stripped)
   return thinking || null
 }
 
@@ -2562,10 +2564,11 @@ function MessageItemComponent({
       assistantFaceColumn === 'avatar')
   // Historical / settle-only: pulse on this MessageItem when it owns the face.
   // Open-turn host uses assistantFaceColumn='none' (pulse on processing slot).
+  // Live prop only — stale `__streamingStatus` must not keep Thinking…/glow.
   const showAssistantFacePulse =
     assistantFaceColumn === 'avatar' &&
     !shouldRenderMessageBubble &&
-    (effectiveIsStreaming || message.__streamingStatus === 'streaming')
+    effectiveIsStreaming === true
 
   // 'queued' = delivered to server, waiting for response (busy/backlogged)
   // 'sending' = still in flight to the server API (should clear in <1s)

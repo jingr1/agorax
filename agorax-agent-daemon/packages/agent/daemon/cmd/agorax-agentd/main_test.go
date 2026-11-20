@@ -432,6 +432,22 @@ func getJSON(t *testing.T, url string) (int, map[string]any) {
 	return response.StatusCode, body
 }
 
+func TestInputGuidanceRequiresExactTargetTurn(t *testing.T) {
+	server, _ := newTestServer(t)
+	response, err := http.Post(server.URL+"/v1/workspaces/workspace-1/agent-sessions/session-1/input", "application/json", strings.NewReader(`{"clientSubmitId":"guidance-1","content":"use the smaller change","guidance":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var payload map[string]string
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusBadRequest || payload["error"] != "guidance requires an exact target turn" {
+		t.Fatalf("guidance response: status=%d body=%v", response.StatusCode, payload)
+	}
+}
+
 func TestListAgentSessionsEndpointCarriesMessageVersionCursor(t *testing.T) {
 	server, store := newTestServer(t)
 	seedSession(t, store, "workspace-1", "session-a")

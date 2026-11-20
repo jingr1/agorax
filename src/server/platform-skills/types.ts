@@ -2,12 +2,19 @@ export type PlatformSkillOrigin = {
   kind: 'manual' | 'agents_yaml' | 'hub' | 'profile_fs' | 'import'
   source?: string
   importedAt?: number
+  resolvedCommit?: string
+  sourcePath?: string
+  sourceRef?: string
 }
 
 export type PlatformSkillFile = {
   path: string
   content: string
+  encoding?: 'utf8' | 'base64'
+  executable?: boolean
 }
+
+export type SkillDeploymentMode = 'symlink' | 'copy'
 
 export type PlatformSkill = {
   id: string
@@ -18,6 +25,9 @@ export type PlatformSkill = {
   origin: PlatformSkillOrigin
   createdAt: number
   updatedAt: number
+  revisionId?: string
+  deploymentMode?: SkillDeploymentMode
+  allowCopyFallback?: boolean
   files?: Array<PlatformSkillFile>
 }
 
@@ -50,6 +60,8 @@ export type ComposerSkillOption = {
 }
 
 export type CreatePlatformSkillInput = {
+  deploymentMode?: SkillDeploymentMode
+  allowCopyFallback?: boolean
   name: string
   description?: string
   category?: string
@@ -60,6 +72,9 @@ export type CreatePlatformSkillInput = {
 }
 
 export type UpdatePlatformSkillInput = {
+  deploymentMode?: SkillDeploymentMode
+  allowCopyFallback?: boolean
+  expectedRevision?: string
   name?: string
   description?: string
   category?: string

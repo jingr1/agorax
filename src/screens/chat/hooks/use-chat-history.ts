@@ -338,7 +338,7 @@ export function useChatHistory({
   const expandedHistoryKeys = useRef(new Set<string>())
   const historyKeyId = historyKey.join('\0')
 
-  const historyQuery = useQuery({
+  const historyQuery = useQuery<HistoryResponse>({
     queryKey: historyKey,
     queryFn: async function fetchHistoryForSession() {
       if (portableMode) {
@@ -424,10 +424,7 @@ export function useChatHistory({
     gcTime: 1000 * 60 * 10,
     // Keep message object identity across poll / post-turn refetch so the
     // transcript does not remount (feels like a full page reload + rollback).
-    structuralSharing: (
-      oldData: HistoryResponse | undefined,
-      newData: HistoryResponse | undefined,
-    ) => reconcileHistoryResponse(oldData, newData) ?? newData,
+    structuralSharing: reconcileHistoryResponse,
     // Include pending/fetch flags so the skeleton can clear/update even when
     // data is still undefined (previous list omitted isPending/isFetching).
     notifyOnChangeProps: [

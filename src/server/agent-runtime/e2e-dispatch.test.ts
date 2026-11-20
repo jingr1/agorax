@@ -77,6 +77,88 @@ afterEach(() => {
 })
 
 describe('P1.3 end-to-end dispatch → MCP → advance', () => {
+  it('enforces capacity on direct managed dispatch before starting the runtime', async () => {
+    const { missions, dispatch, routerMod } = await loadModules()
+    const scheduler = await import('../task-pipeline/task-scheduler')
+    const startRun = vi.fn().mockResolvedValue({ runId: 'fake-run' })
+    const router = new routerMod.AgentRuntimeRouter({
+      rawYaml: 'version: 1\nagents: []\n',
+    })
+    ;(router as unknown as { adapters: Map<string, unknown> }).adapters.set(
+      'dev-1',
+      {
+        kind: 'claude-code',
+        startRun,
+      },
+    )
+    routerMod.setAgentRuntimeRouterForTests(router)
+    for (let index = 0; index < 10; index++) {
+      scheduler.markTaskRunning({
+        missionId: 'occupied',
+        assignmentId: `occupied-${index}`,
+      })
+    }
+    const mission = missions.createOrUpdateMission({
+      missionId: 'mission-managed-capacity',
+      title: 'Capacity',
+      assignments: [{ workerId: 'dev-1', task: 'Implement' }],
+    })
+
+    const result = await dispatch.dispatchAssignment({
+      missionId: mission.id,
+      assignmentId: mission.assignments[0].id,
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('scheduler capacity'),
+    })
+    expect(startRun).not.toHaveBeenCalled()
+    expect(missions.getSwarmMission(mission.id)?.assignments[0].state).toBe(
+      'queued',
+    )
+    routerMod.setAgentRuntimeRouterForTests(null)
+  }, 15_000)
+
+  it('blocks an uncertain runtime start failure and releases the reservation', async () => {
+    const { missions, dispatch, routerMod } = await loadModules()
+    const scheduler = await import('../task-pipeline/task-scheduler')
+    const router = new routerMod.AgentRuntimeRouter({
+      rawYaml: 'version: 1\nagents: []\n',
+    })
+    ;(router as unknown as { adapters: Map<string, unknown> }).adapters.set(
+      'dev-1',
+      {
+        kind: 'claude-code',
+        startRun: vi.fn().mockRejectedValue(new Error('daemon response lost')),
+      },
+    )
+    routerMod.setAgentRuntimeRouterForTests(router)
+    const mission = missions.createOrUpdateMission({
+      missionId: 'mission-start-failure',
+      title: 'Start failure',
+      assignments: [{ workerId: 'dev-1', task: 'Implement' }],
+    })
+
+    expect(
+      (
+        await dispatch.dispatchAssignment({
+          missionId: mission.id,
+          assignmentId: mission.assignments[0].id,
+        })
+      ).ok,
+    ).toBe(false)
+    expect(missions.getSwarmMission(mission.id)?.assignments[0]).toMatchObject({
+      state: 'blocked',
+      checkpoint: {
+        blocker: expect.stringContaining('verify execution before retry'),
+      },
+    })
+    expect(scheduler.getSchedulerSnapshot().running).toEqual([])
+    expect(scheduler.getSchedulerSnapshot().retrying).toEqual([])
+    routerMod.setAgentRuntimeRouterForTests(null)
+  }, 15_000)
+
   it('full loop: dispatch → task_start → task_complete → assignment checkpointed → next stage dispatched', async () => {
     const { handler, missions, dispatch, advance, routerMod, runTokens } =
       await loadModules()
