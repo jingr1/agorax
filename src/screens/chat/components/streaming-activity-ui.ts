@@ -121,11 +121,14 @@ export function buildHermesActivitySummary(
 export function shouldAutoExpandHermesActivityCard({
   isStreaming,
   toolCount,
+  hasThinking = false,
 }: {
   isStreaming: boolean
   toolCount: number
+  /** Live thinking also keeps the Compact Activity card open while streaming. */
+  hasThinking?: boolean
 }): boolean {
-  return isStreaming && toolCount > 0
+  return isStreaming && (toolCount > 0 || hasThinking)
 }
 
 export function shouldRenderStandaloneActivityMenu({

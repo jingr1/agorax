@@ -576,10 +576,9 @@ describe('mergeHermesHistoryWithLiveByTurnIdentity', () => {
     expect(merged.map((row) => row.messageId)).toEqual(['user:c-same'])
   })
 
-  it('pairs Workspace-prefixed gateway history onto bare live user via mapping', () => {
-    // Prove the write/read identity fix: mapping strips the transport
-    // envelope so ordinal/same-prompt pairing stamps one user — not merge
-    // echo-skip as a display patch.
+  it('strips Workspace prefix and folds user-only gateway echo onto live user', () => {
+    // Assistant-bearing weak history must not graft by text (canonical SoT).
+    // User-only echo still folds after Workspace::v1 strip.
     const history = hermesHistoryMessagesToActivity({
       workspaceId: 'ws',
       agentSessionId: 's',
@@ -594,12 +593,6 @@ describe('mergeHermesHistoryWithLiveByTurnIdentity', () => {
             },
           ],
           timestamp: 3,
-        },
-        {
-          id: 'msg-a',
-          role: 'assistant',
-          content: [{ type: 'text', text: '好的' }],
-          timestamp: 4,
         },
       ],
     })

@@ -2,6 +2,11 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { MemberAvatar } from './member-avatar'
 import { countRoomAgentProviderSiblings } from '../lib/avatar-utils'
 import type { RoomParticipant } from '@/lib/group-chat-types'
+import { isImeKeyEvent, scheduleImeComposingClear } from '@/lib/ime-enter'
+import {
+  selectEnterBehavior,
+  useChatSettingsStore,
+} from '@/hooks/use-chat-settings'
 
 interface MentionToken {
   query: string
@@ -81,6 +86,9 @@ export function MentionPicker({
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const enterBehavior = useChatSettingsStore(selectEnterBehavior)
+  const imeComposingRef = useRef(false)
+  const imeClearCancelRef = useRef<(() => void) | null>(null)
 
   const [token, setToken] = useState<MentionToken | null>(null)
   const [selected, setSelected] = useState(0)
@@ -89,6 +97,11 @@ export function MentionPicker({
   // Live index for Enter/Tab — avoids applying a stale `active` if the user
   // presses Enter immediately after ArrowUp/Down before the next render.
   const selectedRef = useRef(0)
+
+  const clearImeComposing = () => {
+    imeComposingRef.current = false
+    imeClearCancelRef.current = null
+  }
 
   const options = useMemo(
     () => (token ? buildOptions(token, participants) : []),
@@ -134,7 +147,8 @@ export function MentionPicker({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.nativeEvent.isComposing) return
+    const ime = isImeKeyEvent(event.nativeEvent, imeComposingRef.current)
+    if (ime) return
 
     if (open) {
       if (event.key === 'ArrowDown') {
@@ -173,10 +187,15 @@ export function MentionPicker({
       }
     }
 
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      onSubmit?.()
-    }
+    if (event.key !== 'Enter') return
+    const modifierSend = event.metaKey || event.ctrlKey
+    const shouldSend =
+      enterBehavior === 'newline'
+        ? modifierSend
+        : !event.shiftKey && !modifierSend
+    if (!shouldSend) return
+    event.preventDefault()
+    onSubmit?.()
   }
 
   return (
@@ -260,8 +279,19 @@ export function MentionPicker({
           refreshToken(event.target)
         }}
         onKeyDown={handleKeyDown}
+        onCompositionStart={() => {
+          imeClearCancelRef.current?.()
+          imeClearCancelRef.current = null
+          imeComposingRef.current = true
+        }}
+        onCompositionEnd={() => {
+          imeClearCancelRef.current?.()
+          imeClearCancelRef.current = scheduleImeComposingClear(clearImeComposing)
+        }}
         onClick={(event) => refreshToken(event.currentTarget)}
         onBlur={() => {
+          imeClearCancelRef.current?.()
+          clearImeComposing()
           // Delay so mousedown on a suggestion can fire before blur clears token.
           setTimeout(() => {
             if (document.activeElement !== inputRef.current) {

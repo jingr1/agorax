@@ -43,7 +43,6 @@ import {
 import {
   mergeStreamToolCallRecords,
   normalizeToolCallArgs,
-  stripReplyEchoThinking,
   thinkingTextFromMessage,
 } from '@/lib/chat-message-parts'
 import { cn } from '@/lib/utils'
@@ -485,8 +484,8 @@ function rawTimestamp(message: ChatMessage): number | null {
 }
 
 function thinkingFromMessage(msg: ChatMessage): string | null {
-  const stripped = stripReplyEchoThinking(msg)
-  const thinking = thinkingTextFromMessage(stripped)
+  // Show model reasoning as-is — no reply-equality filter.
+  const thinking = thinkingTextFromMessage(msg)
   return thinking || null
 }
 
@@ -2548,6 +2547,9 @@ function MessageItemComponent({
   const hasActivityContent =
     finalToolSections.length > 0 ||
     Boolean(thinking && thinking.trim().length > 0)
+  // Only mount Activity when there is thinking/tools — an empty live shell
+  // looked broken (header with no body until done).
+  const showActivityCard = !hideActivityCard && hasActivityContent
   // Open-turn face lives on transcript `processing:<turnKey>` — MessageItem
   // with face=none must not remount a second avatar / Thinking pulse.
   const shouldRenderMessageBubble =
@@ -2560,7 +2562,7 @@ function MessageItemComponent({
     !isUser &&
     !(message as { __isNarration?: unknown }).__isNarration &&
     (shouldRenderMessageBubble ||
-      (!hideActivityCard && hasActivityContent) ||
+      showActivityCard ||
       assistantFaceColumn === 'avatar')
   // Historical / settle-only: pulse on this MessageItem when it owns the face.
   // Open-turn host uses assistantFaceColumn='none' (pulse on processing slot).
@@ -2934,7 +2936,7 @@ function MessageItemComponent({
           ) : null}
           {!isUser ? (
             <div className="flex min-w-0 max-w-[80%] flex-1 flex-col gap-1">
-              {!hideActivityCard && hasActivityContent ? (
+              {showActivityCard ? (
                 <TuiActivityCard
                   toolSections={finalToolSections}
                   thinking={thinking}

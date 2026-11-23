@@ -7,7 +7,6 @@
 
 import type { AgentActivityMessage } from '@agorax/agent-activity-core'
 import {
-  stripReplyEchoThinking,
   thinkingTextFromMessage,
   thinkingTextFromPayload,
 } from '@/lib/chat-message-parts'
@@ -243,19 +242,17 @@ export function projectActivityMessagesToChat(
     out.push(foldActivityFamilyToChat(family, streamingMessageId))
     index = cursor
   }
-  // Safety nets: (1) suffix text echoes (2) every post-user assistant fragment
-  // into one host — thinking-only + reply must not paint as two MessageItems.
-  // (3) drop thinking that is only a mirror of the reply body (Activity mash).
-  return foldAssistantsPerUserTurn(collapseAdjacentAssistantEchoes(out))
-    .map((message) =>
-      message.role === 'assistant' ? stripReplyEchoThinking(message) : message,
-    )
-    .filter((message) => {
+  // Safety nets: (1) suffix text body echoes (2) fold every post-user assistant
+  // fragment into one host — thinking + reply must not paint as two MessageItems.
+  // Reasoning content is shown as-is (no reply-equality filter).
+  return foldAssistantsPerUserTurn(collapseAdjacentAssistantEchoes(out)).filter(
+    (message) => {
       if (message.role !== 'assistant') return true
       if (assistantBodyText(message).trim()) return true
       if (thinkingTextFromMessage(message).trim()) return true
       return toolCallsFromChatMessage(message).length > 0
-    })
+    },
+  )
 }
 
 function assistantBodyText(message: ChatMessage): string {

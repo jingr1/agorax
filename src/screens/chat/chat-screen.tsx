@@ -3276,6 +3276,10 @@ export function ChatScreen({
                 headerHeight={headerHeight}
                 contentStyle={stableContentStyle}
                 bottomOffset={isMobile ? mobileScrollBottomOffset : 0}
+                // Engine already owns identity + chronology; text-window
+                // collapse / re-sort used to graft prior replies and leave a
+                // thinking-only Activity MessageItem under the latest bubble.
+                preserveEngineOrder={!isPortableMode}
                 isStreaming={derivedStreamingInfo.isStreaming}
                 streamingMessageId={derivedStreamingInfo.streamingMessageId}
                 // Hermes 1:1: Engine message owns text/thinking/tools.

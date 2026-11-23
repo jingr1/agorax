@@ -83,6 +83,7 @@ export function AgentChatMessagePane({
       lifecycleEvents={lifecycleEvents}
       hideSystemMessages={hideSystemMessages}
       activeToolCalls={activeToolCalls}
+      preserveEngineOrder
       onRetryMessage={onRetryMessage}
       onEditMessage={onEditMessage}
       onRegenerateMessage={onRegenerateMessage}

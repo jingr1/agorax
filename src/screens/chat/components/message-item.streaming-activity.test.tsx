@@ -28,11 +28,19 @@ describe('streaming activity ui helpers', () => {
     ).toBe(true)
   })
 
-  it('auto-expands the tool card while tool calls are actively streaming', () => {
+  it('auto-expands while streaming tools or thinking; settles folded by default', () => {
     expect(
       shouldAutoExpandHermesActivityCard({
         isStreaming: true,
         toolCount: 1,
+      }),
+    ).toBe(true)
+
+    expect(
+      shouldAutoExpandHermesActivityCard({
+        isStreaming: true,
+        toolCount: 0,
+        hasThinking: true,
       }),
     ).toBe(true)
 
@@ -47,6 +55,7 @@ describe('streaming activity ui helpers', () => {
       shouldAutoExpandHermesActivityCard({
         isStreaming: false,
         toolCount: 1,
+        hasThinking: true,
       }),
     ).toBe(false)
   })

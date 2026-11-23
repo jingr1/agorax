@@ -136,7 +136,7 @@ describe('foldAssistantsPerUserTurn', () => {
     expect(text).toBe(`${intro}\n\n${body}`)
   })
 
-  it('drops a trailing thinking-only host that only echoes the prior reply body', () => {
+  it('folds a trailing thinking-only host into the prior assistant', () => {
     const reply =
       '收到 probe 1793622898089。我这边在线，可以正常响应。\n\n这是连接测试，还是你有一个具体任务？'
     const folded = foldAssistantsPerUserTurn([
@@ -328,7 +328,56 @@ describe('projectActivityMessagesToChat', () => {
     ])
   })
 
-  it('strips reply-echo thinking and drops the empty run host', () => {
+  it('folds daemon text-then-thinking into one host with Activity above reply', () => {
+    const reply = '你好！有什么我可以帮你的吗？'
+    const messages = projectActivityMessagesToChat([
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'user:c1',
+        turnId: 'turn-c1',
+        role: 'user',
+        kind: 'text',
+        payload: { text: 'hi' },
+        version: 1,
+        sequence: 1,
+        occurredAtUnixMs: 1,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run-1',
+        turnId: 'turn-c1',
+        role: 'assistant',
+        kind: 'text',
+        status: 'completed',
+        payload: { text: reply },
+        version: 2,
+        sequence: 2,
+        occurredAtUnixMs: 2,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run-1:thinking',
+        turnId: 'turn-c1',
+        role: 'assistant',
+        kind: 'reasoning',
+        status: 'completed',
+        payload: { text: reply },
+        version: 3,
+        sequence: 3,
+        occurredAtUnixMs: 3,
+      },
+    ])
+    expect(messages.map((m) => m.id)).toEqual(['user:c1', 'assistant:run-1'])
+    expect(messages[1]?.content).toEqual([
+      { type: 'thinking', thinking: reply },
+      { type: 'text', text: reply },
+    ])
+  })
+
+  it('folds trailing thinking-only into the reply host without dropping reasoning', () => {
     const reply =
       '收到 probe 1793622898089。我这边在线，可以正常响应。\n\n这是连接测试，还是你有一个具体任务？'
     const messages = projectActivityMessagesToChat([
@@ -388,6 +437,9 @@ describe('projectActivityMessagesToChat', () => {
       'user:c1',
       'assistant:client-uuid',
     ])
-    expect(messages[1]?.content).toEqual([{ type: 'text', text: reply }])
+    expect(messages[1]?.content).toEqual([
+      { type: 'thinking', thinking: reply },
+      { type: 'text', text: reply },
+    ])
   })
 })

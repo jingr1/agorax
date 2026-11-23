@@ -11,8 +11,9 @@ retain their native Session and Turn lifecycle.
 | Agent identity and runtime declaration | Local `agents.yaml`; example is the installation template | Registry API | Reload registry; never interpret a managed id as a Hermes profile |
 | Mission and Assignment | JSON repository by default; `collab.db` when `AGORAX_MISSION_SQLITE_SOT=1` | MissionRepository | Read the selected repository; do not treat an export as canonical |
 | Managed Session, Turn, Interaction | Daemon `agent.db` | Go Agent Host through daemon APIs | Canonical activity snapshot and history reconciliation |
-| Hermes Session and message history | Profile Gateway/session store | Hermes Gateway | Stable native bridge identity mapping and history repair |
-| Hermes engine identity mapping | `collab.db` `agorax_run_mapping` | Native bridge APIs | Resolve the exact Session/Turn/run; unknown mapping is not success |
+| Hermes 1:1 display Session/Turn/Message (Agorax-initiated) | Daemon `agent.db` `workspace_agent_messages` (same table as Managed; provider `hermes`) | Workspace `send-stream` → daemon hermes-bridge API | History prefers daemon activity; strong ids (`user:<clientSubmitId>`, `assistant:<runId>`) |
+| Hermes execution context / compaction / CLI·Swarm transcripts | Profile Gateway `state.db` | Hermes Gateway | Execution-only for Agorax 1:1; external sessions listed as `external` |
+| Hermes engine identity mapping | `collab.db` `agorax_run_mapping` | Native bridge / send-stream | Resolve the exact Session/Turn/run; unknown mapping is not success |
 | Mission MCP run and run-token ledger | `collab.db` `task_runs` / `run_tokens` | MCP control channel | Reconcile against Assignment and runtime; do not infer completion from process exit alone |
 | Dispatch lease | `collab.db` `control_plane_leases` | Shared scheduler admission | Owner/token fencing; expiry does not authorize replay |
 | Pending dispatch and retry deadline | `collab.db` `control_plane_state` scheduler namespaces | Scheduler | Restore exact Assignment identity, attempt and deadline; recheck dependency and terminal state |

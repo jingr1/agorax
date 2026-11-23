@@ -5,10 +5,7 @@
  * See docs/hermes-native-bridge.md §2.
  */
 
-import {
-  normalizeAssistantThinkingAgainstReply,
-  normalizeToolCallArgs,
-} from './chat-message-parts'
+import { normalizeToolCallArgs } from './chat-message-parts'
 import type { MessageContent } from '../screens/chat/types'
 
 export function assistantMessageIdForRun(
@@ -123,10 +120,7 @@ export function projectLiveAssistantMessage(
 } {
   const content: Array<MessageContent> = []
   const text = projection.text.trim()
-  const thinking = normalizeAssistantThinkingAgainstReply(
-    projection.thinking,
-    text,
-  )
+  const thinking = projection.thinking.trim()
   if (thinking) {
     content.push({ type: 'thinking', thinking })
   }

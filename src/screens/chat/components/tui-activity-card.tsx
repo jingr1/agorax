@@ -2,11 +2,12 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 
 /**
- * TUI-style activity card.
+ * TUI-style activity card (WebUI Compact Worklog / Tutti Turn-work hybrid).
  *
- * Renders thinking + all tool calls as a single card. While streaming with
- * assistant text, MessageItem places this below the bubble so narration stays
- * chronological; before text arrives, chat-message-list owns the branched card.
+ * Mounts above the reply bubble when there is thinking and/or tools
+ * (Activity → answer). Live: expanded and pinned to latest rows. Settled:
+ * default one-line summary (Thinking · N tools); user can re-expand.
+ *
  * Rows mimic Claude Code / Codex CLI tool output:
  *
  *   💭 Thinking 4s
@@ -35,6 +36,33 @@ export function visibleStreamingToolSections<T>(
     visible: sections.slice(-windowSize),
     hiddenCount: sections.length - windowSize,
   }
+}
+
+/** Settled header chip — WebUI Compact / Tutti work-section one-liner. */
+export function buildTuiActivitySettledSummary(input: {
+  hasThinking: boolean
+  toolSections: ReadonlyArray<{ state: TuiToolSection['state'] }>
+}): string | null {
+  const parts: string[] = []
+  if (input.hasThinking) parts.push('Thinking')
+
+  const total = input.toolSections.length
+  if (total > 0) {
+    const errors = input.toolSections.filter(
+      (section) => section.state === 'output-error',
+    ).length
+    const running = input.toolSections.filter(
+      (section) =>
+        section.state === 'input-available' ||
+        section.state === 'input-streaming',
+    ).length
+    const done = total - errors - running
+    if (errors > 0) parts.push(`${errors} failed · ${done} done`)
+    else if (running > 0) parts.push(`${running} running · ${done} done`)
+    else parts.push(`${total} ${total === 1 ? 'tool' : 'tools'}`)
+  }
+
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 export type TuiToolSection = {
@@ -369,12 +397,11 @@ function TuiActivityCardComponent({
   formatArg,
 }: TuiActivityCardProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
-  // Start open only while the turn is live (or forced). Settled thinking that
-  // first mounts after done used to open fully (~100px+) above the bubble and
-  // shove the transcript — keep that first paint collapsed to the header.
+  // Live open; historical / settle-first mount starts collapsed (Compact summary).
   const [cardOpen, setCardOpen] = useState(
     () => Boolean(expandAll) || isStreaming,
   )
+  const wasStreamingRef = useRef(isStreaming)
   const hasThinking = !!(thinking && thinking.trim().length > 0)
   const hasTools = toolSections.length > 0
   const { visible: visibleTools, hiddenCount } = useMemo(
@@ -383,22 +410,37 @@ function TuiActivityCardComponent({
   )
 
   useEffect(() => {
-    if (expandAll) setCardOpen(true)
-  }, [expandAll])
+    if (expandAll) {
+      setCardOpen(true)
+      return
+    }
+    if (isStreaming) {
+      setCardOpen(true)
+      wasStreamingRef.current = true
+      return
+    }
+    // streaming → settled: fold to one-line summary (WebUI Compact / Tutti).
+    if (wasStreamingRef.current) {
+      setCardOpen(false)
+      wasStreamingRef.current = false
+    }
+  }, [expandAll, isStreaming])
 
   const summary = useMemo(() => {
-    if (!hasTools) return null
-    const total = toolSections.length
-    const errors = toolSections.filter((s) => s.state === 'output-error').length
-    const running = toolSections.filter(
-      (s) => s.state === 'input-available' || s.state === 'input-streaming',
-    ).length
-    const done = total - errors - running
-
-    if (errors > 0) return `${errors} failed · ${done} done`
-    if (running > 0) return `${running} running · ${done} done`
-    return `${total} ${total === 1 ? 'tool' : 'tools'} · done`
-  }, [toolSections, hasTools])
+    if (isStreaming) {
+      if (!hasTools) return null
+      const total = toolSections.length
+      const errors = toolSections.filter((s) => s.state === 'output-error').length
+      const running = toolSections.filter(
+        (s) => s.state === 'input-available' || s.state === 'input-streaming',
+      ).length
+      const done = total - errors - running
+      if (errors > 0) return `${errors} failed · ${done} done`
+      if (running > 0) return `${running} running · ${done} done`
+      return `${total} ${total === 1 ? 'tool' : 'tools'} · done`
+    }
+    return buildTuiActivitySettledSummary({ hasThinking, toolSections })
+  }, [hasThinking, hasTools, isStreaming, toolSections])
 
   const summaryColor = summary?.includes('failed')
     ? 'var(--theme-danger, #ef4444)'
@@ -409,11 +451,11 @@ function TuiActivityCardComponent({
   // Keep the tool list pinned to the latest row while streaming so new calls
   // stay visible inside the capped scroll region.
   useEffect(() => {
-    if (!isStreaming) return
+    if (!isStreaming || !cardOpen) return
     const el = bodyRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
-  }, [isStreaming, visibleTools.length, toolSections.length, hasThinking])
+  }, [isStreaming, cardOpen, visibleTools.length, toolSections.length, hasThinking])
 
   if (!hasThinking && !hasTools) {
     return null

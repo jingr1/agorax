@@ -325,23 +325,28 @@ function canOrdinalPairTurns(
     Boolean(liveSubmit) && Boolean(histSubmit) && liveSubmit === histSubmit
   const sameOpenUserByText =
     Boolean(liveText) && Boolean(histText) && liveText === histText
-  // Tutti primary: shared clientSubmitId. No-id degeneration: gateway msg-*
-  // without platform_message_id may still echo the bare prompt.
-  const sameOpenUser =
-    sameOpenUserBySubmit ||
-    (Boolean(liveSubmit) && !histSubmit && sameOpenUserByText) ||
-    (!liveSubmit && !histSubmit && sameOpenUserByText)
-  // Live already has a submit id: ordinal only for that turn's echo (by
-  // submit or bare-prompt), never for a different hist turn by position.
-  if (liveSubmit) {
-    return sameOpenUser
-  }
   const liveHasAssistantRest = liveTurn.rest.some(
     (row) => row.role === 'assistant',
   )
   const histHasAssistantRest = historyTurn.rest.some(
     (row) => row.role === 'assistant',
   )
+  // Tutti / canonical primary: shared clientSubmitId.
+  // Gateway echo without platform_message_id may still match by bare prompt,
+  // but never graft a history assistant under a live-only user (that relocates
+  // the prior reply under the follow-up question — especially same text like
+  // 「继续」within seconds).
+  if (liveSubmit) {
+    if (sameOpenUserBySubmit) return true
+    if (!histSubmit && sameOpenUserByText) {
+      if (histHasAssistantRest && !liveHasAssistantRest) return false
+      return true
+    }
+    return false
+  }
+  // External weak-id history (no submit on either side): text echo only.
+  const sameOpenUser =
+    sameOpenUserBySubmit || (!histSubmit && sameOpenUserByText)
   // Refuse grafting a *different* turn's assistant under a new live user.
   if (histHasAssistantRest && !liveHasAssistantRest && !sameOpenUser) {
     return false

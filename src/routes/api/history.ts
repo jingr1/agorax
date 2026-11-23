@@ -15,6 +15,15 @@ import {
   getMessagesForProfile,
   listSessionsForProfile,
 } from '../../server/profiles-browser'
+import {
+  daemonActivityToChatHistory,
+  listHermesDaemonMessages,
+} from '../../server/hermes-daemon-bridge'
+import {
+  hasHermesCanonicalMessages,
+  hermesCanonicalMessagesToChatHistory,
+  listHermesCanonicalMessages,
+} from '../../server/hermes-canonical-store'
 
 export const Route = createFileRoute('/api/history')({
   server: {
@@ -44,6 +53,49 @@ export const Route = createFileRoute('/api/history')({
                 ? friendlyId
                 : ''
           if (sqliteSessionId) {
+            // Final SoT: daemon agent.db (Managed-homologous). Transitional
+            // collab hermes_canonical_* is read-only fallback during migration.
+            try {
+              const daemonPage = await listHermesDaemonMessages({
+                agentSessionId: sqliteSessionId,
+                profileName: profile,
+                limit: limit > 0 ? limit : 1000,
+              })
+              if (daemonPage && daemonPage.messages.length > 0) {
+                const chatMessages = daemonActivityToChatHistory(
+                  daemonPage.messages,
+                )
+                const bounded =
+                  limit > 0 ? chatMessages.slice(-limit) : chatMessages
+                return json({
+                  sessionKey: sqliteSessionId,
+                  sessionId: sqliteSessionId,
+                  messages: bounded,
+                  source: 'daemon-agent-db',
+                  latestVersion: daemonPage.latestVersion,
+                })
+              }
+            } catch (err) {
+              console.warn('[history] hermes daemon read failed', err)
+            }
+            if (hasHermesCanonicalMessages({ agentSessionId: sqliteSessionId })) {
+              const page = listHermesCanonicalMessages({
+                agentSessionId: sqliteSessionId,
+                limit: limit > 0 ? limit : 1000,
+              })
+              const chatMessages = hermesCanonicalMessagesToChatHistory(
+                page.messages,
+              )
+              const bounded =
+                limit > 0 ? chatMessages.slice(-limit) : chatMessages
+              return json({
+                sessionKey: sqliteSessionId,
+                sessionId: sqliteSessionId,
+                messages: bounded,
+                source: 'hermes-canonical-legacy',
+                latestVersion: page.latestVersion,
+              })
+            }
             const local = getMessagesForProfile(
               profile,
               sqliteSessionId,
@@ -71,6 +123,7 @@ export const Route = createFileRoute('/api/history')({
                   ),
                 ),
                 source: `profile:${profile}`,
+                external: true,
               })
             }
           }

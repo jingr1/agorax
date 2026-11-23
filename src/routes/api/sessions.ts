@@ -27,6 +27,72 @@ import {
   ensureChatGateway,
   enterChatGateway,
 } from '../../server/chat-gateway'
+import { listHermesCanonicalSessions } from '../../server/hermes-canonical-store'
+
+function mergeHermesCanonicalIntoSessionList(
+  profileName: string,
+  fsSessions: Array<{
+    key: string
+    friendlyId?: string
+    title?: string | null
+    updatedAt?: number | string
+    source?: string
+    model?: string | null
+    messageCount?: number
+  }>,
+): Array<Record<string, unknown>> {
+  const canonical = listHermesCanonicalSessions({
+    profileName,
+    limit: 200,
+  })
+  const byKey = new Map<string, Record<string, unknown>>()
+  for (const s of fsSessions) {
+    byKey.set(s.key, {
+      key: s.key,
+      id: s.key,
+      friendlyId: s.friendlyId,
+      title: s.title || s.friendlyId,
+      label: s.title || null,
+      derivedTitle: s.title || s.friendlyId,
+      updatedAt: s.updatedAt,
+      startedAt: s.updatedAt,
+      source: s.source,
+      model: s.model || undefined,
+      message_count: s.messageCount ?? 0,
+      external: true,
+    })
+  }
+  for (const row of canonical) {
+    const key = row.gatewaySessionId || row.agentSessionId
+    const existing = byKey.get(key)
+    byKey.set(key, {
+      ...(existing ?? {
+        key,
+        id: key,
+        friendlyId: key,
+        source: 'hermes-canonical',
+      }),
+      title: row.title || existing?.title || key,
+      label: row.title || existing?.label || null,
+      derivedTitle: row.title || existing?.derivedTitle || key,
+      updatedAt: Math.max(
+        Number(existing?.updatedAt) || 0,
+        row.updatedAtUnixMs || 0,
+      ),
+      startedAt: existing?.startedAt ?? row.updatedAtUnixMs,
+      message_count: Math.max(
+        Number(existing?.message_count) || 0,
+        row.messageVersion || 0,
+      ),
+      external: false,
+      canonical: true,
+      source: existing?.source || 'hermes-canonical',
+    })
+  }
+  return [...byKey.values()].sort(
+    (a, b) => Number(b.updatedAt) - Number(a.updatedAt),
+  )
+}
 
 export const Route = createFileRoute('/api/sessions')({
   server: {
@@ -43,23 +109,13 @@ export const Route = createFileRoute('/api/sessions')({
         const profileParam = url.searchParams.get('profile')
 
         if (profileParam) {
-          // Profile-aware listing: read directly from that profile's
-          // state.db SQLite database (not the request dump files).
+          // Profile-aware listing: gateway state.db ∪ Agorax canonical.
           const fsSessions = listSessionsForProfile(profileParam)
           return json({
-            sessions: fsSessions.map((s) => ({
-              key: s.key,
-              id: s.key,
-              friendlyId: s.friendlyId,
-              title: s.title || s.friendlyId,
-              label: s.title || null,
-              derivedTitle: s.title || s.friendlyId,
-              updatedAt: s.updatedAt,
-              startedAt: s.updatedAt,
-              source: s.source,
-              model: s.model || undefined,
-              message_count: s.messageCount ?? 0,
-            })),
+            sessions: mergeHermesCanonicalIntoSessionList(
+              profileParam,
+              fsSessions,
+            ),
           })
         }
 
@@ -69,19 +125,10 @@ export const Route = createFileRoute('/api/sessions')({
         try {
           const activeProfile = getActiveProfileName() || 'default'
           const fsSessions = listSessionsForProfile(activeProfile)
-          const result: Array<any> = fsSessions.map((s) => ({
-            key: s.key,
-            id: s.key,
-            friendlyId: s.friendlyId,
-            title: s.title || s.friendlyId,
-            label: s.title || null,
-            derivedTitle: s.title || s.friendlyId,
-            updatedAt: s.updatedAt,
-            startedAt: s.updatedAt,
-            source: s.source,
-            model: s.model || undefined,
-            message_count: s.messageCount ?? 0,
-          }))
+          const result: Array<any> = mergeHermesCanonicalIntoSessionList(
+            activeProfile,
+            fsSessions,
+          )
 
           // Merge local portable sessions (Ollama, Atomic Chat, etc.)
           const localSessions = listLocalSessions()

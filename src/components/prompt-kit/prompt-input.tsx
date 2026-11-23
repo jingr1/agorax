@@ -13,6 +13,7 @@ import {
   TooltipRoot,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { isImeKeyEvent, scheduleImeComposingClear } from '@/lib/ime-enter'
 import { cn } from '@/lib/utils'
 import {
   selectEnterBehavior,
@@ -187,6 +188,9 @@ function PromptInputTextarea({
   className,
   onKeyDown,
   onPaste,
+  onCompositionStart,
+  onCompositionEnd,
+  onBlur,
   disableAutosize = false,
   inputRef,
   ...props
@@ -194,6 +198,15 @@ function PromptInputTextarea({
   const { value, setValue, maxHeight, onSubmit, disabled, textareaRef } =
     usePromptInput()
   const enterBehavior = useChatSettingsStore(selectEnterBehavior)
+  // Tracks composition across the Safari race where committing Enter arrives
+  // after compositionend with isComposing=false (see src/lib/ime-enter.ts).
+  const imeComposingRef = useRef(false)
+  const imeClearCancelRef = useRef<(() => void) | null>(null)
+
+  function clearImeComposing() {
+    imeComposingRef.current = false
+    imeClearCancelRef.current = null
+  }
 
   function adjustHeight(el: HTMLTextAreaElement | null) {
     if (!el || disableAutosize) return
@@ -240,8 +253,33 @@ function PromptInputTextarea({
     setValue(e.target.value)
   }
 
+  function handleCompositionStart(
+    e: React.CompositionEvent<HTMLTextAreaElement>,
+  ) {
+    imeClearCancelRef.current?.()
+    imeClearCancelRef.current = null
+    imeComposingRef.current = true
+    onCompositionStart?.(e)
+  }
+
+  function handleCompositionEnd(
+    e: React.CompositionEvent<HTMLTextAreaElement>,
+  ) {
+    imeClearCancelRef.current?.()
+    // Keep the flag true through the trailing Enter keydown on this tick.
+    imeClearCancelRef.current = scheduleImeComposingClear(clearImeComposing)
+    onCompositionEnd?.(e)
+  }
+
+  function handleBlur(e: React.FocusEvent<HTMLTextAreaElement>) {
+    imeClearCancelRef.current?.()
+    clearImeComposing()
+    onBlur?.(e)
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key !== 'Enter' || e.nativeEvent.isComposing) {
+    const ime = isImeKeyEvent(e.nativeEvent, imeComposingRef.current)
+    if (e.key !== 'Enter' || ime) {
       onKeyDown?.(e)
       return
     }
@@ -313,6 +351,7 @@ function PromptInputTextarea({
 
   return (
     <textarea
+      {...props}
       ref={handleRef}
       data-testid="chat-composer-input"
       value={value}
@@ -320,6 +359,9 @@ function PromptInputTextarea({
       onKeyDown={handleKeyDown}
       onPaste={handlePaste}
       onPointerDown={handlePointerDown}
+      onCompositionStart={handleCompositionStart}
+      onCompositionEnd={handleCompositionEnd}
+      onBlur={handleBlur}
       className={cn(
         // field-bare: escape global textarea { --theme-input } fill so the
         // PromptInput shell (--composer-bg) shows through uniformly.
@@ -330,7 +372,6 @@ function PromptInputTextarea({
       enterKeyHint="send"
       readOnly={disabled}
       aria-disabled={disabled}
-      {...props}
     />
   )
 }

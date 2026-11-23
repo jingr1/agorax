@@ -67,6 +67,7 @@ import {
   collectSyntheticLiveThinkingText,
   createSyntheticLiveToolTracker,
 } from './-send-stream-live-tools'
+import { persistHermesTurnToDaemon } from '../../server/hermes-daemon-bridge'
 import type {
   OpenAICompatContentPart,
   OpenAICompatMessage,
@@ -1049,6 +1050,29 @@ export const Route = createFileRoute('/api/send-stream')({
                       : typeof body.client_submit_id === 'string'
                         ? body.client_submit_id.trim()
                         : ''
+                const profileNameForCanonical =
+                  typeof body.profileName === 'string'
+                    ? body.profileName.trim()
+                    : ''
+                // Display-canonical SoT → daemon agent.db (Managed-homologous).
+                // Gateway state.db stays execution-only for Agorax-initiated turns.
+                if (clientSubmitId) {
+                  void persistHermesTurnToDaemon({
+                    agentSessionId: sessionKey,
+                    profileName: profileNameForCanonical || 'default',
+                    clientSubmitId,
+                    userText:
+                      typeof body.message === 'string' ? body.message : message,
+                    hermesRunId: workspaceRunId,
+                    assistantText: '',
+                    status: 'streaming',
+                  }).catch((err) => {
+                    console.warn(
+                      '[send-stream] hermes daemon persist (user) failed',
+                      err,
+                    )
+                  })
+                }
                 await streamChat(
                   sessionKey,
                   {
@@ -1736,6 +1760,23 @@ export const Route = createFileRoute('/api/send-stream')({
                           markRunStatus(runSessionKey, activeId, 'complete'),
                         )
                         if (runId) clearRunDetached(runId)
+                        if (clientSubmitId) {
+                          void persistHermesTurnToDaemon({
+                            agentSessionId: sessionKeyFromEvent || sessionKey,
+                            profileName: profileNameForCanonical || 'default',
+                            clientSubmitId,
+                            hermesRunId: runId || activeRunId || workspaceRunId,
+                            assistantText: finalDisplayText.trim(),
+                            thinkingText: thinkingAccumulated.trim() || null,
+                            status: 'completed',
+                            settled: true,
+                          }).catch((err) => {
+                            console.warn(
+                              '[send-stream] hermes daemon persist (done) failed',
+                              err,
+                            )
+                          })
+                        }
                         sendEvent('done', translated)
                         skipPublish || publishChatEvent('done', translated)
                         closeStream()

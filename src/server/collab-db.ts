@@ -515,6 +515,58 @@ ALTER TABLE skill_deployments ADD COLUMN actual_mode TEXT;
 ALTER TABLE skill_deployments ADD COLUMN source_path TEXT;
 `,
   },
+  {
+    version: 14,
+    sql: `
+-- Hermes 1:1 display-canonical Activity messages (Managed-homologous identity).
+-- Gateway state.db remains execution/context; Agorax UI history prefers these rows.
+CREATE TABLE IF NOT EXISTS hermes_canonical_sessions (
+  agent_session_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  profile_name TEXT NOT NULL DEFAULT 'default',
+  gateway_session_id TEXT,
+  title TEXT,
+  external INTEGER NOT NULL DEFAULT 0,
+  message_version INTEGER NOT NULL DEFAULT 0,
+  updated_at_unix_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_hermes_canonical_sessions_gateway
+  ON hermes_canonical_sessions(gateway_session_id);
+CREATE INDEX IF NOT EXISTS idx_hermes_canonical_sessions_profile
+  ON hermes_canonical_sessions(profile_name, updated_at_unix_ms);
+
+CREATE TABLE IF NOT EXISTS hermes_canonical_messages (
+  workspace_id TEXT NOT NULL,
+  agent_session_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  turn_id TEXT,
+  role TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'text',
+  status TEXT NOT NULL DEFAULT 'completed',
+  sequence INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  occurred_at_unix_ms INTEGER NOT NULL,
+  PRIMARY KEY (workspace_id, agent_session_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_hermes_canonical_messages_session_version
+  ON hermes_canonical_messages(workspace_id, agent_session_id, version);
+CREATE INDEX IF NOT EXISTS idx_hermes_canonical_messages_session_seq
+  ON hermes_canonical_messages(workspace_id, agent_session_id, sequence);
+
+CREATE TABLE IF NOT EXISTS hermes_turn_run_index (
+  agent_session_id TEXT NOT NULL,
+  client_submit_id TEXT NOT NULL,
+  turn_id TEXT NOT NULL,
+  hermes_run_id TEXT,
+  assistant_message_id TEXT,
+  settled_at_unix_ms INTEGER,
+  PRIMARY KEY (agent_session_id, client_submit_id)
+);
+CREATE INDEX IF NOT EXISTS idx_hermes_turn_run_index_run
+  ON hermes_turn_run_index(hermes_run_id);
+`,
+  },
 ]
 
 export function ensureCollabDb(dbPath: string = getCollabDbPath()): void {

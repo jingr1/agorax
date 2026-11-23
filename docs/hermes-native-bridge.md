@@ -14,7 +14,7 @@ Agorax 对前端暴露同一套 `AgentActivityAdapter` / `AgentSessionEngine` �
 | Bridge | 执行面 | Canonical 真相源 | 产品入口 |
 | --- | --- | --- | --- |
 | **Managed** | `agorax-agentd`（CLI providers） | daemon SQLite Session/Turn/Interaction | 1:1 managed chat、群聊 managed 成员 |
-| **Native (Hermes)** | Hermes Gateway +（Swarm）tmux | Workspace 侧映射表 + gateway session；**终态权威仍是 canonical Session/Turn 投影** | 1:1 Hermes chat（`send-stream`）、群聊 Hermes、Swarm dispatch |
+| **Native (Hermes)** | Hermes Gateway +（Swarm）tmux | **Agorax 发起的 1:1 展示消息**：daemon `agent.db` `workspace_agent_messages`（与 Managed 同表，`provider=hermes`）；Gateway `state.db` 仅执行上下文 / compaction / CLI·Swarm。映射：`agorax_run_mapping` | 1:1 Hermes chat（`send-stream`）、群聊 Hermes、Swarm dispatch |
 
 ```text
 AgentSessionEngine
@@ -59,7 +59,9 @@ AgentSessionEngine
 | Reasoning | `assistant:<runId>:thinking` |
 | Tool | `toolcall:<toolCallId>` |
 
-首包分配，流式 / 落库 / 历史同一行。禁止结束后换 ID 换皮。History↔live merge 主路径只认 `messageId` / `clientSubmitId` / `runId`；正文与 ordinal 仅作无-id 遗留退化。
+首包分配，流式 / 落库 / 历史同一行。禁止结束后换 ID 换皮。History↔live merge 主路径只认 `messageId` / `clientSubmitId` / `runId`；正文与 ordinal 仅作 **external / 无 canonical 行** 的遗留退化。
+
+**展示 vs 执行：** `send-stream` 经 daemon `POST …/hermes-bridge/sessions/:id/activity` 把强 id 行写入 `workspace_agent_messages`（需 `AGORAX_MANAGED_AGENT_URL`）；`GET /api/history` **优先**读 daemon activity（`source: daemon-agent-db`）。Gateway compaction 只影响执行上下文。纯 CLI/`state.db` 会话标 `external`，弱 id 路径只读。`collab.db` `hermes_canonical_*` 仅为迁移期只读回退，不再写入。
 
 ### 2.2 Adapter 职责
 
@@ -166,3 +168,5 @@ Hermes 在 Settings → Runtimes 的「就绪」= gateway probe（`probeHermesPr
 - 用正文 fingerprint 折叠「看起来像重复」的气泡 — 身份必须以 `messageId` / turn 对齐；正文折叠只是掩盖 gateway `msg-N` 与 live `assistant:<runId>` 分叉
 - 把 Swarm tmux 伪装成 managed child Session
 - 用正文 fingerprint 当 React key
+- 用 Agorax SQLite **整体替代** gateway `state.db`（执行上下文、CLI、Swarm transcript 仍归 Gateway）
+- 在 `collab.db` 再造第二套消息状态机作为展示真相源（展示权威必须是 daemon `agent.db`）

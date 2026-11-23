@@ -23,7 +23,7 @@ a Workspace-owned fallback process or an Anthropic SDK sidecar.
 | Product path | Activity/Engine contract | Execution semantics |
 | --- | --- | --- |
 | Managed 1:1 | Canonical Session/Turn activity and Engine projection | Daemon input/cancel, history and interaction APIs |
-| Hermes 1:1 | Hermes SSE translated to Activity and Engine projection | Native Gateway and stable identity mapping |
+| Hermes 1:1 | Hermes SSE → Activity/Engine; display history from daemon `agent.db` via hermes-bridge | Native Gateway execution; daemon Host storage for Agorax-initiated turns |
 | Managed group member | Canonical runtime activity, projected into room speech/cards | Room runner remains the group scheduling owner |
 | Hermes group member | Room turn/context and Gateway transcript observation | Native group execution; not a managed child Session |
 | Hermes Swarm | Assignment/checkpoint projection | tmux/wrapper; workflow gates stay outside Host interactions |

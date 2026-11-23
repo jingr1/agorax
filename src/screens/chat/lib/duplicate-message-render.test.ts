@@ -16,7 +16,7 @@ describe('no dual assistant id families', () => {
     __resetRememberedOpenTurnForTests()
   })
 
-  it('busy history folds msg-* onto optimistic user; processing key stays', () => {
+  it('busy history with strong ids keeps one user:<submit> + assistant:<runId>', () => {
     const workspaceId = 'ws-dup'
     const agentSessionId = 'sess-dup'
     const commandPort = createHermesCommandPort({
@@ -39,21 +39,23 @@ describe('no dual assistant id families', () => {
       occurredAtUnixMs: 1_000,
     })
 
+    // Canonical / strong-id history (not gateway msg-N): merge by messageId.
     mergeHermesHistoryWhileBusy({
       engine,
       workspaceId,
       agentSessionId,
       historyMessages: [
         {
-          id: 'msg-u',
-          messageId: 'msg-u',
+          id: 'user:c-dup',
+          messageId: 'user:c-dup',
           role: 'user',
+          clientSubmitId: 'c-dup',
           content: [{ type: 'text', text: '继续排查' }],
           timestamp: 1_001,
         },
         {
-          id: 'msg-a',
-          messageId: 'msg-a',
+          id: 'assistant:run-dup',
+          messageId: 'assistant:run-dup',
           role: 'assistant',
           content: [{ type: 'text', text: '收到，继续。' }],
           timestamp: 1_002,
@@ -66,7 +68,7 @@ describe('no dual assistant id families', () => {
     })
     expect(chat.messages.map((m) => m.id || m.messageId)).toEqual([
       'user:c-dup',
-      'msg-a',
+      'assistant:run-dup',
     ])
     expect(
       chat.messages.some((m) =>
@@ -85,6 +87,64 @@ describe('no dual assistant id families', () => {
       'message',
     ])
     expect(rows[1]?.key).toBe('processing:c-dup')
+    engine.dispose()
+  })
+
+  it('refuses grafting weak msg-* assistant under a live-only user by text', () => {
+    const workspaceId = 'ws-nograft'
+    const agentSessionId = 'sess-nograft'
+    const commandPort = createHermesCommandPort({
+      workspaceId,
+      getMapping: async () => null,
+      putMapping: async (m) => m,
+      onActivityEvent: () => undefined,
+    })
+    const engine = createHermesAgentEngine({ workspaceId, commandPort })
+    hydrateHermesAgentEngine(
+      engine,
+      createHermesSessionSkeleton({ workspaceId, agentSessionId }),
+    )
+    ingestHermesUserPromptMessage({
+      engine,
+      workspaceId,
+      agentSessionId,
+      clientSubmitId: 'c-new',
+      text: '继续',
+      occurredAtUnixMs: 2_000,
+    })
+
+    mergeHermesHistoryWhileBusy({
+      engine,
+      workspaceId,
+      agentSessionId,
+      historyMessages: [
+        {
+          id: 'msg-u',
+          messageId: 'msg-u',
+          role: 'user',
+          content: [{ type: 'text', text: '继续' }],
+          timestamp: 1_000,
+        },
+        {
+          id: 'msg-a',
+          messageId: 'msg-a',
+          role: 'assistant',
+          content: [{ type: 'text', text: '旧回复' }],
+          timestamp: 1_100,
+        },
+      ],
+    })
+
+    const chat = selectHermesChatState(engine.getSnapshot(), agentSessionId, {
+      isSubmitting: true,
+    })
+    const ids = chat.messages.map((m) => m.id || m.messageId)
+    expect(ids).toContain('user:c-new')
+    // Prior weak assistant must not be the only body under the new user.
+    const newUserIdx = ids.indexOf('user:c-new')
+    const oldAsstIdx = ids.indexOf('msg-a')
+    expect(oldAsstIdx).toBeGreaterThanOrEqual(0)
+    expect(oldAsstIdx).toBeLessThan(newUserIdx)
     engine.dispose()
   })
 
@@ -148,7 +208,7 @@ describe('no dual assistant id families', () => {
     engine.dispose()
   })
 
-  it('busy history folds Workspace-prefixed gateway user onto bare optimistic', () => {
+  it('busy history folds user-only Workspace-prefixed echo onto optimistic', () => {
     const workspaceId = 'ws-dup-ws'
     const agentSessionId = 'sess-dup-ws'
     const commandPort = createHermesCommandPort({
@@ -171,6 +231,7 @@ describe('no dual assistant id families', () => {
       occurredAtUnixMs: 3_000,
     })
 
+    // User-only gateway echo (no assistant yet) may fold by bare prompt.
     mergeHermesHistoryWhileBusy({
       engine,
       workspaceId,
@@ -187,13 +248,6 @@ describe('no dual assistant id families', () => {
             },
           ],
           timestamp: 3_001,
-        },
-        {
-          id: 'msg-a',
-          messageId: 'msg-a',
-          role: 'assistant',
-          content: [{ type: 'text', text: '收到' }],
-          timestamp: 3_002,
         },
       ],
     })

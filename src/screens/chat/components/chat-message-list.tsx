@@ -16,7 +16,6 @@ import {
 import { getRememberedOpenTurn } from '../lib/engine-user-prompt-ingest'
 import { normalizeToolCallArgs } from '@/lib/chat-message-parts'
 import { stableChatMessageKey } from '@/lib/chat-turn-identity'
-import { TuiActivityCard } from './tui-activity-card'
 import { ScrollToBottomButton } from './scroll-to-bottom-button'
 import { ConversationOutline } from './conversation-outline'
 import type { ChatMessage } from '../types'
@@ -385,6 +384,12 @@ type ChatMessageListProps = {
   activeToolCalls?: Array<{ id: string; name: string; phase: string; args?: unknown }>
   liveToolActivity?: Array<{ name: string; timestamp: number }>
   hideSystemMessages?: boolean
+  /**
+   * Engine / Tutti-homologous lists already own order + strong messageIds.
+   * Skip text-window user collapse and chronological re-sort (those heuristics
+   * exist for gateway msg-N / optimistic echo paths only).
+   */
+  preserveEngineOrder?: boolean
 }
 
 function ChatMessageListComponent({
@@ -413,6 +418,7 @@ function ChatMessageListComponent({
   activeToolCalls = [],
   liveToolActivity = [],
   hideSystemMessages = false,
+  preserveEngineOrder = false,
 }: ChatMessageListProps) {
   const activityDisplayMode = useChatSettingsStore(
     (s) => s.settings.chatActivityDisplayMode ?? 'compact',
@@ -594,10 +600,13 @@ function ChatMessageListComponent({
       seenMessageIds.add(scopedId)
       return true
     })
+    // Strong-id Engine lists: identity dedupe above is enough. Text-window
+    // collapse + timestamp re-sort graft prior replies under the latest user.
+    if (preserveEngineOrder) return deduped
     return sortMessagesChronologically(
       collapseRecentDuplicateUserMessages(deduped),
     )
-  }, [hideSystemMessages, messages])
+  }, [hideSystemMessages, messages, preserveEngineOrder])
 
   const displayEntries = useMemo<Array<DisplayEntry>>(
     () => buildDisplayEntries(displayMessages),
@@ -1778,7 +1787,8 @@ function areChatMessageListEqual(
     prev.bottomOffset === next.bottomOffset &&
     prev.activeToolCalls === next.activeToolCalls &&
     prev.liveToolActivity === next.liveToolActivity &&
-    prev.hideSystemMessages === next.hideSystemMessages
+    prev.hideSystemMessages === next.hideSystemMessages &&
+    prev.preserveEngineOrder === next.preserveEngineOrder
   )
 }
 

@@ -957,6 +957,8 @@ export function mergeHermesHistoryWhileBusy(input: {
   workspaceId: string
   agentSessionId: string
   historyMessages: readonly ChatMessage[]
+  /** Bucket ∪ overlay projection; omit to use durable bucket only. */
+  liveMessages?: readonly AgentActivityMessage[]
 }): number {
   const agentSessionId = input.agentSessionId.trim()
   const workspaceId = input.workspaceId.trim() || 'default'
@@ -991,7 +993,8 @@ export function mergeHermesHistoryWhileBusy(input: {
           agentSessionId,
           messages: input.historyMessages,
         })
-  const live = selectSessionMessages(snap, agentSessionId)
+  const live =
+    input.liveMessages ?? selectSessionMessages(snap, agentSessionId)
   const messages = mergeHermesHistoryWithLiveByTurnIdentity({
     workspaceId,
     agentSessionId,

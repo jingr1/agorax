@@ -320,17 +320,20 @@ export function getHermesChatRuntime(
       const openTurnRemembered = getRememberedOpenTurn(sid) !== null
       // Open turn: never raw history replace that forks the optimistic user.
       // Identity-merge keeps user:<clientSubmitId> and folds gateway echoes.
+      const projected =
+        coordinator.project(projectSnapshot(snap)).sessionMessagesById[sid] ??
+        []
       if (submitting || busy || openTurnRemembered) {
         return mergeHermesHistoryWhileBusy({
           engine,
           workspaceId: id,
           agentSessionId: sid,
           historyMessages,
+          // Include overlay assistants so history msg-N cannot fork a second
+          // bubble beside live assistant:<runId>.
+          liveMessages: projected,
         })
       }
-      const projected =
-        coordinator.project(projectSnapshot(snap)).sessionMessagesById[sid] ??
-        []
       return reconcileHermesHistoryIntoEngine({
         engine,
         coordinator,

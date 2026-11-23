@@ -367,6 +367,12 @@ func routesWithOps(runtime *agentdaemon.Runtime, host *agenthost.Host, db *sql.D
 		}
 		writeJSON(response, http.StatusOK, map[string]any{"workspaceId": workspaceID, "agentSessionId": agentSessionID, "interactions": nonNilSlice(snapshot.Interactions)})
 	})
+	// Hermes 1:1 display-canonical write path: Gateway executes; agent.db stores
+	// Managed-homologous messageIds (user:<clientSubmitId>, assistant:<runId>).
+	mux.HandleFunc(
+		"POST /v1/workspaces/{workspaceID}/hermes-bridge/sessions/{agentSessionID}/activity",
+		handleHermesBridgeActivity(store),
+	)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceID}/agent-sessions/{agentSessionID}/activity", func(response http.ResponseWriter, request *http.Request) {
 		workspaceID, agentSessionID := request.PathValue("workspaceID"), request.PathValue("agentSessionID")
 		ref := agenthost.SessionRef{WorkspaceID: workspaceID, AgentSessionID: agentSessionID}
