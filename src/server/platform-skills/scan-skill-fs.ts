@@ -201,12 +201,28 @@ export function scanSkillsRoot(
 
     const category = categoryFromRelPath(relParts, content)
     const basename = path.basename(skillDir)
+    // One oversized / unreadable package must not abort the whole catalog scan
+    // (「同步本地 skills」 used to 500 on the first limit failure).
+    let files: Array<PlatformSkillFile>
+    try {
+      files = collectSupportingFiles(skillDir)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (
+        /exceeds file or size limits|too large|Skill contains a symbolic link|Skill root is not a real directory|Valid UTF-8 SKILL\.md is required|Unsupported skill file|Invalid skill file path/i.test(
+          message,
+        )
+      ) {
+        continue
+      }
+      throw error
+    }
     const skill: ScannedSkill = {
       name: readName(content, basename),
       description: readDescription(content),
       category,
       content,
-      files: collectSupportingFiles(skillDir),
+      files,
       sourceDir: skillDir,
     }
     const key = skill.sourceDir

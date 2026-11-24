@@ -24,6 +24,26 @@ import {
   hermesCanonicalMessagesToChatHistory,
   listHermesCanonicalMessages,
 } from '../../server/hermes-canonical-store'
+import { getAgoraxRunMappingByAgentSessionId } from '../../server/agorax-run-mapping'
+
+function legacyCanonicalHistoryJson(
+  sqliteSessionId: string,
+  limit: number,
+) {
+  const page = listHermesCanonicalMessages({
+    agentSessionId: sqliteSessionId,
+    limit: limit > 0 ? limit : 1000,
+  })
+  const chatMessages = hermesCanonicalMessagesToChatHistory(page.messages)
+  const bounded = limit > 0 ? chatMessages.slice(-limit) : chatMessages
+  return json({
+    sessionKey: sqliteSessionId,
+    sessionId: sqliteSessionId,
+    messages: bounded,
+    source: 'hermes-canonical-legacy',
+    latestVersion: page.latestVersion,
+  })
+}
 
 export const Route = createFileRoute('/api/history')({
   server: {
@@ -53,8 +73,11 @@ export const Route = createFileRoute('/api/history')({
                 ? friendlyId
                 : ''
           if (sqliteSessionId) {
-            // Final SoT: daemon agent.db (Managed-homologous). Transitional
-            // collab hermes_canonical_* is read-only fallback during migration.
+            // Display SoT for Agorax-initiated Hermes: daemon agent.db only.
+            // Never fall through to gateway msg-* for mapped sessions — that
+            // reintroduces dual SoT and cross-turn length-win in the UI.
+            const mapped =
+              getAgoraxRunMappingByAgentSessionId(sqliteSessionId) !== null
             try {
               const daemonPage = await listHermesDaemonMessages({
                 agentSessionId: sqliteSessionId,
@@ -78,22 +101,20 @@ export const Route = createFileRoute('/api/history')({
             } catch (err) {
               console.warn('[history] hermes daemon read failed', err)
             }
-            if (hasHermesCanonicalMessages({ agentSessionId: sqliteSessionId })) {
-              const page = listHermesCanonicalMessages({
-                agentSessionId: sqliteSessionId,
-                limit: limit > 0 ? limit : 1000,
-              })
-              const chatMessages = hermesCanonicalMessagesToChatHistory(
-                page.messages,
-              )
-              const bounded =
-                limit > 0 ? chatMessages.slice(-limit) : chatMessages
+            if (
+              hasHermesCanonicalMessages({ agentSessionId: sqliteSessionId })
+            ) {
+              return legacyCanonicalHistoryJson(sqliteSessionId, limit)
+            }
+            // Mapped Agorax session: never fall through to gateway/profile
+            // msg-* (dual display SoT). Empty daemon page is the correct idle.
+            if (mapped) {
               return json({
                 sessionKey: sqliteSessionId,
                 sessionId: sqliteSessionId,
-                messages: bounded,
-                source: 'hermes-canonical-legacy',
-                latestVersion: page.latestVersion,
+                messages: [],
+                source: 'daemon-agent-db',
+                latestVersion: 0,
               })
             }
             const local = getMessagesForProfile(

@@ -398,6 +398,46 @@ export function hermesSseToActivityEvents(
         stateName === 'interrupted' || stateName === 'canceled'
       // Stamp any carried message body onto the live host before phase change.
       applyDoneMessageDeltas(data.message)
+      // Terminalize live hosts so history reconcile can drop them once msg-*
+      // canonical rows arrive. Streaming leftovers stayed beside msg-N and
+      // absorbed the *next* turn's thinking above the new question.
+      const terminalStatus = failed
+        ? 'failed'
+        : interrupted
+          ? 'completed'
+          : 'completed'
+      if (next.assistantMessageId) {
+        events.push({
+          ...base,
+          eventType: 'message_delta',
+          data: {
+            ...base,
+            messageId: next.assistantMessageId,
+            turnId: ctx.turnId,
+            role: 'assistant',
+            kind: 'text',
+            occurredAtUnixMs,
+            content: { operation: 'set', value: next.lastText },
+            status: terminalStatus,
+          },
+        })
+      }
+      if (next.thinkingMessageId && next.lastThinking) {
+        events.push({
+          ...base,
+          eventType: 'message_delta',
+          data: {
+            ...base,
+            messageId: next.thinkingMessageId,
+            turnId: ctx.turnId,
+            role: 'assistant_thinking',
+            kind: 'reasoning',
+            occurredAtUnixMs,
+            content: { operation: 'set', value: next.lastThinking },
+            status: terminalStatus,
+          },
+        })
+      }
       if (failed) {
         events.push(
           turnUpdate(

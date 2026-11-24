@@ -423,7 +423,131 @@ describe('hermes-agent-engine', () => {
     coordinator.dispose()
   })
 
-  it('reconcile keeps older history + trailing live turn when history lags', () => {
+  it('refuses stale daemon replace that would drop the settled live turn', () => {
+    const workspaceId = 'ws'
+    const commandPort = createHermesCommandPort({
+      workspaceId,
+      getMapping: async () => null,
+      putMapping: async (m) => m,
+      onActivityEvent: () => undefined,
+    })
+    const engine = createHermesAgentEngine({ workspaceId, commandPort })
+    const projectSnapshot = createAgentActivitySnapshotProjector(workspaceId)
+    const coordinator = createAgentActivityWorkspaceEventCoordinator({
+      engine,
+      notificationScheduler: {
+        schedule(delayMs, task) {
+          const timer = setTimeout(task, delayMs)
+          return { cancel: () => clearTimeout(timer) }
+        },
+      },
+      readCanonicalSnapshot: () => projectSnapshot(engine.getSnapshot()),
+      workspaceId,
+    })
+    hydrateHermesAgentEngine(
+      engine,
+      createHermesSessionSkeleton({
+        workspaceId,
+        agentSessionId: 'stale-race',
+      }),
+    )
+    engine.dispatch({
+      type: 'message/snapshotReceived',
+      messages: [
+        {
+          workspaceId,
+          agentSessionId: 'stale-race',
+          messageId: 'user:t1',
+          version: 1,
+          sequence: 1,
+          turnId: 'turn-t1',
+          role: 'user',
+          kind: 'text',
+          status: null,
+          payload: { text: '非常好', clientSubmitId: 't1' },
+          occurredAtUnixMs: 1,
+        },
+        {
+          workspaceId,
+          agentSessionId: 'stale-race',
+          messageId: 'assistant:run_t1',
+          version: 2,
+          sequence: 2,
+          turnId: 'turn-t1',
+          role: 'assistant',
+          kind: 'text',
+          status: 'completed',
+          payload: { text: '谢。' },
+          occurredAtUnixMs: 2,
+        },
+        {
+          workspaceId,
+          agentSessionId: 'stale-race',
+          messageId: 'user:t2',
+          version: 3,
+          sequence: 3,
+          turnId: 'turn-t2',
+          role: 'user',
+          kind: 'text',
+          status: null,
+          payload: { text: '回答怎么这么简洁', clientSubmitId: 't2' },
+          occurredAtUnixMs: 10,
+        },
+        {
+          workspaceId,
+          agentSessionId: 'stale-race',
+          messageId: 'assistant:run_t2',
+          version: 4,
+          sequence: 4,
+          turnId: 'turn-t2',
+          role: 'assistant',
+          kind: 'text',
+          status: 'completed',
+          payload: {
+            text: '你之前让我只回复一个字：好，我按那个风格延续了。',
+          },
+          occurredAtUnixMs: 11,
+        },
+      ],
+    })
+
+    // busy→idle RQ still has only the previous turn.
+    const count = reconcileHermesHistoryIntoEngine({
+      engine,
+      coordinator,
+      workspaceId,
+      agentSessionId: 'stale-race',
+      historyMessages: [
+        {
+          role: 'user',
+          id: 'user:t1',
+          messageId: 'user:t1',
+          content: [{ type: 'text', text: '非常好' }],
+          timestamp: 1,
+          __daemon: true,
+        },
+        {
+          role: 'assistant',
+          id: 'assistant:run_t1',
+          messageId: 'assistant:run_t1',
+          content: [{ type: 'text', text: '谢。' }],
+          timestamp: 2,
+          __daemon: true,
+        },
+      ],
+    })
+    expect(count).toBe(0)
+    const chat = selectHermesChatState(engine.getSnapshot(), 'stale-race')
+    expect(chat.messages.map((m) => m.id)).toEqual([
+      'user:t1',
+      'assistant:run_t1',
+      'user:t2',
+      'assistant:run_t2',
+    ])
+    coordinator.dispose()
+  })
+
+  it('idle daemon history replaces Engine (no live merge / length-win)', () => {
     const workspaceId = 'ws'
     const commandPort = createHermesCommandPort({
       workspaceId,
@@ -447,31 +571,45 @@ describe('hermes-agent-engine', () => {
     ingestHermesUserPromptMessage({
       engine,
       workspaceId,
-      agentSessionId: 'stale-1',
-      clientSubmitId: 'fresh',
-      text: 'new prompt',
+      agentSessionId: 'daemon-1',
+      clientSubmitId: 't1',
+      text: '非常好',
     })
     const count = reconcileHermesHistoryIntoEngine({
       engine,
       coordinator,
       workspaceId,
-      agentSessionId: 'stale-1',
+      agentSessionId: 'daemon-1',
       historyMessages: [
         {
           role: 'user',
-          id: 'old-u',
-          content: [{ type: 'text', text: 'old' }],
+          id: 'user:t1',
+          messageId: 'user:t1',
+          content: [{ type: 'text', text: '非常好' }],
           timestamp: 1,
+          __daemon: true,
+        },
+        {
+          role: 'assistant',
+          id: 'assistant:run_t1',
+          messageId: 'assistant:run_t1',
+          content: [{ type: 'text', text: '谢。' }],
+          timestamp: 2,
+          __daemon: true,
         },
       ],
     })
     expect(count).toBe(2)
-    const chat = selectHermesChatState(engine.getSnapshot(), 'stale-1')
-    expect(chat.messages.map((m) => m.id)).toEqual(['old-u', 'user:fresh'])
+    const chat = selectHermesChatState(engine.getSnapshot(), 'daemon-1')
+    expect(chat.messages.map((m) => m.id)).toEqual([
+      'user:t1',
+      'assistant:run_t1',
+    ])
+    expect(JSON.stringify(chat.messages[1])).toContain('谢。')
     coordinator.dispose()
   })
 
-  it('reconcile stamps live assistant:runId over history msg-N for the same turn', () => {
+  it('external msg-* history still identity-merges over live strong ids', () => {
     const workspaceId = 'ws'
     const commandPort = createHermesCommandPort({
       workspaceId,

@@ -238,4 +238,37 @@ describe('reconcileHistoryResponse', () => {
     const next = reconcileHistoryResponse(previous, incoming)
     expect(next).toBe(previous)
   })
+
+  it('takes daemon-agent-db pages wholesale (no length-win)', () => {
+    const previous = {
+      sessionKey: 's1',
+      source: 'live',
+      messages: [
+        {
+          role: 'assistant',
+          id: 'assistant:run_old',
+          content: [
+            {
+              type: 'text',
+              text: '你之前让我只回复一个字：好，我按那个风格延续了。',
+            },
+          ],
+        },
+      ],
+    }
+    const incoming = {
+      sessionKey: 's1',
+      source: 'daemon-agent-db',
+      messages: [
+        {
+          role: 'assistant',
+          id: 'assistant:run_t1',
+          content: [{ type: 'text', text: '谢。' }],
+          __daemon: true,
+        },
+      ],
+    }
+    const next = reconcileHistoryResponse(previous, incoming)
+    expect(next).toBe(incoming)
+  })
 })

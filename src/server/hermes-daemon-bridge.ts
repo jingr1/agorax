@@ -35,21 +35,29 @@ export type HermesBridgePersistInput = {
   occurredAtUnixMs?: number
 }
 
+export type HermesBridgePersistResult = {
+  ok: boolean
+  /** Daemon messageVersion high-water after this write (0 when no-op / empty). */
+  latestVersion: number
+}
+
 /**
  * Persist one Hermes turn frame into daemon agent.db.
- * No-ops (returns false) when AGORAX_MANAGED_AGENT_URL is unset.
+ * No-ops when AGORAX_MANAGED_AGENT_URL is unset.
  */
 export async function persistHermesTurnToDaemon(
   input: HermesBridgePersistInput,
-): Promise<boolean> {
+): Promise<HermesBridgePersistResult> {
   const client = getHermesDaemonBridgeClient({
     profileName: input.profileName,
   })
-  if (!client) return false
+  if (!client) return { ok: false, latestVersion: 0 }
 
   const agentSessionId = input.agentSessionId.trim()
   const clientSubmitId = input.clientSubmitId.trim()
-  if (!agentSessionId || !clientSubmitId) return false
+  if (!agentSessionId || !clientSubmitId) {
+    return { ok: false, latestVersion: 0 }
+  }
 
   const turnId = `turn-${clientSubmitId}`
   const now = input.occurredAtUnixMs ?? Date.now()
@@ -134,7 +142,16 @@ export async function persistHermesTurnToDaemon(
       `hermes daemon bridge failed: ${response.status} ${path}${detail ? `: ${detail}` : ''}`,
     )
   }
-  return true
+  const body = (await response.json().catch(() => null)) as {
+    latestVersion?: unknown
+  } | null
+  const latestVersion =
+    typeof body?.latestVersion === 'number' &&
+    Number.isSafeInteger(body.latestVersion) &&
+    body.latestVersion >= 0
+      ? body.latestVersion
+      : 0
+  return { ok: true, latestVersion }
 }
 
 export async function listHermesDaemonMessages(input: {
@@ -253,6 +270,17 @@ export function daemonActivityToChatHistory(
         ? assistantIndexByTurn.get(turnId)!
         : -1
 
+    // Orphan empty streaming shells (assistant:<workspaceUuid>) must not open
+    // a turn host — a later real run_* row would share turnId and length-wins
+    // merges can paint the next turn's body onto the prior reply.
+    if (
+      !isReasoning &&
+      !text.trim() &&
+      (row.status === 'streaming' || row.status === 'running')
+    ) {
+      continue
+    }
+
     if (existingIndex >= 0) {
       const host = out[existingIndex]!
       const content = Array.isArray(host.content)
@@ -269,6 +297,7 @@ export function daemonActivityToChatHistory(
           content.unshift({ type: 'thinking', thinking: text })
         }
       } else {
+        if (!text.trim()) continue
         const withoutText = content.filter((part) => part?.type !== 'text')
         withoutText.push({ type: 'text', text })
         content.length = 0

@@ -76,6 +76,27 @@ describe('scanSkillsRoot', () => {
     expect(scanSkillsRoot(root)).toHaveLength(1)
   })
 
+  it('skips oversized packages without aborting the rest of the scan', () => {
+    const root = tmpRoot()
+    fs.mkdirSync(path.join(root, 'ok'), { recursive: true })
+    fs.writeFileSync(
+      path.join(root, 'ok', 'SKILL.md'),
+      '---\nname: ok\ndescription: fine\n---\n\nHi\n',
+    )
+    fs.mkdirSync(path.join(root, 'huge'), { recursive: true })
+    fs.writeFileSync(
+      path.join(root, 'huge', 'SKILL.md'),
+      '---\nname: huge\ndescription: too big\n---\n\nHi\n',
+    )
+    fs.writeFileSync(
+      path.join(root, 'huge', 'blob.bin'),
+      Buffer.alloc(8 * 1024 * 1024 + 1, 1),
+    )
+
+    const scanned = scanSkillsRoot(root)
+    expect(scanned.map((s) => s.name)).toEqual(['ok'])
+  })
+
   it('descends into .system (Codex bundled skills)', () => {
     const root = tmpRoot()
     fs.mkdirSync(path.join(root, '.system', 'review-agent'), {

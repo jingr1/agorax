@@ -59,9 +59,17 @@ AgentSessionEngine
 | Reasoning | `assistant:<runId>:thinking` |
 | Tool | `toolcall:<toolCallId>` |
 
-首包分配，流式 / 落库 / 历史同一行。禁止结束后换 ID 换皮。History↔live merge 主路径只认 `messageId` / `clientSubmitId` / `runId`；正文与 ordinal 仅作 **external / 无 canonical 行** 的遗留退化。
+首包分配，流式 / 落库 / 历史同一行。禁止结束后换 ID 换皮。
 
-**展示 vs 执行：** `send-stream` 经 daemon `POST …/hermes-bridge/sessions/:id/activity` 把强 id 行写入 `workspace_agent_messages`（需 `AGORAX_MANAGED_AGENT_URL`）；`GET /api/history` **优先**读 daemon activity（`source: daemon-agent-db`）。Gateway compaction 只影响执行上下文。纯 CLI/`state.db` 会话标 `external`，弱 id 路径只读。`collab.db` `hermes_canonical_*` 仅为迁移期只读回退，不再写入。
+**展示 SoT（硬合同，禁止半成品双源）：**
+
+| 状态 | 谁写列表 | 禁止 |
+| --- | --- | --- |
+| 开 turn / busy / settling | Gateway SSE → adapter → Engine overlay | `mergeHermesHistoryWhileBusy` / RQ history 并入桶（曾导致跨 turn length-win） |
+| Idle（已 settled） | Tutti `session/reconcile`：`authoritativeMessages` + `requiredHistoryRevision` fence → `historyAuthoritativeSnapshotReceived` | 用过期 RQ cache 在 `turnBusy=false` 时整页灌桶；history↔live length-win；gateway `msg-*` 当 Agorax 展示 |
+| Settle | SSE `done.message`；daemon persist 后 `done.historyRevision` 触发权威 reconcile（revision 不稳 retry） | settle 后再拉 `/api/history` 补洞 stamp；无 fence 的 RQ replace |
+
+`send-stream` 经 daemon `POST …/hermes-bridge/sessions/:id/activity` 把强 id 写入 `workspace_agent_messages`（需 `AGORAX_MANAGED_AGENT_URL`）。已有 `agorax_run_mapping` 的会话：**即使 daemon 空页也不回退** gateway/`state.db` 展示。纯 CLI/`state.db`（无 mapping）标 `external`，弱 id 只读。`collab.db` `hermes_canonical_*` 仅为迁移期只读回退，不再写入。Gateway compaction 只影响执行上下文。
 
 ### 2.2 Adapter 职责
 
@@ -74,10 +82,10 @@ AgentSessionEngine
 ### 2.3 Settle（Tutti 对齐：`running → settling → settled`）
 
 - 成功 `done` → `turn_update` `phase=settling`（`activeTurnId` 保持；composer busy / fold 仍开）
-- commandPort 在 settling 内：先用 `done.message` stamp 终稿 text；**仅当 done 未带正文** 才 `/api/history` 补洞（更长才写），再发 `phase=settled`
-- `error` / failed / interrupted `done` → 直接 `phase=settled`（失败无需等补洞）
+- commandPort 在 settling 内：用 SSE `done.message` 作为终稿；**禁止**再拉 `/api/history` 做 length-win stamp（见 `shouldFetchHistoryForSettle` ≡ false）
+- daemon `hermes-bridge` 在 done 前 **await** 写入并带上 `historyRevision`；随后 `session/reconcileRequested`（`authoritativeMessages` + `requiredHistoryRevision`）经 `createAgentActivitySessionReconcileExecutor` fence 后才 `historyAuthoritativeSnapshotReceived`
+- `error` / failed / interrupted `done` → 直接 `phase=settled`
 - Composer busy 跟 `phase !== settled`（见 `selectHermesChatState`）
-- **禁止**用 history 页整段替换已投影正文；Reconcile = 补洞 / stamp id / version，不是换皮
 - **禁止**在成功 `done` 瞬间开输入框（须等 settled）
 - **开 turn / settling 期间**：`foldOpenTurnIntoLiveHost` 把 last-user 之后的工具/中间正文并进唯一 host；有线程内 host 时底部 Thinking pill 必须关（禁止 `liveToolActivity` 单独点亮）
 
@@ -98,7 +106,7 @@ AgentSessionEngine
 | A | Identity + Hermes write-through（不换皮） | ✅ |
 | B | Hermes SSE → Activity 纯 adapter | ✅ `hermes-activity-adapter.ts` |
 | C | Native bridge 真接线：send-stream → adapter → Engine | ✅ `createHermesAgentEngine` + commandPort（`/api/send-stream` / `/api/runs/.../stop` 仅 port 内）；`agorax_run_mapping` 落 collab.db；SSE→adapter→`coordinator.ingestEvent` |
-| D | Hermes 1:1 UI 只订 Engine（与 managed 同 hook 投影） | ✅ 列表 ← Engine；history→Engine 用 **turn identity stamp**；Activity 桶内 reasoning/tool/text 可分行存储，**投影** `projectActivityMessagesToChat`（Hermes + managed 同源）折回唯一 host。禁止 chat-store→RQ history 双写。send → `ingestHermesUserPromptMessage`；adapter 首包 `set` 锚点 |
+| D | Hermes 1:1 UI 只订 Engine（与 managed 同 hook 投影） | ✅ 列表 ← Engine；busy 时 RQ history **no-op**；settle 后 Tutti `session/reconcile` authoritative fence；Activity 桶内 reasoning/tool/text 可分行存储，**投影** `projectActivityMessagesToChat`（Hermes + managed 同源）折回唯一 host。禁止 chat-store→RQ history 双写。send → `ingestHermesUserPromptMessage`；adapter 首包 `set` 锚点 |
 
 ## 3. 所有权
 

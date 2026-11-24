@@ -27,7 +27,7 @@ describe('hermes daemon bridge', () => {
         clientSubmitId: 'c1',
         userText: 'hi',
       }),
-    ).resolves.toBe(false)
+    ).resolves.toEqual({ ok: false, latestVersion: 0 })
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
@@ -35,6 +35,7 @@ describe('hermes daemon bridge', () => {
     vi.stubEnv('AGORAX_MANAGED_AGENT_URL', 'http://127.0.0.1:8788')
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
+      json: async () => ({ latestVersion: 42 }),
       text: async () => '',
     })
     vi.stubGlobal('fetch', fetchImpl)
@@ -50,7 +51,7 @@ describe('hermes daemon bridge', () => {
         status: 'completed',
         settled: true,
       }),
-    ).resolves.toBe(true)
+    ).resolves.toEqual({ ok: true, latestVersion: 42 })
 
     expect(fetchImpl).toHaveBeenCalledOnce()
     const [url, init] = fetchImpl.mock.calls[0]!
@@ -92,6 +93,75 @@ describe('hermes daemon bridge', () => {
     ] as AgentActivityDurableMessage[]
     const chat = daemonActivityToChatHistory(messages)
     expect(chat.map((m) => m.id)).toEqual(['user:s1', 'assistant:r1'])
+  })
+
+  it('skips empty streaming workspace shells so prior reply stays intact', () => {
+    const messages = [
+      {
+        messageId: 'user:t1',
+        role: 'user',
+        kind: 'text',
+        turnId: 'turn-t1',
+        status: 'completed',
+        sequence: 1,
+        version: 1,
+        payload: { text: '你好吗？', clientSubmitId: 't1' },
+        occurredAtUnixMs: 1,
+      },
+      {
+        messageId: 'assistant:05d59493-0587-4d2c-a6eb-dc04049c2bf8',
+        role: 'assistant',
+        kind: 'text',
+        turnId: 'turn-t1',
+        status: 'streaming',
+        sequence: 2,
+        version: 2,
+        payload: { text: '', clientSubmitId: 't1' },
+        occurredAtUnixMs: 2,
+      },
+      {
+        messageId: 'assistant:run_fc5edeb77de847aa842b6ae3ca049182',
+        role: 'assistant',
+        kind: 'text',
+        turnId: 'turn-t1',
+        status: 'completed',
+        sequence: 3,
+        version: 3,
+        payload: { text: '好。', clientSubmitId: 't1' },
+        occurredAtUnixMs: 3,
+      },
+      {
+        messageId: 'user:t2',
+        role: 'user',
+        kind: 'text',
+        turnId: 'turn-t2',
+        status: 'completed',
+        sequence: 4,
+        version: 4,
+        payload: { text: '在干嘛？', clientSubmitId: 't2' },
+        occurredAtUnixMs: 4,
+      },
+      {
+        messageId: 'assistant:run_8994f685ce644ecdba072795e3b6f0aa',
+        role: 'assistant',
+        kind: 'text',
+        turnId: 'turn-t2',
+        status: 'completed',
+        sequence: 5,
+        version: 5,
+        payload: { text: '等你的下一步指令。', clientSubmitId: 't2' },
+        occurredAtUnixMs: 5,
+      },
+    ] as AgentActivityDurableMessage[]
+    const chat = daemonActivityToChatHistory(messages)
+    expect(chat.map((m) => m.id)).toEqual([
+      'user:t1',
+      'assistant:run_fc5edeb77de847aa842b6ae3ca049182',
+      'user:t2',
+      'assistant:run_8994f685ce644ecdba072795e3b6f0aa',
+    ])
+    expect(chat[1]?.text).toBe('好。')
+    expect(chat[3]?.text).toBe('等你的下一步指令。')
   })
 
   it('folds same-turn text-then-reasoning into one host (reasoning kept as-is)', () => {
@@ -188,6 +258,7 @@ describe('hermes daemon bridge', () => {
     vi.stubEnv('AGORAX_MANAGED_AGENT_URL', 'http://127.0.0.1:8788')
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
+      json: async () => ({ latestVersion: 3 }),
       text: async () => '',
     })
     vi.stubGlobal('fetch', fetchImpl)

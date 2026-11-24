@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  compareAgentActivityMessages,
   latestAgentActivityMessageVersion,
   mergeAgentActivityMessages
 } from "./merge.ts";
@@ -79,6 +80,36 @@ test("latestAgentActivityMessageVersion returns highest cached version", () => {
       message({ messageId: "message-2", version: 8 })
     ]),
     8
+  );
+});
+
+test("compareAgentActivityMessages keeps same-ms user before assistant rows", () => {
+  const ts = 1_700_000_000_000;
+  const user = message({
+    messageId: "user:c2",
+    role: "user",
+    kind: "text",
+    version: 0,
+    occurredAtUnixMs: ts
+  });
+  const thinking = message({
+    messageId: "assistant:run-2:thinking",
+    role: "assistant_thinking",
+    kind: "reasoning",
+    version: 0,
+    occurredAtUnixMs: ts
+  });
+  const text = message({
+    messageId: "assistant:run-2",
+    role: "assistant",
+    kind: "text",
+    version: 0,
+    occurredAtUnixMs: ts
+  });
+  const ordered = [text, thinking, user].sort(compareAgentActivityMessages);
+  assert.deepEqual(
+    ordered.map((row) => row.messageId),
+    ["user:c2", "assistant:run-2:thinking", "assistant:run-2"]
   );
 });
 

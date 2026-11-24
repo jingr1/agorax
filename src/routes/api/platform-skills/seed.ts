@@ -17,10 +17,19 @@ export const Route = createFileRoute('/api/platform-skills/seed')({
         if (ct) return ct
         try {
           const result = seedPlatformSkillsFromDisk({ materialize: false })
-          const deployments = listPlatformSkills().flatMap((skill) =>
-            reconcilePlatformSkill(skill.id),
-          )
-          return json({ ok: true, ...result, deployments })
+          const reconcileErrors: Array<{ skillId: string; error: string }> = []
+          const deployments = listPlatformSkills().flatMap((skill) => {
+            try {
+              return reconcilePlatformSkill(skill.id)
+            } catch (error) {
+              reconcileErrors.push({
+                skillId: skill.id,
+                error: error instanceof Error ? error.message : String(error),
+              })
+              return []
+            }
+          })
+          return json({ ok: true, ...result, deployments, reconcileErrors })
         } catch (error) {
           return json(
             {

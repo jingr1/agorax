@@ -6,17 +6,19 @@ import {
   hydrateHermesAgentEngine,
   ingestHermesUserPromptMessage,
   mergeHermesHistoryWhileBusy,
+  reconcileHermesHistoryIntoEngine,
   selectHermesChatState,
 } from './hermes-agent-engine'
 import { __resetRememberedOpenTurnForTests } from './engine-user-prompt-ingest'
 import { projectChatToTranscriptRows } from './agent-transcript-vm'
+import type { AgentActivityDurableMessage } from '@agorax/agent-activity-core'
 
-describe('no dual assistant id families', () => {
+describe('Hermes display SoT (no busy history merge)', () => {
   beforeEach(() => {
     __resetRememberedOpenTurnForTests()
   })
 
-  it('busy history with strong ids keeps one user:<submit> + assistant:<runId>', () => {
+  it('busy history reconcile is a no-op — SSE owns the open turn', () => {
     const workspaceId = 'ws-dup'
     const agentSessionId = 'sess-dup'
     const commandPort = createHermesCommandPort({
@@ -39,60 +41,58 @@ describe('no dual assistant id families', () => {
       occurredAtUnixMs: 1_000,
     })
 
-    // Canonical / strong-id history (not gateway msg-N): merge by messageId.
-    mergeHermesHistoryWhileBusy({
-      engine,
-      workspaceId,
-      agentSessionId,
-      historyMessages: [
-        {
-          id: 'user:c-dup',
-          messageId: 'user:c-dup',
-          role: 'user',
-          clientSubmitId: 'c-dup',
-          content: [{ type: 'text', text: '继续排查' }],
-          timestamp: 1_001,
-        },
-        {
-          id: 'assistant:run-dup',
-          messageId: 'assistant:run-dup',
-          role: 'assistant',
-          content: [{ type: 'text', text: '收到，继续。' }],
-          timestamp: 1_002,
-        },
-      ],
-    })
+    const before = selectHermesChatState(engine.getSnapshot(), agentSessionId, {
+      isSubmitting: true,
+    }).messages.map((m) => m.id || m.messageId)
+
+    expect(
+      mergeHermesHistoryWhileBusy({
+        engine,
+        workspaceId,
+        agentSessionId,
+        historyMessages: [
+          {
+            id: 'user:c-dup',
+            messageId: 'user:c-dup',
+            role: 'user',
+            clientSubmitId: 'c-dup',
+            content: [{ type: 'text', text: '继续排查' }],
+            timestamp: 1_001,
+            __daemon: true,
+          },
+          {
+            id: 'assistant:run-dup',
+            messageId: 'assistant:run-dup',
+            role: 'assistant',
+            content: [{ type: 'text', text: '收到，继续。' }],
+            timestamp: 1_002,
+            __daemon: true,
+          },
+        ],
+      }),
+    ).toBe(0)
 
     const chat = selectHermesChatState(engine.getSnapshot(), agentSessionId, {
       isSubmitting: true,
     })
+    expect(chat.messages.map((m) => m.id || m.messageId)).toEqual(before)
     expect(chat.messages.map((m) => m.id || m.messageId)).toEqual([
       'user:c-dup',
-      'assistant:run-dup',
     ])
-    expect(
-      chat.messages.some((m) =>
-        String(m.id || m.messageId).includes(':pending:'),
-      ),
-    ).toBe(false)
 
     const rows = projectChatToTranscriptRows(chat.messages, {
-      turnBusy: chat.turnBusy,
-      streamingMessageId: chat.streamingMessageId,
+      turnBusy: true,
+      streamingMessageId: null,
       openTurnKey: 'c-dup',
     })
-    expect(rows.map((r) => r.kind)).toEqual([
-      'message',
-      'processing',
-      'message',
-    ])
+    expect(rows.map((r) => r.kind)).toEqual(['message', 'processing'])
     expect(rows[1]?.key).toBe('processing:c-dup')
     engine.dispose()
   })
 
-  it('refuses grafting weak msg-* assistant under a live-only user by text', () => {
-    const workspaceId = 'ws-nograft'
-    const agentSessionId = 'sess-nograft'
+  it('idle daemon history replaces Engine without length-win merge', () => {
+    const workspaceId = 'ws-idle'
+    const agentSessionId = 'sess-idle'
     const commandPort = createHermesCommandPort({
       workspaceId,
       getMapping: async () => null,
@@ -100,6 +100,12 @@ describe('no dual assistant id families', () => {
       onActivityEvent: () => undefined,
     })
     const engine = createHermesAgentEngine({ workspaceId, commandPort })
+    const coordinator = {
+      reconcileAuthoritativeHistory: (
+        _sid: string,
+        _messages: readonly AgentActivityDurableMessage[],
+      ) => undefined,
+    }
     hydrateHermesAgentEngine(
       engine,
       createHermesSessionSkeleton({ workspaceId, agentSessionId }),
@@ -108,160 +114,75 @@ describe('no dual assistant id families', () => {
       engine,
       workspaceId,
       agentSessionId,
-      clientSubmitId: 'c-new',
-      text: '继续',
-      occurredAtUnixMs: 2_000,
+      clientSubmitId: 't1',
+      text: '非常好',
+      occurredAtUnixMs: 1,
     })
 
-    mergeHermesHistoryWhileBusy({
+    reconcileHermesHistoryIntoEngine({
       engine,
+      coordinator,
       workspaceId,
       agentSessionId,
       historyMessages: [
         {
-          id: 'msg-u',
-          messageId: 'msg-u',
+          id: 'user:t1',
+          messageId: 'user:t1',
           role: 'user',
-          content: [{ type: 'text', text: '继续' }],
-          timestamp: 1_000,
+          turnId: 'turn-t1',
+          clientSubmitId: 't1',
+          content: [{ type: 'text', text: '非常好' }],
+          timestamp: 1,
+          __daemon: true,
         },
         {
-          id: 'msg-a',
-          messageId: 'msg-a',
+          id: 'assistant:run_t1',
+          messageId: 'assistant:run_t1',
           role: 'assistant',
-          content: [{ type: 'text', text: '旧回复' }],
-          timestamp: 1_100,
-        },
-      ],
-    })
-
-    const chat = selectHermesChatState(engine.getSnapshot(), agentSessionId, {
-      isSubmitting: true,
-    })
-    const ids = chat.messages.map((m) => m.id || m.messageId)
-    expect(ids).toContain('user:c-new')
-    // Prior weak assistant must not be the only body under the new user.
-    const newUserIdx = ids.indexOf('user:c-new')
-    const oldAsstIdx = ids.indexOf('msg-a')
-    expect(oldAsstIdx).toBeGreaterThanOrEqual(0)
-    expect(oldAsstIdx).toBeLessThan(newUserIdx)
-    engine.dispose()
-  })
-
-  it('busy history folds RQ optimistic + msg-* onto one live user', () => {
-    const workspaceId = 'ws-dup2'
-    const agentSessionId = 'sess-dup2'
-    const commandPort = createHermesCommandPort({
-      workspaceId,
-      getMapping: async () => null,
-      putMapping: async (m) => m,
-      onActivityEvent: () => undefined,
-    })
-    const engine = createHermesAgentEngine({ workspaceId, commandPort })
-    hydrateHermesAgentEngine(
-      engine,
-      createHermesSessionSkeleton({ workspaceId, agentSessionId }),
-    )
-    ingestHermesUserPromptMessage({
-      engine,
-      workspaceId,
-      agentSessionId,
-      clientSubmitId: 'c-opt',
-      text: '不要让我做这做那的，自己想办法解决',
-      occurredAtUnixMs: 2_000,
-    })
-
-    mergeHermesHistoryWhileBusy({
-      engine,
-      workspaceId,
-      agentSessionId,
-      historyMessages: [
-        {
-          role: 'user',
-          clientId: 'c-opt',
-          client_id: 'c-opt',
-          __optimisticId: 'opt-c-opt',
-          content: [
-            { type: 'text', text: '不要让我做这做那的，自己想办法解决' },
-          ],
-          timestamp: 2_000,
+          turnId: 'turn-t1',
+          content: [{ type: 'text', text: '谢。' }],
+          timestamp: 2,
+          __daemon: true,
         },
         {
-          id: 'msg-u',
-          messageId: 'msg-u',
+          id: 'user:t2',
+          messageId: 'user:t2',
           role: 'user',
-          content: [
-            { type: 'text', text: '不要让我做这做那的，自己想办法解决' },
-          ],
-          timestamp: 2_001,
+          turnId: 'turn-t2',
+          clientSubmitId: 't2',
+          content: [{ type: 'text', text: '回答怎么这么简洁' }],
+          timestamp: 10,
+          __daemon: true,
         },
-      ],
-    })
-
-    const chat = selectHermesChatState(engine.getSnapshot(), agentSessionId, {
-      isSubmitting: true,
-    })
-    const userIds = chat.messages
-      .filter((m) => m.role === 'user')
-      .map((m) => m.id || m.messageId)
-    expect(userIds).toEqual(['user:c-opt'])
-    engine.dispose()
-  })
-
-  it('busy history folds user-only Workspace-prefixed echo onto optimistic', () => {
-    const workspaceId = 'ws-dup-ws'
-    const agentSessionId = 'sess-dup-ws'
-    const commandPort = createHermesCommandPort({
-      workspaceId,
-      getMapping: async () => null,
-      putMapping: async (m) => m,
-      onActivityEvent: () => undefined,
-    })
-    const engine = createHermesAgentEngine({ workspaceId, commandPort })
-    hydrateHermesAgentEngine(
-      engine,
-      createHermesSessionSkeleton({ workspaceId, agentSessionId }),
-    )
-    ingestHermesUserPromptMessage({
-      engine,
-      workspaceId,
-      agentSessionId,
-      clientSubmitId: 'c-ws',
-      text: '开始新一轮',
-      occurredAtUnixMs: 3_000,
-    })
-
-    // User-only gateway echo (no assistant yet) may fold by bare prompt.
-    mergeHermesHistoryWhileBusy({
-      engine,
-      workspaceId,
-      agentSessionId,
-      historyMessages: [
         {
-          id: 'msg-u',
-          messageId: 'msg-u',
-          role: 'user',
+          id: 'assistant:run_t2',
+          messageId: 'assistant:run_t2',
+          role: 'assistant',
+          turnId: 'turn-t2',
           content: [
             {
               type: 'text',
-              text: '[Workspace::v1: /home/ramon/proj]\n开始新一轮',
+              text: '你之前让我只回复一个字：好，我按那个风格延续了。',
             },
           ],
-          timestamp: 3_001,
+          timestamp: 11,
+          __daemon: true,
         },
       ],
     })
 
-    const chat = selectHermesChatState(engine.getSnapshot(), agentSessionId, {
-      isSubmitting: true,
-    })
-    const userIds = chat.messages
-      .filter((m) => m.role === 'user')
-      .map((m) => m.id || m.messageId)
-    expect(userIds).toEqual(['user:c-ws'])
-    expect(
-      chat.messages.find((m) => m.role === 'user')?.content?.[0],
-    ).toMatchObject({ text: '开始新一轮' })
+    const chat = selectHermesChatState(engine.getSnapshot(), agentSessionId)
+    expect(chat.messages.map((m) => m.id || m.messageId)).toEqual([
+      'user:t1',
+      'assistant:run_t1',
+      'user:t2',
+      'assistant:run_t2',
+    ])
+    const t1 = chat.messages.find(
+      (m) => (m.id || m.messageId) === 'assistant:run_t1',
+    )
+    expect(JSON.stringify(t1)).toContain('谢。')
+    expect(JSON.stringify(t1)).not.toContain('只回复一个字')
     engine.dispose()
   })
 })

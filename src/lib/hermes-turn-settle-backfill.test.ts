@@ -105,7 +105,7 @@ describe('hermes-turn-settle-backfill', () => {
     )
   })
 
-  it('skips history fetch when done.message already stamped final text', () => {
+  it('never fetches history on settle (daemon + SSE are SoT)', () => {
     expect(
       shouldFetchHistoryForSettle({
         doneCarriedFinalText: true,
@@ -117,13 +117,13 @@ describe('hermes-turn-settle-backfill', () => {
         doneCarriedFinalText: true,
         liveText: '',
       }),
-    ).toBe(true)
+    ).toBe(false)
     expect(
       shouldFetchHistoryForSettle({
         doneCarriedFinalText: false,
         liveText: 'partial',
       }),
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('reads plain text from content parts', () => {

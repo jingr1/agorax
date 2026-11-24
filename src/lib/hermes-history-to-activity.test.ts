@@ -736,4 +736,117 @@ describe('mergeHermesHistoryWithLiveByTurnIdentity', () => {
     )
     expect(oldAsstIndex).toBeLessThan(newUserIndex)
   })
+
+  it('does not length-win next-turn text into the previous reply when thinking sorts above user', () => {
+    const base = {
+      workspaceId: 'ws',
+      agentSessionId: 's',
+      sequence: 1,
+      version: 1,
+    }
+    // History already has both turns correctly.
+    const history: AgentActivityDurableMessage[] = [
+      {
+        ...base,
+        messageId: 'user:t1',
+        turnId: 'turn-t1',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '非常好', clientSubmitId: 't1' },
+        occurredAtUnixMs: 1,
+      },
+      {
+        ...base,
+        messageId: 'assistant:run_t1',
+        turnId: 'turn-t1',
+        role: 'assistant',
+        kind: 'text',
+        payload: { text: '谢。' },
+        occurredAtUnixMs: 2,
+      },
+      {
+        ...base,
+        messageId: 'user:t2',
+        turnId: 'turn-t2',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '回答怎么这么简洁', clientSubmitId: 't2' },
+        occurredAtUnixMs: 10,
+      },
+      {
+        ...base,
+        messageId: 'assistant:run_t2',
+        turnId: 'turn-t2',
+        role: 'assistant',
+        kind: 'text',
+        payload: {
+          text: '你之前让我只回复一个字：好，我按那个风格延续了。',
+        },
+        occurredAtUnixMs: 12,
+      },
+    ]
+    // Live overlay order bug: next-turn thinking+text appear above the new user.
+    const live: AgentActivityDurableMessage[] = [
+      {
+        ...base,
+        messageId: 'user:t1',
+        turnId: 'turn-t1',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '非常好', clientSubmitId: 't1' },
+        occurredAtUnixMs: 1,
+      },
+      {
+        ...base,
+        messageId: 'assistant:run_t1',
+        turnId: 'turn-t1',
+        role: 'assistant',
+        kind: 'text',
+        payload: { text: '谢。' },
+        occurredAtUnixMs: 2,
+      },
+      {
+        ...base,
+        messageId: 'assistant:run_t2:thinking',
+        turnId: 'turn-t2',
+        role: 'assistant_thinking',
+        kind: 'reasoning',
+        payload: {
+          text: '你之前让我只回复一个字：好，我按那个风格延续了。',
+        },
+        occurredAtUnixMs: 10,
+      },
+      {
+        ...base,
+        messageId: 'assistant:run_t2',
+        turnId: 'turn-t2',
+        role: 'assistant',
+        kind: 'text',
+        payload: {
+          text: '你之前让我只回复一个字：好，我按那个风格延续了。',
+        },
+        occurredAtUnixMs: 11,
+      },
+      {
+        ...base,
+        messageId: 'user:t2',
+        turnId: 'turn-t2',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '回答怎么这么简洁', clientSubmitId: 't2' },
+        occurredAtUnixMs: 10,
+      },
+    ]
+    const merged = mergeHermesHistoryWithLiveByTurnIdentity({
+      workspaceId: 'ws',
+      agentSessionId: 's',
+      history,
+      live,
+    })
+    const t1 = merged.find((row) => row.messageId === 'assistant:run_t1')
+    const t2 = merged.find((row) => row.messageId === 'assistant:run_t2')
+    expect(t1?.payload.text).toBe('谢。')
+    expect(String(t1?.payload.text)).not.toContain('只回复一个字')
+    expect(t2?.payload.text).toContain('只回复一个字')
+  })
 })

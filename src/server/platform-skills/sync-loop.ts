@@ -138,7 +138,10 @@ function fingerprintDirectory(directory: string): string {
         }
         if (!entry.isFile()) continue
         files += 1
-        if (files > 512) throw new Error('Skill package exceeds file or size limits')
+        if (files > 512)
+          throw new Error(
+            `Skill package exceeds file or size limits (${files} files; max 512): ${directory}`,
+          )
         const file = fs.lstatSync(full)
         parts.push(`${relative}:${file.mtimeMs}:${file.size}`)
       }

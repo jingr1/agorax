@@ -257,6 +257,8 @@ import { Route as ApiRoomsRoomIdPendingTurnsTurnIdDismissRouteImport } from './r
 import { Route as ApiRoomsRoomIdPendingTurnsTurnIdAnswerRouteImport } from './routes/api/rooms/$roomId/pending-turns/$turnId/answer'
 import { Route as ApiRoomsRoomIdMessagesMessageIdInteractionResponseRouteImport } from './routes/api/rooms/$roomId/messages/$messageId/interaction-response'
 import { Route as ApiMissionsMissionIdTasksTaskIdRuntimeRouteImport } from './routes/api/missions/$missionId/tasks/$taskId/runtime'
+import { Route as ApiHermesEngineSessionSessionIdMessagesRouteImport } from './routes/api/hermes/engine/session/$sessionId/messages'
+import { Route as ApiHermesEngineSessionSessionIdDetailRouteImport } from './routes/api/hermes/engine/session/$sessionId/detail'
 import { Route as ApiAgentsAgentIdRunsRunIdInterruptRouteImport } from './routes/api/agents/$agentId/runs/$runId/interrupt'
 import { Route as ApiAgentsAgentIdEngineSessionSessionIdRouteImport } from './routes/api/agents/$agentId/engine/session/$sessionId'
 import { Route as ApiAgentsAgentIdInteractionsSessionIdTurnIdRequestIdRouteImport } from './routes/api/agents/$agentId/interactions/$sessionId/$turnId/$requestId'
@@ -1551,6 +1553,18 @@ const ApiMissionsMissionIdTasksTaskIdRuntimeRoute =
     path: '/api/missions/$missionId/tasks/$taskId/runtime',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiHermesEngineSessionSessionIdMessagesRoute =
+  ApiHermesEngineSessionSessionIdMessagesRouteImport.update({
+    id: '/api/hermes/engine/session/$sessionId/messages',
+    path: '/api/hermes/engine/session/$sessionId/messages',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiHermesEngineSessionSessionIdDetailRoute =
+  ApiHermesEngineSessionSessionIdDetailRouteImport.update({
+    id: '/api/hermes/engine/session/$sessionId/detail',
+    path: '/api/hermes/engine/session/$sessionId/detail',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiAgentsAgentIdRunsRunIdInterruptRoute =
   ApiAgentsAgentIdRunsRunIdInterruptRouteImport.update({
     id: '/api/agents/$agentId/runs/$runId/interrupt',
@@ -1873,6 +1887,8 @@ export interface FileRoutesByFullPath {
   '/api/runs/$sessionKey/$runId/abandon': typeof ApiRunsSessionKeyRunIdAbandonRoute
   '/api/agents/$agentId/engine/session/$sessionId': typeof ApiAgentsAgentIdEngineSessionSessionIdRouteWithChildren
   '/api/agents/$agentId/runs/$runId/interrupt': typeof ApiAgentsAgentIdRunsRunIdInterruptRoute
+  '/api/hermes/engine/session/$sessionId/detail': typeof ApiHermesEngineSessionSessionIdDetailRoute
+  '/api/hermes/engine/session/$sessionId/messages': typeof ApiHermesEngineSessionSessionIdMessagesRoute
   '/api/missions/$missionId/tasks/$taskId/runtime': typeof ApiMissionsMissionIdTasksTaskIdRuntimeRoute
   '/api/rooms/$roomId/messages/$messageId/interaction-response': typeof ApiRoomsRoomIdMessagesMessageIdInteractionResponseRoute
   '/api/rooms/$roomId/pending-turns/$turnId/answer': typeof ApiRoomsRoomIdPendingTurnsTurnIdAnswerRoute
@@ -2132,6 +2148,8 @@ export interface FileRoutesByTo {
   '/api/runs/$sessionKey/$runId/abandon': typeof ApiRunsSessionKeyRunIdAbandonRoute
   '/api/agents/$agentId/engine/session/$sessionId': typeof ApiAgentsAgentIdEngineSessionSessionIdRouteWithChildren
   '/api/agents/$agentId/runs/$runId/interrupt': typeof ApiAgentsAgentIdRunsRunIdInterruptRoute
+  '/api/hermes/engine/session/$sessionId/detail': typeof ApiHermesEngineSessionSessionIdDetailRoute
+  '/api/hermes/engine/session/$sessionId/messages': typeof ApiHermesEngineSessionSessionIdMessagesRoute
   '/api/missions/$missionId/tasks/$taskId/runtime': typeof ApiMissionsMissionIdTasksTaskIdRuntimeRoute
   '/api/rooms/$roomId/messages/$messageId/interaction-response': typeof ApiRoomsRoomIdMessagesMessageIdInteractionResponseRoute
   '/api/rooms/$roomId/pending-turns/$turnId/answer': typeof ApiRoomsRoomIdPendingTurnsTurnIdAnswerRoute
@@ -2395,6 +2413,8 @@ export interface FileRoutesById {
   '/api/runs/$sessionKey/$runId/abandon': typeof ApiRunsSessionKeyRunIdAbandonRoute
   '/api/agents/$agentId/engine/session/$sessionId': typeof ApiAgentsAgentIdEngineSessionSessionIdRouteWithChildren
   '/api/agents/$agentId/runs/$runId/interrupt': typeof ApiAgentsAgentIdRunsRunIdInterruptRoute
+  '/api/hermes/engine/session/$sessionId/detail': typeof ApiHermesEngineSessionSessionIdDetailRoute
+  '/api/hermes/engine/session/$sessionId/messages': typeof ApiHermesEngineSessionSessionIdMessagesRoute
   '/api/missions/$missionId/tasks/$taskId/runtime': typeof ApiMissionsMissionIdTasksTaskIdRuntimeRoute
   '/api/rooms/$roomId/messages/$messageId/interaction-response': typeof ApiRoomsRoomIdMessagesMessageIdInteractionResponseRoute
   '/api/rooms/$roomId/pending-turns/$turnId/answer': typeof ApiRoomsRoomIdPendingTurnsTurnIdAnswerRoute
@@ -2659,6 +2679,8 @@ export interface FileRouteTypes {
     | '/api/runs/$sessionKey/$runId/abandon'
     | '/api/agents/$agentId/engine/session/$sessionId'
     | '/api/agents/$agentId/runs/$runId/interrupt'
+    | '/api/hermes/engine/session/$sessionId/detail'
+    | '/api/hermes/engine/session/$sessionId/messages'
     | '/api/missions/$missionId/tasks/$taskId/runtime'
     | '/api/rooms/$roomId/messages/$messageId/interaction-response'
     | '/api/rooms/$roomId/pending-turns/$turnId/answer'
@@ -2918,6 +2940,8 @@ export interface FileRouteTypes {
     | '/api/runs/$sessionKey/$runId/abandon'
     | '/api/agents/$agentId/engine/session/$sessionId'
     | '/api/agents/$agentId/runs/$runId/interrupt'
+    | '/api/hermes/engine/session/$sessionId/detail'
+    | '/api/hermes/engine/session/$sessionId/messages'
     | '/api/missions/$missionId/tasks/$taskId/runtime'
     | '/api/rooms/$roomId/messages/$messageId/interaction-response'
     | '/api/rooms/$roomId/pending-turns/$turnId/answer'
@@ -3180,6 +3204,8 @@ export interface FileRouteTypes {
     | '/api/runs/$sessionKey/$runId/abandon'
     | '/api/agents/$agentId/engine/session/$sessionId'
     | '/api/agents/$agentId/runs/$runId/interrupt'
+    | '/api/hermes/engine/session/$sessionId/detail'
+    | '/api/hermes/engine/session/$sessionId/messages'
     | '/api/missions/$missionId/tasks/$taskId/runtime'
     | '/api/rooms/$roomId/messages/$messageId/interaction-response'
     | '/api/rooms/$roomId/pending-turns/$turnId/answer'
@@ -3392,6 +3418,8 @@ export interface RootRouteChildren {
   ApiRunsSessionKeyRunIdAbandonRoute: typeof ApiRunsSessionKeyRunIdAbandonRoute
   ApiAgentsAgentIdEngineSessionSessionIdRoute: typeof ApiAgentsAgentIdEngineSessionSessionIdRouteWithChildren
   ApiAgentsAgentIdRunsRunIdInterruptRoute: typeof ApiAgentsAgentIdRunsRunIdInterruptRoute
+  ApiHermesEngineSessionSessionIdDetailRoute: typeof ApiHermesEngineSessionSessionIdDetailRoute
+  ApiHermesEngineSessionSessionIdMessagesRoute: typeof ApiHermesEngineSessionSessionIdMessagesRoute
   ApiMissionsMissionIdTasksTaskIdRuntimeRoute: typeof ApiMissionsMissionIdTasksTaskIdRuntimeRoute
 }
 
@@ -5133,6 +5161,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiMissionsMissionIdTasksTaskIdRuntimeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/hermes/engine/session/$sessionId/messages': {
+      id: '/api/hermes/engine/session/$sessionId/messages'
+      path: '/api/hermes/engine/session/$sessionId/messages'
+      fullPath: '/api/hermes/engine/session/$sessionId/messages'
+      preLoaderRoute: typeof ApiHermesEngineSessionSessionIdMessagesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/hermes/engine/session/$sessionId/detail': {
+      id: '/api/hermes/engine/session/$sessionId/detail'
+      path: '/api/hermes/engine/session/$sessionId/detail'
+      fullPath: '/api/hermes/engine/session/$sessionId/detail'
+      preLoaderRoute: typeof ApiHermesEngineSessionSessionIdDetailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/agents/$agentId/runs/$runId/interrupt': {
       id: '/api/agents/$agentId/runs/$runId/interrupt'
       path: '/api/agents/$agentId/runs/$runId/interrupt'
@@ -5852,6 +5894,10 @@ const rootRouteChildren: RootRouteChildren = {
     ApiAgentsAgentIdEngineSessionSessionIdRouteWithChildren,
   ApiAgentsAgentIdRunsRunIdInterruptRoute:
     ApiAgentsAgentIdRunsRunIdInterruptRoute,
+  ApiHermesEngineSessionSessionIdDetailRoute:
+    ApiHermesEngineSessionSessionIdDetailRoute,
+  ApiHermesEngineSessionSessionIdMessagesRoute:
+    ApiHermesEngineSessionSessionIdMessagesRoute,
   ApiMissionsMissionIdTasksTaskIdRuntimeRoute:
     ApiMissionsMissionIdTasksTaskIdRuntimeRoute,
 }

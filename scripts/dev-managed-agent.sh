@@ -16,9 +16,11 @@ HOST="${AGORAX_MANAGED_AGENT_HOST:-127.0.0.1}"
 HEALTH_URL="http://${HOST}:${PORT}/health"
 DB_PATH="${AGORAX_AGENT_DB_PATH:-$ROOT/.agorax/agent.db}"
 FORCE=0
+REPLACE_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --force) FORCE=1 ;;
+    --replace-only) FORCE=1; REPLACE_ONLY=1 ;;
   esac
 done
 if [[ "${AGORAX_MANAGED_AGENT_REPLACE:-}" == "1" ]]; then
@@ -50,6 +52,22 @@ fi
 
 health_ok() {
   curl -fsS --max-time 1 "$HEALTH_URL" >/dev/null 2>&1
+}
+
+# Pre-bridge binaries still pass /health. GET on the POST-only hermes-bridge
+# route returns 405 when registered, 404 when the binary is too old.
+hermes_bridge_ok() {
+  local code
+  code=$(
+    curl -sS -o /dev/null -w '%{http_code}' --max-time 1 -X GET \
+      "http://${HOST}:${PORT}/v1/workspaces/hermes%3Adefault/hermes-bridge/sessions/_probe_/activity" \
+      2>/dev/null || echo 000
+  )
+  [[ "$code" == "405" ]]
+}
+
+daemon_ready() {
+  health_ok && hermes_bridge_ok
 }
 
 listener_pids() {
@@ -108,9 +126,14 @@ free_stale_listeners() {
   fi
 }
 
-if health_ok; then
-  echo "dev:managed-agent: healthy daemon already on ${HEALTH_URL} — skipping"
+if [[ "$FORCE" -ne 1 ]] && daemon_ready; then
+  echo "dev:managed-agent: healthy daemon (with hermes-bridge) already on ${HEALTH_URL} — skipping"
   exit 0
+fi
+
+if [[ "$FORCE" -ne 1 ]] && health_ok && ! hermes_bridge_ok; then
+  echo "dev:managed-agent: ${HEALTH_URL} ok but hermes-bridge missing — replacing stale daemon"
+  FORCE=1
 fi
 
 existing="$(listener_pids)"
@@ -129,8 +152,12 @@ if [[ -n "$existing" ]]; then
     exit 1
   fi
   if [[ "$ours" -eq 1 && "$FORCE" -ne 1 ]]; then
-    echo "dev:managed-agent: agorax-agentd already listening on :${PORT} (health not ready yet) — skipping"
-    echo "dev:managed-agent: pass --force to replace it"
+    if health_ok; then
+      echo "dev:managed-agent: agorax-agentd already listening on :${PORT} — skipping"
+    else
+      echo "dev:managed-agent: agorax-agentd already listening on :${PORT} (health not ready yet) — skipping"
+      echo "dev:managed-agent: pass --force to replace it"
+    fi
     exit 0
   fi
   if [[ "$FORCE" -eq 1 ]]; then
@@ -138,9 +165,21 @@ if [[ -n "$existing" ]]; then
   fi
 fi
 
+if [[ "$REPLACE_ONLY" -eq 1 ]]; then
+  echo "dev:managed-agent: listeners on :${PORT} cleared (--replace-only)"
+  exit 0
+fi
+
 export AGORAX_MANAGED_AGENT_HOST="$HOST"
 export AGORAX_MANAGED_AGENT_PORT="$PORT"
 export AGORAX_AGENT_DB_PATH="$DB_PATH"
+
+# Prefer a prebuilt binary when present — avoids multi-minute go run module fetches.
+BIN="$ROOT/.agorax/agorax-agentd"
+if [[ -x "$BIN" ]]; then
+  echo "dev:managed-agent: starting $BIN on ${HOST}:${PORT} (db=$DB_PATH)"
+  exec "$BIN"
+fi
 
 # shellcheck disable=SC1091
 source "$ROOT/scripts/ensure-go.sh"

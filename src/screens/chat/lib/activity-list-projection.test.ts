@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import type { AgentActivityMessage } from '@agorax/agent-activity-core'
 import {
   collapseAdjacentAssistantEchoes,
   foldAssistantsPerUserTurn,
   projectActivityMessagesToChat,
+  relocateTurnAssistantsAfterUser,
 } from './activity-list-projection'
 import type { ChatMessage } from '../types'
 
@@ -440,6 +442,275 @@ describe('projectActivityMessagesToChat', () => {
     expect(messages[1]?.content).toEqual([
       { type: 'thinking', thinking: reply },
       { type: 'text', text: reply },
+    ])
+  })
+})
+
+describe('relocateTurnAssistantsAfterUser', () => {
+  it('moves same-turn thinking/text that sorted above the new user back under it', () => {
+    const rows: AgentActivityMessage[] = [
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'user:c1',
+        turnId: 'turn-c1',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '旧问题' },
+        version: 1,
+        sequence: 1,
+        occurredAtUnixMs: 1,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run-1',
+        turnId: 'turn-c1',
+        role: 'assistant',
+        kind: 'text',
+        payload: { text: '旧答复' },
+        version: 2,
+        sequence: 2,
+        occurredAtUnixMs: 2,
+      },
+      // Same-ms overlay seed: assistant ids localeCompare before user:* —
+      // without relocate, new reply paints above the new question and again below.
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run-2:thinking',
+        turnId: 'turn-c2',
+        role: 'assistant_thinking',
+        kind: 'reasoning',
+        payload: { text: '新一轮思考也像答复' },
+        version: 0,
+        occurredAtUnixMs: 10,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'user:c2',
+        turnId: 'turn-c2',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '新问题' },
+        version: 0,
+        occurredAtUnixMs: 10,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run-2',
+        turnId: 'turn-c2',
+        role: 'assistant',
+        kind: 'text',
+        payload: { text: '新一轮答复' },
+        version: 0,
+        occurredAtUnixMs: 11,
+      },
+    ]
+    expect(relocateTurnAssistantsAfterUser(rows).map((r) => r.messageId)).toEqual([
+      'user:c1',
+      'assistant:run-1',
+      'user:c2',
+      'assistant:run-2:thinking',
+      'assistant:run-2',
+    ])
+    const chat = projectActivityMessagesToChat(rows)
+    expect(chat.map((m) => m.messageId ?? m.id)).toEqual([
+      'user:c1',
+      'assistant:run-1',
+      'user:c2',
+      'assistant:run-2',
+    ])
+    expect(chat[1]?.content).toEqual([{ type: 'text', text: '旧答复' }])
+    expect(chat[3]?.content).toEqual([
+      { type: 'thinking', thinking: '新一轮思考也像答复' },
+      { type: 'text', text: '新一轮答复' },
+    ])
+  })
+
+  it('does not absorb next-turn thinking into a prior empty assistant:run shell', () => {
+    // Repro from /chat/4b650f5f-…: leftover live run host under the previous
+    // user + new thinking sorted above the new user → "好" painted twice.
+    const rows: AgentActivityMessage[] = [
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'user:old',
+        turnId: 'turn-old',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '为啥呢？' },
+        version: 1,
+        sequence: 1,
+        occurredAtUnixMs: 1,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run_leftover',
+        turnId: 'turn-old',
+        role: 'assistant',
+        kind: 'text',
+        status: 'streaming',
+        payload: { text: '' },
+        version: 2,
+        sequence: 2,
+        occurredAtUnixMs: 2,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'msg-2224',
+        turnId: 'turn-old',
+        role: 'assistant',
+        kind: 'text',
+        status: 'completed',
+        payload: { text: '旧答复正文' },
+        version: 3,
+        sequence: 3,
+        occurredAtUnixMs: 3,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run_new:thinking',
+        turnId: 'turn-new',
+        role: 'assistant_thinking',
+        kind: 'reasoning',
+        payload: { text: '好' },
+        version: 0,
+        occurredAtUnixMs: 10,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'user:new',
+        turnId: 'turn-new',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '只回复一个字：好' },
+        version: 0,
+        occurredAtUnixMs: 10,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run_new',
+        turnId: 'turn-new',
+        role: 'assistant',
+        kind: 'text',
+        payload: { text: '好' },
+        version: 0,
+        occurredAtUnixMs: 11,
+      },
+    ]
+    const chat = projectActivityMessagesToChat(rows)
+    const ids = chat.map((m) => m.messageId ?? m.id)
+    // Prefer the completed body host over the empty streaming leftover shell.
+    expect(ids).toEqual([
+      'user:old',
+      'msg-2224',
+      'user:new',
+      'assistant:run_new',
+    ])
+    const oldHost = chat[1]!
+    const newHost = chat[3]!
+    expect(JSON.stringify(oldHost)).not.toContain('"好"')
+    expect(oldHost.content).toEqual([{ type: 'text', text: '旧答复正文' }])
+    expect(newHost.content).toEqual([
+      { type: 'thinking', thinking: '好' },
+      { type: 'text', text: '好' },
+    ])
+  })
+
+  it('does not replace prior reply when next-turn longer text sorts above user', () => {
+    const rows: AgentActivityMessage[] = [
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'user:t1',
+        turnId: 'turn-t1',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '你好吗？' },
+        version: 1,
+        sequence: 1,
+        occurredAtUnixMs: 1,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:uuid-shell',
+        turnId: 'turn-t1',
+        role: 'assistant',
+        kind: 'text',
+        status: 'streaming',
+        payload: { text: '' },
+        version: 2,
+        sequence: 2,
+        occurredAtUnixMs: 2,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run_t1',
+        turnId: 'turn-t1',
+        role: 'assistant',
+        kind: 'text',
+        status: 'completed',
+        payload: { text: '好。' },
+        version: 3,
+        sequence: 3,
+        occurredAtUnixMs: 3,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run_t2:thinking',
+        turnId: 'turn-t2',
+        role: 'assistant_thinking',
+        kind: 'reasoning',
+        payload: { text: '等待你的下一步指令。' },
+        version: 0,
+        occurredAtUnixMs: 10,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'assistant:run_t2',
+        turnId: 'turn-t2',
+        role: 'assistant',
+        kind: 'text',
+        payload: { text: '等待你的下一步指令。' },
+        version: 0,
+        occurredAtUnixMs: 11,
+      },
+      {
+        workspaceId: 'ws',
+        agentSessionId: 's',
+        messageId: 'user:t2',
+        turnId: 'turn-t2',
+        role: 'user',
+        kind: 'text',
+        payload: { text: '在干嘛？' },
+        version: 0,
+        occurredAtUnixMs: 10,
+      },
+    ]
+    const chat = projectActivityMessagesToChat(rows)
+    expect(chat.map((m) => m.messageId ?? m.id)).toEqual([
+      'user:t1',
+      'assistant:run_t1',
+      'user:t2',
+      'assistant:run_t2',
+    ])
+    expect(chat[1]?.content).toEqual([{ type: 'text', text: '好。' }])
+    expect(JSON.stringify(chat[1])).not.toContain('等待你的下一步指令')
+    expect(chat[3]?.content).toEqual([
+      { type: 'thinking', thinking: '等待你的下一步指令。' },
+      { type: 'text', text: '等待你的下一步指令。' },
     ])
   })
 })

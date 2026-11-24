@@ -178,6 +178,21 @@ export function createAgentActivityOptimisticMessageOverlay(): AgentActivityOpti
         const turnId = entry.message.turnId?.trim() ?? "";
         if (!turnId) continue;
         const submitId = clientSubmitId(entry.message);
+        // Hermes: live assistant:runId stays terminal while gateway history lands
+        // as msg-N under the same turnId. Drop the live shell once canonical has
+        // any terminal assistant for that turn — otherwise the empty run host
+        // absorbs the *next* turn's thinking above the new question.
+        const turnHasCanonicalAssistant = normalized.some(
+          (message) =>
+            message.turnId === turnId &&
+            (message.role === "assistant" ||
+              message.role === "assistant_thinking") &&
+            isTerminalMessage(message)
+        );
+        if (turnHasCanonicalAssistant) {
+          optimistic.delete(key);
+          continue;
+        }
         if (
           !effectiveTurnIds.has(turnId) &&
           (submitId === null || !effectiveClientSubmitIds.has(submitId))

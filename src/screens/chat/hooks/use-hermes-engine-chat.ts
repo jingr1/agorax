@@ -15,6 +15,7 @@ import {
   selectEngineInteractionResponse,
   selectEngineInteractionsForSession,
   selectSessionIsSubmitting,
+  selectSessionMessages,
   type InteractionResponseState,
 } from '@agorax/agent-activity-core'
 import {
@@ -34,7 +35,10 @@ export function useHermesEngineChatState(input: {
   profileName?: string | null
   /** UI optimistic sending — OR'd with Engine selectSessionIsSubmitting. */
   isSubmitting?: boolean
-  /** Gateway history — reconciled into Engine when idle. */
+  /**
+   * Gateway/RQ history. Daemon-canonical pages do not replace Engine (Tutti
+   * authoritative reconcile owns that). External msg-* may still identity-merge.
+   */
   historyMessages?: readonly ChatMessage[]
   historyReady?: boolean
 }) {
@@ -135,26 +139,28 @@ export function useHermesEngineChatState(input: {
     [runtime],
   )
 
-  const historyRevisionRef = useRef(0)
+  // Cold / reconnect: Tutti session reconcile (executor), not RQ whole-page
+  // replace on turnBusy=false.
+  useEffect(() => {
+    const sid = agentSessionId
+    if (!sid || input.historyReady === false) return
+    runtime.ensureSessionHydrated(sid)
+    const live = selectSessionMessages(engineSnapshot, sid)
+    if (live.length > 0) return
+    runtime.requestSessionReconcile(sid, {
+      needsMessages: true,
+      needsState: true,
+    })
+  }, [agentSessionId, engineSnapshot, input.historyReady, runtime])
+
+  // External weak-id RQ only — daemon-canonical history no-ops inside runtime.
   useEffect(() => {
     const sid = agentSessionId
     if (!sid || input.historyReady === false) return
     if (!input.historyMessages) return
-    historyRevisionRef.current += 1
     runtime.ensureSessionHydrated(sid)
-    runtime.reconcileHistory(
-      sid,
-      input.historyMessages,
-      historyRevisionRef.current,
-    )
-  }, [
-    agentSessionId,
-    input.historyMessages,
-    input.historyReady,
-    runtime,
-    // Re-attempt after settle when a previous call no-op'd on turnBusy.
-    chatState.turnBusy,
-  ])
+    runtime.reconcileHistory(sid, input.historyMessages)
+  }, [agentSessionId, input.historyMessages, input.historyReady, runtime])
 
   // Drop open-turn nonce only when *this* remembered turn settles.
   // Clearing on any settled latestTurn races the gap after ingest (remembered

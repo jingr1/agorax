@@ -128,7 +128,15 @@ describe('hermesSseToActivityEvents', () => {
       runId: 'run-x',
       state: 'complete',
     })
-    expect(done.events[0]).toMatchObject({
+    expect(
+      done.events.some(
+        (event) =>
+          event.eventType === 'message_delta' &&
+          (event.data as { status?: string }).status === 'completed' &&
+          (event.data as { messageId?: string }).messageId === 'assistant:run-x',
+      ),
+    ).toBe(true)
+    expect(done.events.at(-1)).toMatchObject({
       eventType: 'turn_update',
       data: {
         activeTurnId: 'turn-1',
@@ -151,7 +159,7 @@ describe('hermesSseToActivityEvents', () => {
       state: 'error',
       errorMessage: 'boom',
     })
-    expect(failed.events[0]).toMatchObject({
+    expect(failed.events.at(-1)).toMatchObject({
       eventType: 'turn_update',
       data: {
         activeTurnId: null,
@@ -166,7 +174,7 @@ describe('hermesSseToActivityEvents', () => {
       runId: 'run-int',
       state: 'interrupted',
     })
-    expect(interrupted.events[0]).toMatchObject({
+    expect(interrupted.events.at(-1)).toMatchObject({
       eventType: 'turn_update',
       data: {
         activeTurnId: null,

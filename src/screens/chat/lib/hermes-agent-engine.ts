@@ -26,6 +26,8 @@ import {
   type AgentSessionActivateEffectResult,
   type AgentSessionEngine,
   type AgentSessionEngineState,
+  type EngineEffectOptions,
+  type EngineExtensionCommand,
   type EngineTypedCommandPort,
 } from '@agorax/agent-activity-core'
 import {
@@ -42,15 +44,11 @@ import {
   systemNoticeText,
   visibleErrorText,
 } from './activity-message-mapper'
+import { hermesSettledTurnUpdate } from '@/lib/hermes-turn-settle-backfill'
 import {
-  assistantPlainTextFromHistoryMessage,
-  baselineAfterOpenTurnUser,
-  hermesAssistantTextStampDelta,
-  hermesSettledTurnUpdate,
-  pickAuthoritativeAssistantText,
-  shouldFetchHistoryForSettle,
-  shouldStampAssistantText,
-} from '@/lib/hermes-turn-settle-backfill'
+  historyCoversLiveDisplayIds,
+  isDaemonCanonicalHistory,
+} from '@/lib/hermes-display-sot'
 import {
   createHermesActivityAdapterState,
   hermesSseToActivityEvents,
@@ -107,6 +105,23 @@ export type HermesCommandPortOptions = {
     requestedSessionKey: string
     resolvedSessionKey: string
   }) => boolean
+  /**
+   * Tutti extension commands (`session/reconcile`, …). Wired to
+   * `createAgentActivitySessionReconcileExecutor` in hermes-chat-runtime.
+   */
+  executeExtensionCommand?: (
+    command: EngineExtensionCommand,
+    options?: EngineEffectOptions,
+  ) => Promise<unknown>
+  /**
+   * After settle, request Tutti authoritative reconcile with daemon
+   * `historyRevision` from done (fence). Runtime dispatches
+   * `session/reconcileRequested`.
+   */
+  onSettledAuthoritativeReconcile?: (input: {
+    agentSessionId: string
+    historyRevision: number
+  }) => void
 }
 
 function unavailable(name: string): () => Promise<never> {
@@ -400,8 +415,7 @@ export function createHermesCommandPort(
           let streamPhase: 'none' | 'settling' | 'settled' = 'none'
           let settledOutcome: AgentActivityTurn['outcome'] = null
           let settledError: string | undefined
-          /** True when a success `done` carried body text (skip history stamp). */
-          let doneCarriedFinalText = false
+          let settledHistoryRevision = 0
           const now = () => Date.now()
 
           const ingestFrame = async (
@@ -413,14 +427,15 @@ export function createHermesCommandPort(
               (typeof data.run_id === 'string' && data.run_id.trim()) ||
               null
             if (payloadRun) hermesRunId = payloadRun
-
             if (event === 'done') {
-              const doneText = assistantPlainTextFromHistoryMessage(
-                data.message as
-                  | { role?: string; content?: unknown; text?: unknown }
-                  | undefined,
-              )
-              if (doneText) doneCarriedFinalText = true
+              const rev = data.historyRevision
+              if (
+                typeof rev === 'number' &&
+                Number.isSafeInteger(rev) &&
+                rev > 0
+              ) {
+                settledHistoryRevision = rev
+              }
             }
 
             const ctx = {
@@ -584,8 +599,9 @@ export function createHermesCommandPort(
               settledOutcome === 'canceled' ||
               settledOutcome === 'interrupted')
 
-          // Tutti: success path stays in settling until authoritative backfill,
-          // then emits settled. Failures already settled from the adapter.
+          // Tutti-aligned settle: SSE done.message stamps the live host; daemon
+          // persist revision (done.historyRevision) fences authoritative
+          // replace via session reconcile executor — never RQ length-win.
           if (!terminalFailed) {
             if (streamPhase === 'none') {
               const { state: nextAdapter, events } = hermesSseToActivityEvents(
@@ -607,72 +623,6 @@ export function createHermesCommandPort(
               settledOutcome = settledOutcome ?? 'completed'
             }
 
-            // History stamp only when done.message did not carry final text
-            // (avoid settle-path latency on the common complete path).
-            if (
-              shouldFetchHistoryForSettle({
-                doneCarriedFinalText,
-                liveText: adapter.lastText,
-              })
-            ) {
-              try {
-                const historySessionKey = resolvedGateway || agentSessionId
-                const query = new URLSearchParams({
-                  limit: '80',
-                  sessionKey: historySessionKey,
-                  friendlyId: historySessionKey,
-                })
-                if (profileName) query.set('profile', profileName)
-                const historyRes = await fetch(
-                  `/api/history?${query.toString()}`,
-                  { signal: input.signal },
-                )
-                if (historyRes.ok) {
-                  const historyJson = (await historyRes.json()) as {
-                    messages?: Array<{
-                      role?: string
-                      content?: unknown
-                      text?: unknown
-                    }>
-                  }
-                  const historyMessages = historyJson.messages ?? []
-                  // Only assistants after *this* turn's user. If history has not
-                  // persisted the open user yet, skip stamp — falling back to
-                  // "last user in page" re-hosted the previous reply under the
-                  // new prompt (length-wins made it stick).
-                  const baseline = baselineAfterOpenTurnUser(historyMessages, {
-                    clientSubmitId,
-                    userText: message,
-                  })
-                  const authText =
-                    baseline === null
-                      ? ''
-                      : pickAuthoritativeAssistantText(
-                          historyMessages,
-                          baseline,
-                        )
-                  if (
-                    shouldStampAssistantText(adapter.lastText, authText) &&
-                    adapter.assistantMessageId
-                  ) {
-                    options.onActivityEvent(
-                      hermesAssistantTextStampDelta({
-                        workspaceId: options.workspaceId,
-                        agentSessionId,
-                        turnId,
-                        messageId: adapter.assistantMessageId,
-                        text: authText,
-                        nowUnixMs: now(),
-                      }),
-                    )
-                    adapter = { ...adapter, lastText: authText }
-                  }
-                }
-              } catch {
-                // Best-effort; settle even if history is unavailable.
-              }
-            }
-
             const settleTs = now()
             options.onActivityEvent(
               hermesSettledTurnUpdate({
@@ -686,6 +636,10 @@ export function createHermesCommandPort(
             )
             streamPhase = 'settled'
             settledOutcome = settledOutcome ?? 'completed'
+            options.onSettledAuthoritativeReconcile?.({
+              agentSessionId,
+              historyRevision: settledHistoryRevision,
+            })
           }
 
           const ts = now()
@@ -915,7 +869,10 @@ export function createHermesCommandPort(
         }
       },
     },
-    execute: unavailable('execute'),
+    execute: options.executeExtensionCommand
+      ? (command, effectOptions) =>
+          options.executeExtensionCommand!(command, effectOptions)
+      : unavailable('execute'),
   }
 }
 
@@ -947,86 +904,26 @@ export type HermesHistoryReconcileCoordinator = {
 }
 
 /**
- * Mid-turn history reconcile. Identity-stamp live messageIds onto gateway
- * history (same as idle path), then replace the bucket — never raw
- * `message/snapshotReceived` merge, which left `user:<clientSubmitId>` beside
- * `msg-*` echoes (double user + double assistant in the list).
+ * Open-turn history must not touch the Engine bucket.
+ * Gateway SSE overlay owns the live turn; merging history while busy was the
+ * root of cross-turn length-win (prior reply replaced by the next longer body).
+ * Idle reconcile applies the daemon snapshot after settle.
  */
-export function mergeHermesHistoryWhileBusy(input: {
+export function mergeHermesHistoryWhileBusy(_input: {
   engine: AgentSessionEngine
   workspaceId: string
   agentSessionId: string
   historyMessages: readonly ChatMessage[]
-  /** Bucket ∪ overlay projection; omit to use durable bucket only. */
   liveMessages?: readonly AgentActivityMessage[]
 }): number {
-  const agentSessionId = input.agentSessionId.trim()
-  const workspaceId = input.workspaceId.trim() || 'default'
-  if (!agentSessionId) return 0
-  if (!selectEngineSession(input.engine.getSnapshot(), agentSessionId)) {
-    hydrateHermesAgentEngine(
-      input.engine,
-      createHermesSessionSkeleton({ workspaceId, agentSessionId }),
-    )
-  }
-  const snap = input.engine.getSnapshot()
-  const liveSession = selectEngineSession(snap, agentSessionId)
-  const activeTurn = selectEngineActiveTurn(snap, agentSessionId)
-  const latestTurn = selectEngineLatestTurn(snap, agentSessionId)
-  const session = normalizeAgentActivitySession({
-    ...(liveSession ??
-      createHermesSessionSkeleton({ workspaceId, agentSessionId })),
-    activeTurn: activeTurn ?? null,
-    activeTurnId: activeTurn?.turnId ?? liveSession?.activeTurnId ?? null,
-    latestTurn:
-      latestTurn && latestTurn.turnId !== activeTurn?.turnId
-        ? latestTurn
-        : null,
-      latestTurnInteractions: selectEngineInteractionsForSession(snap, agentSessionId).filter((interaction) => interaction.turnId === latestTurn?.turnId),
-      pendingInteractions: selectEngineInteractionsForSession(snap, agentSessionId).filter((interaction) => interaction.status === 'pending'),
-  })
-  const historyMapped =
-    input.historyMessages.length === 0
-      ? []
-      : hermesHistoryMessagesToActivity({
-          workspaceId,
-          agentSessionId,
-          messages: input.historyMessages,
-        })
-  const live =
-    input.liveMessages ?? selectSessionMessages(snap, agentSessionId)
-  const messages = mergeHermesHistoryWithLiveByTurnIdentity({
-    workspaceId,
-    agentSessionId,
-    history: historyMapped,
-    live,
-  })
-  const turns = [
-    ...(activeTurn ? [activeTurn] : []),
-    ...(latestTurn && latestTurn.turnId !== activeTurn?.turnId
-      ? [latestTurn]
-      : []),
-  ]
-  const historyRevision = Math.max(
-    1,
-    messages.reduce((max, row) => Math.max(max, row.version), 0),
-  )
-  input.engine.dispatch({
-    type: 'session/historyAuthoritativeSnapshotReceived',
-    workspaceId,
-    agentSessionId,
-    session,
-    childSessions: [],
-    turns,
-    messages,
-    historyRevision,
-  })
-  return messages.length
+  return 0
 }
 
 /**
- * Authoritative history → Engine message bucket + overlay (managed homology).
- * Call when history is idle (not mid-turn) so replace cannot wipe live rows.
+ * Authoritative history → Engine message bucket + overlay.
+ *
+ * Daemon-canonical pages replace the bucket outright (Tutti homology).
+ * External weak-id gateway pages still identity-merge for CLI/external only.
  */
 export function reconcileHermesHistoryIntoEngine(input: {
   engine: AgentSessionEngine
@@ -1036,8 +933,8 @@ export function reconcileHermesHistoryIntoEngine(input: {
   historyMessages: readonly ChatMessage[]
   historyRevision?: number
   /**
-   * Overlay projection (preferred). Live assistant deltas live here, not in
-   * the Engine bucket — stale history must not wipe them.
+   * Overlay projection. Used only for external weak-id merge; daemon pages
+   * replace without reading live bodies.
    */
   projectedMessages?: readonly AgentActivityMessage[]
 }): number {
@@ -1056,12 +953,22 @@ export function reconcileHermesHistoryIntoEngine(input: {
     )
   }
   const live = selectEngineSession(input.engine.getSnapshot(), agentSessionId)
-  // historyAuthoritative requires iterable interaction arrays on session.
   const session = normalizeAgentActivitySession({
     ...(live ??
       createHermesSessionSkeleton({ workspaceId, agentSessionId })),
-    latestTurnInteractions: selectEngineInteractionsForSession(input.engine.getSnapshot(), agentSessionId).filter((interaction) => interaction.turnId === selectEngineLatestTurn(input.engine.getSnapshot(), agentSessionId)?.turnId),
-    pendingInteractions: selectEngineInteractionsForSession(input.engine.getSnapshot(), agentSessionId).filter((interaction) => interaction.status === 'pending'),
+    latestTurnInteractions: selectEngineInteractionsForSession(
+      input.engine.getSnapshot(),
+      agentSessionId,
+    ).filter(
+      (interaction) =>
+        interaction.turnId ===
+        selectEngineLatestTurn(input.engine.getSnapshot(), agentSessionId)
+          ?.turnId,
+    ),
+    pendingInteractions: selectEngineInteractionsForSession(
+      input.engine.getSnapshot(),
+      agentSessionId,
+    ).filter((interaction) => interaction.status === 'pending'),
   })
 
   const historyMapped = hermesHistoryMessagesToActivity({
@@ -1069,18 +976,35 @@ export function reconcileHermesHistoryIntoEngine(input: {
     agentSessionId,
     messages: input.historyMessages,
   })
+
+  const daemonCanonical = isDaemonCanonicalHistory(input.historyMessages)
   const current =
     input.projectedMessages ??
     selectSessionMessages(input.engine.getSnapshot(), agentSessionId)
-  // Turn-ordinal identity stamp (contract §4): live owns messageId for the
-  // paired turn; history fills older gaps / payload. Never append msg-N beside
-  // assistant:<runId> for the same user-turn.
-  const messages = mergeHermesHistoryWithLiveByTurnIdentity({
-    workspaceId,
-    agentSessionId,
-    history: historyMapped,
-    live: current,
-  })
+
+  // Daemon SoT: replace only when the page covers live display hosts.
+  // busy→idle often re-runs reconcile with stale RQ (pre-turn / assistant-only
+  // append). Blind replace wiped user:<submit> and left the new reply folded
+  // onto the previous assistant until a later refetch. Empty history must not
+  // clobber a non-empty live Engine either.
+  let messages: typeof historyMapped
+  if (input.historyMessages.length === 0) {
+    if (current.length > 0) return 0
+    messages = historyMapped
+  } else if (daemonCanonical) {
+    if (!historyCoversLiveDisplayIds(historyMapped, current)) {
+      return 0
+    }
+    messages = historyMapped
+  } else {
+    messages = mergeHermesHistoryWithLiveByTurnIdentity({
+      workspaceId,
+      agentSessionId,
+      history: historyMapped,
+      live: current,
+    })
+  }
+
   const turns = [
     ...(session.activeTurn ? [session.activeTurn] : []),
     ...(session.latestTurn &&

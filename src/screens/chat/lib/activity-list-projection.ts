@@ -55,6 +55,14 @@ function hostMessageId(family: readonly AgentActivityMessage[]): string {
       return id.replace(/:thinking$/, '').replace(/:text:\d+$/, '')
     }
   }
+  // Prefer a text host that already carries body — empty streaming
+  // assistant:<workspaceUuid> shells must not win over assistant:run_*.
+  for (const message of family) {
+    if (message.kind !== 'text' || !isAssistantLaneRole(message.role)) continue
+    const text =
+      typeof message.payload.text === 'string' ? message.payload.text.trim() : ''
+    if (text) return message.messageId
+  }
   for (const message of family) {
     if (message.kind === 'text' && isAssistantLaneRole(message.role)) {
       return message.messageId
@@ -193,6 +201,59 @@ function mapSingleton(message: AgentActivityMessage): ChatMessage {
 }
 
 /**
+ * Overlay seeds often share the user prompt's millisecond. Without a role
+ * tie-break, `assistant:*` sorts before `user:*` and splits one turn across the
+ * new question (thinking/reply above + reply below). Pull same-turn assistant
+ * lanes to sit after their user before family fold.
+ */
+export function relocateTurnAssistantsAfterUser(
+  rows: readonly AgentActivityMessage[],
+): AgentActivityMessage[] {
+  const userIndexByTurn = new Map<string, number>()
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]
+    if (!row || row.role !== 'user') continue
+    const turnId = row.turnId?.trim()
+    if (turnId) userIndexByTurn.set(turnId, i)
+  }
+  if (userIndexByTurn.size === 0) return rows.slice()
+
+  const held = new Map<string, AgentActivityMessage[]>()
+  const out: Array<AgentActivityMessage | null> = rows.map((row) => row)
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]!
+    if (row.role === 'user' || row.role === 'system') continue
+    const turnId = row.turnId?.trim()
+    if (!turnId) continue
+    const userIndex = userIndexByTurn.get(turnId)
+    if (userIndex === undefined || i > userIndex) continue
+    const bucket = held.get(turnId) ?? []
+    bucket.push(row)
+    held.set(turnId, bucket)
+    out[i] = null
+  }
+  if (held.size === 0) return rows.slice()
+
+  const rebuilt: AgentActivityMessage[] = []
+  for (let i = 0; i < out.length; i += 1) {
+    const row = out[i]
+    if (!row) continue
+    rebuilt.push(row)
+    if (row.role !== 'user') continue
+    const turnId = row.turnId?.trim()
+    if (!turnId) continue
+    const pending = held.get(turnId)
+    if (!pending || pending.length === 0) continue
+    rebuilt.push(...pending)
+    held.delete(turnId)
+  }
+  for (const leftover of held.values()) {
+    rebuilt.push(...leftover)
+  }
+  return rebuilt
+}
+
+/**
  * Project Engine/overlay Activity rows to list ChatMessages.
  * User/system stay 1:1; assistant-lane rows that share a turn/run fold into one host.
  */
@@ -200,10 +261,11 @@ export function projectActivityMessagesToChat(
   sessionMessages: readonly AgentActivityMessage[],
   streamingMessageId: string | null = null,
 ): ChatMessage[] {
+  const ordered = relocateTurnAssistantsAfterUser(sessionMessages)
   const out: ChatMessage[] = []
   let index = 0
-  while (index < sessionMessages.length) {
-    const message = sessionMessages[index]!
+  while (index < ordered.length) {
+    const message = ordered[index]!
     if (message.role === 'user' || message.role === 'system') {
       out.push(mapSingleton(message))
       index += 1
@@ -219,8 +281,8 @@ export function projectActivityMessagesToChat(
     const family: AgentActivityMessage[] = [message]
     const familyTurnId = message.turnId?.trim() || null
     let cursor = index + 1
-    while (cursor < sessionMessages.length) {
-      const next = sessionMessages[cursor]!
+    while (cursor < ordered.length) {
+      const next = ordered[cursor]!
       if (next.role === 'user' || next.role === 'system') break
       const nextKey = assistantActivityFamilyKey(next)
       if (nextKey === familyKey) {
@@ -529,12 +591,41 @@ function isTextlessAssistantFragment(message: ChatMessage): boolean {
   return toolCallsFromChatMessage(message).length > 0
 }
 
+function chatTurnId(message: ChatMessage): string {
+  return typeof (message as { turnId?: unknown }).turnId === 'string'
+    ? (message as { turnId: string }).turnId.trim()
+    : ''
+}
+
 /**
- * Contract §2/§4: one assistant list host per user turn. Thinking-only rows
- * that landed beside the reply (different Activity family / turnId) must fold
- * back — otherwise MessageItem paints a stray Activity under the bubble.
- *
- * Never concatenate two text-bearing hosts from different durable turns.
+ * True when a textless fragment's turnId belongs to a user that appears later
+ * in the list — i.e. next-turn thinking that sorted above the new question.
+ */
+function fragmentBelongsToLaterUser(
+  fragment: ChatMessage,
+  messages: readonly ChatMessage[],
+  fromIndex: number,
+): boolean {
+  const turnId = chatTurnId(fragment)
+  if (!turnId) return false
+  for (let i = fromIndex + 1; i < messages.length; i += 1) {
+    const row = messages[i]
+    if (!row || row.role !== 'user') continue
+    const userTurn = chatTurnId(row)
+    if (userTurn && userTurn === turnId) return true
+    const id = String(row.messageId ?? row.id ?? '').trim()
+    if (id.startsWith('user:') && turnId === `turn-${id.slice('user:'.length)}`) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Contract §2/§4: one assistant list host per user turn. Same-turn thinking
+ * orphans may fold into the reply host. Next-turn thinking/text that landed
+ * above the new user must not be absorbed into a prior shell — that replaced
+ * the previous reply body with the longer next-turn string.
  */
 export function foldAssistantsPerUserTurn(
   messages: readonly ChatMessage[],
@@ -558,9 +649,10 @@ export function foldAssistantsPerUserTurn(
       const groupKey = assistantFoldKey(group[0]!)
       const nextKey = assistantFoldKey(next)
       if (groupKey && nextKey && groupKey !== nextKey) {
-        // Different turns. Only absorb a textless thinking/tool fragment into
-        // the current host — never another reply body.
+        // Never mash two reply bodies from different turns.
+        if (assistantBodyText(next).trim()) break
         if (!isTextlessAssistantFragment(next)) break
+        if (fragmentBelongsToLaterUser(next, messages, cursor)) break
       }
       group.push(next)
       cursor += 1

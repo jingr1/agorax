@@ -1056,6 +1056,9 @@ export const Route = createFileRoute('/api/send-stream')({
                     : ''
                 // Display-canonical SoT → daemon agent.db (Managed-homologous).
                 // Gateway state.db stays execution-only for Agorax-initiated turns.
+                // Persist user only here — never seed assistant:<workspaceRunId>
+                // empty streaming shells (those orphaned rows later fold/replace
+                // the prior turn's reply when the next thinking sorts above).
                 if (clientSubmitId) {
                   void persistHermesTurnToDaemon({
                     agentSessionId: sessionKey,
@@ -1063,9 +1066,6 @@ export const Route = createFileRoute('/api/send-stream')({
                     clientSubmitId,
                     userText:
                       typeof body.message === 'string' ? body.message : message,
-                    hermesRunId: workspaceRunId,
-                    assistantText: '',
-                    status: 'streaming',
                   }).catch((err) => {
                     console.warn(
                       '[send-stream] hermes daemon persist (user) failed',
@@ -1743,10 +1743,54 @@ export const Route = createFileRoute('/api/send-stream')({
                             text: finalDisplayText.trim(),
                           })
                         }
+                        persistActiveRun((runSessionKey, activeId) =>
+                          markRunStatus(runSessionKey, activeId, 'complete'),
+                        )
+                        if (runId) clearRunDetached(runId)
+                        let settledHistoryRevision = 0
+                        if (clientSubmitId) {
+                          // Prefer Hermes run_* — workspace UUID is not a durable
+                          // assistant host id and must not mint a second shell.
+                          // Await daemon persist so done carries historyRevision
+                          // for Tutti-style authoritative fence on the client.
+                          const durableRunId =
+                            (typeof runId === 'string' && runId.trim()) ||
+                            (typeof activeRunId === 'string' &&
+                              activeRunId.trim()) ||
+                            ''
+                          try {
+                            const persisted = await persistHermesTurnToDaemon({
+                              agentSessionId:
+                                sessionKeyFromEvent || sessionKey,
+                              profileName:
+                                profileNameForCanonical || 'default',
+                              clientSubmitId,
+                              ...(durableRunId
+                                ? { hermesRunId: durableRunId }
+                                : {}),
+                              assistantText: finalDisplayText.trim(),
+                              thinkingText:
+                                thinkingAccumulated.trim() || null,
+                              status: 'completed',
+                              settled: true,
+                            })
+                            if (persisted.ok && persisted.latestVersion > 0) {
+                              settledHistoryRevision = persisted.latestVersion
+                            }
+                          } catch (err) {
+                            console.warn(
+                              '[send-stream] hermes daemon persist (done) failed',
+                              err,
+                            )
+                          }
+                        }
                         const translated = {
                           state: 'complete',
                           sessionKey: sessionKeyFromEvent,
                           runId,
+                          ...(settledHistoryRevision > 0
+                            ? { historyRevision: settledHistoryRevision }
+                            : {}),
                           ...(doneContent.length > 0
                             ? {
                                 message: {
@@ -1755,27 +1799,6 @@ export const Route = createFileRoute('/api/send-stream')({
                                 },
                               }
                             : {}),
-                        }
-                        persistActiveRun((runSessionKey, activeId) =>
-                          markRunStatus(runSessionKey, activeId, 'complete'),
-                        )
-                        if (runId) clearRunDetached(runId)
-                        if (clientSubmitId) {
-                          void persistHermesTurnToDaemon({
-                            agentSessionId: sessionKeyFromEvent || sessionKey,
-                            profileName: profileNameForCanonical || 'default',
-                            clientSubmitId,
-                            hermesRunId: runId || activeRunId || workspaceRunId,
-                            assistantText: finalDisplayText.trim(),
-                            thinkingText: thinkingAccumulated.trim() || null,
-                            status: 'completed',
-                            settled: true,
-                          }).catch((err) => {
-                            console.warn(
-                              '[send-stream] hermes daemon persist (done) failed',
-                              err,
-                            )
-                          })
                         }
                         sendEvent('done', translated)
                         skipPublish || publishChatEvent('done', translated)

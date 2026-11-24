@@ -159,18 +159,38 @@ export function mergePreferLiveAssistant(
 
   const priorText = messageText(prior)
   const incomingText = messageText(incoming)
+  const priorId = messageId(prior)
+  const incomingId = messageId(incoming)
+  const priorTurn =
+    typeof prior.turnId === 'string' ? prior.turnId.trim() : ''
+  const incomingTurn =
+    typeof incoming.turnId === 'string' ? incoming.turnId.trim() : ''
+  // Distinct durable hosts / turns must not length-win into each other —
+  // that replaced 「谢。」 with the next turn's longer reply on refetch.
+  const distinctDurableHosts =
+    Boolean(priorId) &&
+    Boolean(incomingId) &&
+    priorId !== incomingId &&
+    !priorId.startsWith('msg-') &&
+    !incomingId.startsWith('msg-')
+  const distinctTurns =
+    Boolean(priorTurn) && Boolean(incomingTurn) && priorTurn !== incomingTurn
   const liveMatches =
     priorText.length > 0 &&
     (incomingText.length === 0 || textsLooselyMatch(priorText, incomingText))
 
   // Server has a clearly different / longer answer we never showed — take it,
-  // but keep any richer live thinking.
-  if (!liveMatches && incomingText.length > priorText.length) {
+  // but keep any richer live thinking. Only within the same turn/host.
+  if (
+    !distinctDurableHosts &&
+    !distinctTurns &&
+    !liveMatches &&
+    incomingText.length > priorText.length
+  ) {
     return mergeAssistantThinkingFromSource(incoming, prior)
   }
 
-  const incomingId = messageId(incoming)
-  if (incomingId && !messageId(prior)) {
+  if (incomingId && !priorId) {
     prior.id = incomingId
   }
 
@@ -252,6 +272,26 @@ export function mergePreferLiveAssistant(
   return kept
 }
 
+function sameAssistantTurnOrHost(
+  left: LooseMessage,
+  right: LooseMessage,
+): boolean {
+  const leftTurn = typeof left.turnId === 'string' ? left.turnId.trim() : ''
+  const rightTurn = typeof right.turnId === 'string' ? right.turnId.trim() : ''
+  if (leftTurn && rightTurn) return leftTurn === rightTurn
+  const leftId = messageId(left)
+  const rightId = messageId(right)
+  if (
+    leftId &&
+    rightId &&
+    !leftId.startsWith('msg-') &&
+    !rightId.startsWith('msg-')
+  ) {
+    return leftId === rightId
+  }
+  return true
+}
+
 function findPriorAssistant(
   previous: Array<LooseMessage>,
   message: LooseMessage,
@@ -260,13 +300,14 @@ function findPriorAssistant(
 ): LooseMessage | undefined {
   const key = matchKey(message)
   const byKey = key ? previousByKey.get(key) : undefined
-  if (byKey) return byKey
+  if (byKey && sameAssistantTurnOrHost(byKey, message)) return byKey
 
   const text = messageText(message)
   if (text && message.role === 'assistant') {
     for (let i = previous.length - 1; i >= 0; i -= 1) {
       const candidate = previous[i]
       if (!candidate || candidate.role !== 'assistant') continue
+      if (!sameAssistantTurnOrHost(candidate, message)) continue
       if (textsLooselyMatch(messageText(candidate), text)) return candidate
     }
   }
@@ -274,6 +315,7 @@ function findPriorAssistant(
   if (
     index < previous.length &&
     previous[index]?.role === message.role &&
+    sameAssistantTurnOrHost(previous[index]!, message) &&
     textsLooselyMatch(messageText(previous[index]!), messageText(message))
   ) {
     return previous[index]
@@ -470,6 +512,14 @@ export function reconcileHistoryResponse(previous: unknown, incoming: unknown): 
   if (!incoming) return previous
   if (!previous) return incoming
   if (typeof incoming !== 'object' || typeof previous !== 'object') return incoming
+  // Daemon-canonical pages are display SoT — never length-win prior live
+  // bodies over strong-id history (that replaced 「谢。」 with the next reply).
+  if (
+    'source' in incoming &&
+    (incoming as { source?: unknown }).source === 'daemon-agent-db'
+  ) {
+    return incoming
+  }
   const previousMessages = 'messages' in previous && Array.isArray(previous.messages) ? previous.messages : undefined
   const incomingMessages = 'messages' in incoming && Array.isArray(incoming.messages) ? incoming.messages : undefined
   const messages = reconcileHistoryMessages(

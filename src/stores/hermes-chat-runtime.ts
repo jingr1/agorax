@@ -1,17 +1,26 @@
 /**
- * Hermes 1:1 chat runtime — Engine + coordinator + mapping cache.
+ * Hermes 1:1 chat runtime — Engine + coordinator + Tutti session reconcile.
  *
  * One runtime per workspaceId (profile). Browser maps via /api/agorax-run-mapping;
  * memory Map is a hot cache, collab.db is durable truth.
+ *
+ * Display SoT after settle: `createAgentActivitySessionReconcileExecutor` with
+ * `authoritativeMessages` + `requiredHistoryRevision` fence (same as managed /
+ * Tutti). RQ `/api/history` must not replace daemon-canonical Engine pages.
  */
 
 import {
+  createAgentActivitySessionReconcileExecutor,
   createAgentActivitySnapshotProjector,
   createAgentActivityWorkspaceEventCoordinator,
   selectEngineSession,
   selectSessionIsSubmitting,
+  selectSessionMessages,
   type AgentActivityUpdatedEvent,
   type AgentSessionEngine,
+  type EngineEffectOptions,
+  type EngineExtensionCommand,
+  type SessionReconcileCommand,
 } from '@agorax/agent-activity-core'
 import {
   createHermesAgentEngine,
@@ -24,6 +33,8 @@ import {
   selectHermesChatState,
 } from '@/screens/chat/lib/hermes-agent-engine'
 import { getRememberedOpenTurn } from '@/screens/chat/lib/engine-user-prompt-ingest'
+import { createHermesSessionReconcilePort } from '@/lib/hermes-runtime/reconcile-port'
+import { isDaemonCanonicalHistory } from '@/lib/hermes-display-sot'
 import type { AgoraxRunMapping } from '@/server/agent-runtime/hermes-native-bridge'
 import type { HermesSseEventName } from '@/lib/hermes-activity-adapter'
 import type { ChatMessage } from '@/screens/chat/types'
@@ -45,12 +56,29 @@ export type HermesChatRuntime = {
   getMapping: (agentSessionId: string) => Promise<AgoraxRunMapping | null>
   putMapping: (mapping: AgoraxRunMapping) => Promise<AgoraxRunMapping>
   ensureSessionHydrated: (agentSessionId: string) => void
-  /** Idle-path history → Engine (skip while turnBusy / submitting). */
+  /**
+   * External/CLI weak-id RQ pages only. Daemon-canonical pages must not replace
+   * via RQ — Tutti authoritative path is `requestSessionReconcile`.
+   */
   reconcileHistory: (
     agentSessionId: string,
     historyMessages: readonly ChatMessage[],
     historyRevision?: number,
   ) => number
+  /** Tutti: dispatch session/reconcileRequested (executor + fence). */
+  requestSessionReconcile: (
+    agentSessionId: string,
+    input?: {
+      authoritativeMessages?: boolean
+      requiredHistoryRevision?: number
+      needsMessages?: boolean
+      needsState?: boolean
+    },
+  ) => void
+  executeSessionReconcile: (
+    command: SessionReconcileCommand,
+    options?: { signal?: AbortSignal },
+  ) => Promise<unknown>
   ingestUserPrompt: (input: {
     agentSessionId: string
     clientSubmitId: string
@@ -135,42 +163,38 @@ export function waitForHermesSendCompleted(
   if (!id) return Promise.resolve()
   const timeoutMs = options?.timeoutMs ?? 600_000
   return new Promise((resolve, reject) => {
-    const existing = pendingSendWaiters.get(id)
-    if (existing) {
-      // Replace — newest waiter owns completion.
+    const prev = pendingSendWaiters.get(id)
+    if (prev) {
+      prev.reject(new Error('Hermes send waiter superseded'))
       pendingSendWaiters.delete(id)
-    }
-    const finish = (fn: () => void) => {
-      window.clearTimeout(timer)
-      options?.signal?.removeEventListener('abort', onAbort)
-      pendingSendWaiters.delete(id)
-      fn()
     }
     const timer = window.setTimeout(() => {
-      finish(() => reject(new Error('Hermes send completion timed out')))
+      pendingSendWaiters.delete(id)
+      options?.signal?.removeEventListener('abort', onAbort)
+      reject(new Error('Hermes send completion timed out'))
     }, timeoutMs)
     const onAbort = () => {
-      finish(() =>
-        reject(new DOMException('Aborted', 'AbortError')),
-      )
+      window.clearTimeout(timer)
+      pendingSendWaiters.delete(id)
+      reject(options?.signal?.reason ?? new Error('aborted'))
     }
     options?.signal?.addEventListener('abort', onAbort, { once: true })
     pendingSendWaiters.set(id, {
-      resolve: () => finish(() => resolve()),
-      reject: (error) => finish(() => reject(error)),
+      resolve: () => {
+        window.clearTimeout(timer)
+        options?.signal?.removeEventListener('abort', onAbort)
+        resolve()
+      },
+      reject: (error) => {
+        window.clearTimeout(timer)
+        options?.signal?.removeEventListener('abort', onAbort)
+        reject(error)
+      },
     })
   })
 }
 
-/** Prefer the fresher mapping so a slow GET cannot clobber a just-written create. */
 function rememberMapping(mapping: AgoraxRunMapping): AgoraxRunMapping {
-  const existing = mappingCache.get(mapping.agentSessionId)
-  if (
-    existing &&
-    (existing.updatedAtUnixMs ?? 0) > (mapping.updatedAtUnixMs ?? 0)
-  ) {
-    return existing
-  }
   mappingCache.set(mapping.agentSessionId, mapping)
   return mapping
 }
@@ -178,19 +202,19 @@ function rememberMapping(mapping: AgoraxRunMapping): AgoraxRunMapping {
 async function fetchMapping(
   agentSessionId: string,
 ): Promise<AgoraxRunMapping | null> {
-  const cached = mappingCache.get(agentSessionId)
+  const id = agentSessionId.trim()
+  if (!id) return null
+  const cached = mappingCache.get(id)
   if (cached) return cached
   try {
     const res = await fetch(
-      `/api/agorax-run-mapping?agentSessionId=${encodeURIComponent(agentSessionId)}`,
+      `/api/agorax-run-mapping?agentSessionId=${encodeURIComponent(id)}`,
     )
     if (!res.ok) return null
     const body = (await res.json()) as { mapping?: AgoraxRunMapping | null }
-    if (body.mapping?.agentSessionId) {
-      return rememberMapping(body.mapping)
-    }
+    if (body.mapping?.agentSessionId) return rememberMapping(body.mapping)
   } catch {
-    // offline / route not generated yet
+    // ignore
   }
   return null
 }
@@ -233,6 +257,63 @@ export function getHermesChatRuntime(
 
   const hooksRef: { current: RuntimeHooks | undefined } = { current: hooks }
 
+  let engine!: AgentSessionEngine
+  let executeSessionReconcile!: (
+    command: SessionReconcileCommand,
+    options?: { signal?: AbortSignal },
+  ) => Promise<unknown>
+
+  const requestSessionReconcile = (
+    agentSessionId: string,
+    input?: {
+      authoritativeMessages?: boolean
+      requiredHistoryRevision?: number
+      needsMessages?: boolean
+      needsState?: boolean
+    },
+  ) => {
+    const sid = agentSessionId.trim()
+    if (!sid) return
+    engine.dispatch({
+      type: 'session/reconcileRequested',
+      agentSessionId: sid,
+      workspaceId: id,
+      needsMessages: input?.needsMessages ?? true,
+      needsState: input?.needsState ?? true,
+      ...(input?.authoritativeMessages
+        ? { authoritativeMessages: true }
+        : {}),
+      ...(typeof input?.requiredHistoryRevision === 'number' &&
+      input.requiredHistoryRevision > 0
+        ? { requiredHistoryRevision: input.requiredHistoryRevision }
+        : {}),
+    })
+  }
+
+  const executeExtensionCommand = async (
+    command: EngineExtensionCommand,
+    effectOptions?: EngineEffectOptions,
+  ) => {
+    if (command.type === 'session/reconcile') {
+      return executeSessionReconcile(command, {
+        signal: effectOptions?.signal,
+      })
+    }
+    if (command.type === 'engine/reconcileWorkspace') {
+      const snap = engine.getSnapshot()
+      for (const sid of Object.keys(
+        snap.sessionLifecycle.sessionsById ?? {},
+      )) {
+        requestSessionReconcile(sid, {
+          needsMessages: true,
+          needsState: true,
+        })
+      }
+      return
+    }
+    throw new Error(`Unsupported Hermes command: ${command.type}`)
+  }
+
   const commandPort = createHermesCommandPort({
     workspaceId: id,
     profileName: hooks?.profileName,
@@ -261,21 +342,53 @@ export function getHermesChatRuntime(
     },
     shouldPromoteResolvedSession: ({ requestedSessionKey }) =>
       requestedSessionKey === 'new' || requestedSessionKey === 'main',
+    executeExtensionCommand,
+    onSettledAuthoritativeReconcile: ({ agentSessionId, historyRevision }) => {
+      requestSessionReconcile(agentSessionId, {
+        authoritativeMessages: true,
+        requiredHistoryRevision: historyRevision,
+        needsMessages: false,
+        needsState: false,
+      })
+    },
   })
 
-  const engine = createHermesAgentEngine({ workspaceId: id, commandPort })
+  engine = createHermesAgentEngine({ workspaceId: id, commandPort })
   const projectSnapshot = createAgentActivitySnapshotProjector(id)
   const coordinator = createAgentActivityWorkspaceEventCoordinator({
     engine,
     notificationScheduler: {
       schedule(delayMs, task) {
         const timer = window.setTimeout(task, delayMs)
-        return { cancel: () => window.clearTimeout(timer) }
+        return { cancel: () => clearTimeout(timer) }
       },
     },
     readCanonicalSnapshot: () => projectSnapshot(engine.getSnapshot()),
     workspaceId: id,
   })
+
+  const reconcilePort = createHermesSessionReconcilePort({
+    // Hermes runtime workspaceId is the profile name (default / named).
+    profileName: id,
+  })
+  const executor = createAgentActivitySessionReconcileExecutor({
+    childMessageHydration: 'requested_session',
+    engine,
+    isSessionDeleted: (agentSessionId) =>
+      coordinator.isSessionDeleted(agentSessionId),
+    port: reconcilePort,
+    reconcileAuthoritativeHistory: (agentSessionId, messages, turns) =>
+      coordinator.reconcileAuthoritativeHistory(
+        agentSessionId,
+        messages,
+        turns,
+      ),
+    reconcileOptimisticMessages: (agentSessionId) =>
+      coordinator.reconcileMessages(agentSessionId),
+    workspaceId: id,
+  })
+  executeSessionReconcile = (command, options) =>
+    executor.execute(command, options)
 
   engine.dispatch({
     status: 'connected',
@@ -297,9 +410,6 @@ export function getHermesChatRuntime(
       if (selectEngineSession(engine.getSnapshot(), sid)) return
       const knownGateway =
         mappingCache.get(sid)?.gatewaySessionId?.trim() || null
-      // Local Engine skeleton only. Never invent gatewaySessionId=sid and
-      // persist it — that races New Chat (routeToSession UUID → hydrate →
-      // createSessionForMessage sees a fake mapping and chat/stream 404s).
       hydrateHermesAgentEngine(
         engine,
         createHermesSessionSkeleton({
@@ -309,41 +419,40 @@ export function getHermesChatRuntime(
         }),
       )
     },
-    reconcileHistory(agentSessionId, historyMessages, historyRevision) {
+    reconcileHistory(agentSessionId, historyMessages, _historyRevision) {
       const sid = agentSessionId.trim()
       if (!sid) return 0
       const snap = engine.getSnapshot()
       const submitting = selectSessionIsSubmitting(snap, sid)
       const busy = selectHermesChatState(snap, sid).turnBusy
-      // Remembered open-turn nonce (not a messageId) until Engine turn_update.
-      // Forces identity-merge path so optimistic user is not duplicated by msg-*.
       const openTurnRemembered = getRememberedOpenTurn(sid) !== null
-      // Open turn: never raw history replace that forks the optimistic user.
-      // Identity-merge keeps user:<clientSubmitId> and folds gateway echoes.
-      const projected =
-        coordinator.project(projectSnapshot(snap)).sessionMessagesById[sid] ??
-        []
       if (submitting || busy || openTurnRemembered) {
         return mergeHermesHistoryWhileBusy({
           engine,
           workspaceId: id,
           agentSessionId: sid,
           historyMessages,
-          // Include overlay assistants so history msg-N cannot fork a second
-          // bubble beside live assistant:<runId>.
-          liveMessages: projected,
         })
       }
+      // Daemon SoT: Tutti authoritative executor only — never RQ replace.
+      if (isDaemonCanonicalHistory(historyMessages)) {
+        return 0
+      }
+      const projected =
+        coordinator.project(projectSnapshot(snap)).sessionMessagesById[sid] ??
+        selectSessionMessages(snap, sid)
       return reconcileHermesHistoryIntoEngine({
         engine,
         coordinator,
         workspaceId: id,
         agentSessionId: sid,
         historyMessages,
-        historyRevision,
         projectedMessages: projected,
       })
     },
+    requestSessionReconcile,
+    executeSessionReconcile: (command, options) =>
+      executeSessionReconcile(command, options),
     ingestUserPrompt(input) {
       return ingestHermesUserPromptMessage({
         engine,
@@ -370,8 +479,6 @@ export function getHermesChatRuntime(
     },
   }
 
-  // Keep hooks ref in sync when callers re-enter getHermesChatRuntime.
-  // Setter merges so partial updates cannot drop onSseFrame.
   Object.defineProperty(runtime, '_hooks', {
     get: () => hooksRef.current,
     set: (value: RuntimeHooks | undefined) => {
@@ -437,7 +544,6 @@ export function waitForHermesTurnSettle(
         return false
       }
       if (!sawBusy) return false
-      // Idle after busy — optionally require a different/newer settled turn.
       const latestId = state.latestTurn?.turnId ?? null
       if (
         state.latestTurn?.phase === 'settled' &&
@@ -446,7 +552,6 @@ export function waitForHermesTurnSettle(
       ) {
         return true
       }
-      // Busy cleared even if turn id unchanged (cancel / interrupted).
       return !state.turnBusy && !state.isStreaming
     }
     const finish = () => {
@@ -455,19 +560,20 @@ export function waitForHermesTurnSettle(
       unsub()
       resolve()
     }
-    const timer = window.setTimeout(() => {
-      unsub()
-      reject(new Error('Hermes turn settle timed out'))
-    }, timeoutMs)
     const onAbort = () => {
       window.clearTimeout(timer)
       unsub()
-      reject(new DOMException('Aborted', 'AbortError'))
+      reject(options?.signal?.reason ?? new Error('aborted'))
     }
-    options?.signal?.addEventListener('abort', onAbort, { once: true })
     const unsub = runtime.engine.subscribe(() => {
       if (check()) finish()
     })
+    const timer = window.setTimeout(() => {
+      options?.signal?.removeEventListener('abort', onAbort)
+      unsub()
+      reject(new Error('Hermes turn settle timed out'))
+    }, timeoutMs)
+    options?.signal?.addEventListener('abort', onAbort, { once: true })
     if (check()) finish()
   })
 }

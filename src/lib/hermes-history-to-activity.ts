@@ -130,25 +130,106 @@ function laneKind(row: AgentActivityMessage): string {
   return 'text'
 }
 
+/**
+ * Resolve a durable turn bucket key. Prefer explicit turnId; for users fall
+ * back to turn-<clientSubmitId> from messageId so assistants that already
+ * carry turn-* can join before the user row is seen in list order.
+ */
+function turnPartitionKey(
+  row: AgentActivityDurableMessage,
+): string | null {
+  const turnId = row.turnId?.trim()
+  if (turnId) return turnId
+  if (row.role === 'user' && row.messageId.startsWith('user:')) {
+    const submit = row.messageId.slice('user:'.length).trim()
+    if (submit) return `turn-${submit}`
+  }
+  const submit =
+    typeof row.payload.clientSubmitId === 'string'
+      ? row.payload.clientSubmitId.trim()
+      : ''
+  if (submit) return `turn-${submit}`
+  return null
+}
+
+/** Gateway often mints turn-msg-N per row — not a real cross-turn boundary. */
+function isWeakGatewayTurnId(turnId: string): boolean {
+  return /^turn-msg-\d+$/i.test(turnId) || turnId.startsWith('turn-history:')
+}
+
+/**
+ * Partition by turn identity, not only user boundaries.
+ *
+ * Live overlay often sorts next-turn thinking/text *above* the new user
+ * (same ms as the prompt). A user-boundary partition then stuffed that
+ * content into the previous turn's `rest`, and stampRow length-wins
+ * replaced the prior reply body (「谢。」 → next turn's long text).
+ *
+ * Strong turn ids (turn-<clientSubmitId>) get their own bucket even before
+ * the user row appears. Weak gateway turn-msg-N still attaches to the open
+ * user bucket so msg-N history can stamp onto live assistant:run_*.
+ */
 function partitionHermesActivityTurns(
   rows: readonly AgentActivityDurableMessage[],
 ): HermesActivityTurn[] {
-  const turns: HermesActivityTurn[] = []
-  let current: HermesActivityTurn | null = null
-  for (const row of rows) {
-    if (row.role === 'user') {
-      current = { user: row, rest: [] }
-      turns.push(current)
-      continue
+  type Bucket = HermesActivityTurn & { order: number }
+  const byKey = new Map<string, Bucket>()
+  const ordered: Bucket[] = []
+  let fallback: Bucket | null = null
+  let seq = 0
+
+  const ensureKey = (key: string): Bucket => {
+    let bucket = byKey.get(key)
+    if (!bucket) {
+      bucket = { user: null, rest: [], order: seq++ }
+      byKey.set(key, bucket)
+      ordered.push(bucket)
     }
-    if (!current) {
-      current = { user: null, rest: [row] }
-      turns.push(current)
-      continue
-    }
-    current.rest.push(row)
+    return bucket
   }
-  return turns
+
+  for (const row of rows) {
+    const key = turnPartitionKey(row)
+    if (row.role === 'user') {
+      if (key) {
+        const bucket = ensureKey(key)
+        bucket.user = row
+        fallback = bucket
+      } else {
+        fallback = { user: row, rest: [], order: seq++ }
+        ordered.push(fallback)
+      }
+      continue
+    }
+
+    if (key && byKey.has(key)) {
+      byKey.get(key)!.rest.push(row)
+      continue
+    }
+
+    // Next-turn live fragments that sorted above their user: hold in a
+    // strong-id orphan bucket instead of contaminating the prior user turn.
+    if (key && !isWeakGatewayTurnId(key)) {
+      ensureKey(key).rest.push(row)
+      continue
+    }
+
+    if (fallback) {
+      fallback.rest.push(row)
+      continue
+    }
+
+    if (key) {
+      ensureKey(key).rest.push(row)
+    } else {
+      fallback = { user: null, rest: [row], order: seq++ }
+      ordered.push(fallback)
+    }
+  }
+
+  return ordered
+    .sort((left, right) => left.order - right.order)
+    .map(({ user, rest }) => ({ user, rest }))
 }
 
 function toDurable(
@@ -178,6 +259,12 @@ function stampRow(
   content: AgentActivityDurableMessage | undefined,
 ): AgentActivityDurableMessage {
   if (!content) return identity
+  const identityTurn = identity.turnId?.trim() ?? ''
+  const contentTurn = content.turnId?.trim() ?? ''
+  // Never adopt a foreign turn's longer body onto this host.
+  if (identityTurn && contentTurn && identityTurn !== contentTurn) {
+    return identity
+  }
   const identityText =
     typeof identity.payload.text === 'string' ? identity.payload.text : ''
   const contentText =
@@ -214,6 +301,28 @@ function stampTurn(
   for (const kind of kinds) {
     const liveLane = liveTurn.rest.filter((row) => laneKind(row) === kind)
     const histLane = historyTurn.rest.filter((row) => laneKind(row) === kind)
+    // Gateway often splits one user turn into msg-N (tools/narration) + msg-N+1
+    // (final text). Emitting every hist text lane beside the live host duplicated
+    // the reply under the same user (and left empty assistant:run shells around).
+    if (kind === 'text' && liveLane.length > 0) {
+      let merged = liveLane[0]!
+      for (let i = 1; i < liveLane.length; i += 1) {
+        merged = stampRow(merged, liveLane[i])
+      }
+      for (const histRow of histLane) {
+        merged = stampRow(merged, histRow)
+      }
+      out.push(merged)
+      continue
+    }
+    if (kind === 'text' && liveLane.length === 0 && histLane.length > 1) {
+      let merged = histLane[0]!
+      for (let i = 1; i < histLane.length; i += 1) {
+        merged = stampRow(merged, histLane[i])
+      }
+      out.push(merged)
+      continue
+    }
     const n = Math.max(liveLane.length, histLane.length)
     for (let i = 0; i < n; i += 1) {
       const liveRow = liveLane[i]
@@ -496,6 +605,10 @@ export function hermesHistoryMessagesToActivity(input: {
   const out: AgentActivityDurableMessage[] = []
   let sequence = 0
   const seenIds = new Set<string>()
+  // Gateway msg-N assistants for one user turn must share that user's turnId.
+  // `turn-msg-N` per message made narration+final look like two turns and left
+  // live `assistant:run_*` shells beside `msg-*` after settle.
+  let openUserTurnId: string | null = null
 
   for (let index = 0; index < input.messages.length; index += 1) {
     const message = input.messages[index]
@@ -555,13 +668,15 @@ export function hermesHistoryMessagesToActivity(input: {
 
       sequence += 1
       seenIds.add(messageId)
+      const turnId = turnIdFor(message, messageId)
+      openUserTurnId = turnId
       out.push({
         workspaceId,
         agentSessionId,
         messageId,
         version: sequence,
         sequence,
-        turnId: turnIdFor(message, messageId),
+        turnId,
         role: 'user',
         kind: 'text',
         status: null,
@@ -578,7 +693,13 @@ export function hermesHistoryMessagesToActivity(input: {
     if (role !== 'assistant' && role !== 'assistant_thinking') continue
 
     const baseId = durableAssistantId(message, agentSessionId, index)
-    const turnId = turnIdFor(message, baseId)
+    const explicitTurn = readString((message as { turnId?: unknown }).turnId).trim()
+    const runId = readString(message.runId).trim()
+    const turnId =
+      explicitTurn ||
+      (runId ? `turn-${runId}` : '') ||
+      openUserTurnId ||
+      turnIdFor(message, baseId)
     const status =
       message.__streamingStatus === 'streaming'
         ? 'streaming'

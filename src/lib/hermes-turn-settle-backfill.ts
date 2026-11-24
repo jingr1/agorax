@@ -200,6 +200,9 @@ export function pickAuthoritativeAssistantText(
  * Only when live is empty, or authoritative is a completion of the same stream
  * (`auth.startsWith(live)`). Never stamp merely because auth is longer — that
  * pulled the previous turn's reply onto a new short host when history lagged.
+ *
+ * @deprecated Settle no longer fetches history to stamp; kept for tests of the
+ * unused stamp helper.
  */
 export function shouldStampAssistantText(
   liveText: string,
@@ -213,14 +216,5 @@ export function shouldStampAssistantText(
   return auth.startsWith(live)
 }
 
-/**
- * Skip /api/history when done.message already stamped final body text.
- * History remains the backup when the stream omitted done.message text.
- */
-export function shouldFetchHistoryForSettle(input: {
-  doneCarriedFinalText: boolean
-  liveText: string
-}): boolean {
-  if (input.doneCarriedFinalText && input.liveText.trim()) return false
-  return true
-}
+/** @deprecated Use `shouldFetchHistoryForSettle` from hermes-display-sot. */
+export { shouldFetchHistoryForSettle } from './hermes-display-sot'

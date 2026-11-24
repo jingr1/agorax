@@ -109,12 +109,18 @@ export function skillTreeFiles(tree: SkillTree): Array<PlatformSkillFile> {
     seen.add(key)
     const size = skillFileBytes(file).length
     total += size
-    if (
-      size > 8 * 1024 * 1024 ||
-      total > 32 * 1024 * 1024 ||
-      files.length > 512
-    )
-      throw new Error('Skill package exceeds file or size limits')
+    if (size > 8 * 1024 * 1024)
+      throw new Error(
+        `Skill package exceeds file or size limits (file ${file.path} is ${size} bytes; max 8 MiB per file)`,
+      )
+    if (total > 32 * 1024 * 1024)
+      throw new Error(
+        `Skill package exceeds file or size limits (package total ${total} bytes; max 32 MiB)`,
+      )
+    if (files.length > 512)
+      throw new Error(
+        `Skill package exceeds file or size limits (${files.length} files; max 512)`,
+      )
   }
   for (const file of files) {
     const segments = file.path.toLowerCase().split('/')
@@ -165,12 +171,18 @@ export function readSkillTree(directory: string): SkillTree {
       else if (entry.isFile()) {
         const stat = fs.lstatSync(full)
         total += stat.size
-        if (
-          stat.size > 8 * 1024 * 1024 ||
-          total > 32 * 1024 * 1024 ||
-          files.length >= 512
-        )
-          throw new Error('Skill package exceeds file or size limits')
+        if (stat.size > 8 * 1024 * 1024)
+          throw new Error(
+            `Skill package exceeds file or size limits (${relative} is ${stat.size} bytes; max 8 MiB per file): ${directory}`,
+          )
+        if (total > 32 * 1024 * 1024)
+          throw new Error(
+            `Skill package exceeds file or size limits (package total ${total} bytes; max 32 MiB): ${directory}`,
+          )
+        if (files.length >= 512)
+          throw new Error(
+            `Skill package exceeds file or size limits (${files.length + 1} files; max 512): ${directory}`,
+          )
         files.push(
           encodeSkillFile(
             relative,

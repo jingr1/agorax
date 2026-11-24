@@ -27,12 +27,41 @@ health_ok() {
     node -e 'let text="";process.stdin.on("data",data=>text+=data);process.stdin.on("end",()=>{try{const health=JSON.parse(text);process.exit(health.ok===true&&health.runtime==="agorax-managed-agent"?0:1)}catch{process.exit(1)}})'
 }
 
-if [[ "$FORCE" -ne 1 ]] && health_ok; then
-  echo "managed-agent-host: healthy daemon already on :${PORT} — skipping"
+# Hermes 1:1 display SoT requires hermes-bridge. A pre-bridge binary can still
+# answer /health; treat missing route as stale so pnpm dev does not skip forever.
+hermes_bridge_ok() {
+  local code
+  code=$(
+    curl -sS -o /dev/null -w '%{http_code}' --max-time 1 -X GET \
+      "http://127.0.0.1:${PORT}/v1/workspaces/hermes%3Adefault/hermes-bridge/sessions/_probe_/activity" \
+      2>/dev/null || echo 000
+  )
+  # POST-only route → 405 when present; 404 when the binary never registered it.
+  [[ "$code" == "405" ]]
+}
+
+daemon_ready() {
+  health_ok && hermes_bridge_ok
+}
+
+if [[ "$FORCE" -ne 1 ]] && daemon_ready; then
+  echo "managed-agent-host: healthy daemon (with hermes-bridge) already on :${PORT} — skipping"
   exit 0
 fi
 
+if [[ "$FORCE" -ne 1 ]] && health_ok && ! hermes_bridge_ok; then
+  echo "managed-agent-host: :${PORT} answers /health but lacks hermes-bridge — replacing stale daemon"
+  FORCE=1
+fi
+
 if [[ "$FORCE" -eq 1 ]]; then
+  # Replace listeners via the shared helper, then prefer the prebuilt binary
+  # (go run can hang on module download and leave :PORT empty for minutes).
+  bash "$ROOT/scripts/dev-managed-agent.sh" --force --replace-only
+  if [[ -x "$BIN" ]]; then
+    echo "managed-agent-host: starting $BIN on :${PORT} (log=$LOG)"
+    exec "$BIN"
+  fi
   exec bash "$ROOT/scripts/dev-managed-agent.sh" --force
 fi
 

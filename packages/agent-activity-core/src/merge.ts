@@ -27,6 +27,25 @@ export function mergeAgentActivityMessages<
   return [...byMessageId.values()].sort(compareAgentActivityMessages);
 }
 
+/**
+ * When sequence/time/version tie (common for overlay seeds in the same ms),
+ * `assistant:*` localeCompare-sorts *before* `user:*` and splits a live turn:
+ * thinking/text paint above the new user while a later text host also lands
+ * below — duplicate reply around the question. Prefer user, then reasoning,
+ * then tools, then assistant text.
+ */
+function roleSortKey(message: AgentActivityMessage): number {
+  if (message.role === "user" || message.role === "system") return 0;
+  if (
+    message.kind === "reasoning" ||
+    message.role === "assistant_thinking"
+  ) {
+    return 1;
+  }
+  if (message.kind === "tool_call" || message.kind === "tool") return 2;
+  return 3;
+}
+
 export function compareAgentActivityMessages(
   left: AgentActivityMessage,
   right: AgentActivityMessage
@@ -39,6 +58,7 @@ export function compareAgentActivityMessages(
   return (
     left.occurredAtUnixMs - right.occurredAtUnixMs ||
     left.version - right.version ||
+    roleSortKey(left) - roleSortKey(right) ||
     left.messageId.localeCompare(right.messageId)
   );
 }
