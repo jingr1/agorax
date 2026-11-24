@@ -10,6 +10,7 @@ import {
   isWorkspaceMetadataTitle,
   stripWorkspaceDirective,
 } from '../../lib/workspace-message-scope'
+import { stripAgentPreferences } from '../../lib/agent-preferences-text'
 
 export function deriveFriendlyIdFromKey(key: string | undefined): string {
   if (!key) return 'main'
@@ -56,7 +57,7 @@ function stripChannelPrefix(text: string): string {
  * and [Telegram/Signal/etc ...] headers, leaving just the user's text.
  */
 function cleanUserText(raw: string): string {
-  let text = stripWorkspaceDirective(raw)
+  let text = stripAgentPreferences(stripWorkspaceDirective(raw))
 
   // Remove "Conversation info (untrusted metadata):" headers + JSON block
   // Format: "Conversation info (untrusted metadata):\n```json\n{...}\n```\n\n"

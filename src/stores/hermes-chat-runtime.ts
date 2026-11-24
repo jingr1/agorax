@@ -434,13 +434,19 @@ export function getHermesChatRuntime(
           historyMessages,
         })
       }
-      // Daemon SoT: Tutti authoritative executor only — never RQ replace.
-      if (isDaemonCanonicalHistory(historyMessages)) {
-        return 0
-      }
       const projected =
         coordinator.project(projectSnapshot(snap)).sessionMessagesById[sid] ??
         selectSessionMessages(snap, sid)
+      // Daemon SoT: prefer Tutti authoritative reconcile over RQ replace when
+      // Engine already has rows. Cold-empty is different — deep links often
+      // arrive under the wrong profile workspace; empty reconcile can race
+      // the profile correction and leave a permanent blank list. Seed once
+      // from daemon history so refresh shows content immediately.
+      if (isDaemonCanonicalHistory(historyMessages)) {
+        if ((projected?.length ?? 0) > 0) {
+          return 0
+        }
+      }
       return reconcileHermesHistoryIntoEngine({
         engine,
         coordinator,
@@ -456,6 +462,7 @@ export function getHermesChatRuntime(
     ingestUserPrompt(input) {
       return ingestHermesUserPromptMessage({
         engine,
+        coordinator,
         workspaceId: id,
         agentSessionId: input.agentSessionId,
         clientSubmitId: input.clientSubmitId,

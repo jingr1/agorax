@@ -11,7 +11,7 @@ import (
 // onto canonical activity events; the parser intentionally knows nothing
 // about the event surface.
 type claudeStreamEvent struct {
-	kind      string // "init", "text", "thinking", "tool_start", "tool_end", "result", "error"
+	kind      string // "init", "text", "thinking", "tool_start", "tool_end", "assistant_segment_complete", "result", "error"
 	sessionID string
 	model     string
 	text      string
@@ -234,6 +234,15 @@ func (p *claudeStreamParser) handleAssistantMessage(message map[string]any) []cl
 		return nil
 	}
 	var events []claudeStreamEvent
+	// Assembled `assistant` arrives after partial text_delta streaming and
+	// before protocol `result`. Completing the segment here lets UI content
+	// chrome clear without waiting for Host settle (Managed post-stream lag).
+	streamedTextDone := p.sawPartialText
+	if streamedTextDone {
+		events = append(events, claudeStreamEvent{kind: "assistant_segment_complete"})
+		p.sawPartialText = false
+	}
+	hadFreshText := false
 	for _, item := range content {
 		block, _ := item.(map[string]any)
 		if len(block) == 0 {
@@ -242,10 +251,11 @@ func (p *claudeStreamParser) handleAssistantMessage(message map[string]any) []cl
 		switch asString(block["type"]) {
 		case "text":
 			// Partials already streamed this text — skip the duplicate dump.
-			if p.sawPartialText {
+			if streamedTextDone {
 				continue
 			}
 			if text := asString(block["text"]); text != "" {
+				hadFreshText = true
 				events = append(events, claudeStreamEvent{kind: "text", text: text})
 			}
 		case "tool_use":
@@ -265,6 +275,11 @@ func (p *claudeStreamParser) handleAssistantMessage(message map[string]any) []cl
 				events = append(events, claudeStreamEvent{kind: "thinking", text: text})
 			}
 		}
+	}
+	// Non-partial assistant dump (no prior text_delta): close the segment after
+	// projecting text so content chrome does not wait for `result`.
+	if !streamedTextDone && hadFreshText {
+		events = append(events, claudeStreamEvent{kind: "assistant_segment_complete"})
 	}
 	return events
 }

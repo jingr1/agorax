@@ -54,7 +54,7 @@ AgentSessionEngine
 
 | 角色 | id |
 | --- | --- |
-| User（乐观 + 权威） | `user:<clientSubmitId>` — 发送时种壳；`send-stream` 把同一 nonce 作为 `client_submit_id` 交给 gateway，落库为 `platform_message_id`；history 回读映射回同一 `user:<id>`（Tutti 同源：按 id stamp，不靠正文） |
+| User（乐观 + 权威） | **Hermes** `user:<clientSubmitId>`（gateway `platform_message_id`）；**Managed** `client-submit:user:<id>`（Host/daemon）。乐观只进 overlay，权威 reconcile 驱逐；两侧各自与权威存储同前缀，不靠正文去重 |
 | Assistant 正文 | `assistant:<runId>`（首条 durable 行由 daemon/SSE 写出；发送时不种本地 pending assistant） |
 | Reasoning | `assistant:<runId>:thinking` |
 | Tool | `toolcall:<toolCallId>` |
@@ -79,7 +79,7 @@ AgentSessionEngine
 - **Hermes**：`hermesSseToActivityEvents` 把 `started|chunk|thinking|tool|done` 译成同一套 `message_delta` / `turn_update`。
 - UI **不**直接吃 Hermes SSE 业务语义；Hermes 1:1 列表与 busy 只订 Engine（`selectHermesChatState`）。`chat-store` write-through 仅作 SSE 侧信道 / portable 遗留，**不是**列表真相源；`streamingText` / `streamingThinking` / `activeToolCalls` 等 list sidecar **仅 portable** 传入，Hermes 1:1 不喂。
 - **列表投影同源：** `projectActivityMessagesToChat` + `selectAssistantStreamingMessageId`（`activity-list-projection.ts`）同时服务 `selectHermesChatState` 与 `selectManagedAgentChatState`。禁止一边 fold、一边 1:1 map。
-- **send 种壳同源：** `ingestEngineUserPromptMessage`（Hermes / managed 共用）在 submit 前只写入乐观 `user:<clientSubmitId>`；开回合 UI 用 transcript `processing:<clientSubmitId>` 脉冲（不进 `messagesBySessionId`）。首条 assistant message 等 daemon/SSE durable id；`applyOpenAssistantStreamingChrome` + `foldOpenTurnIntoLiveHost` 只折那条真实 host。
+- **send 种壳同源（Tutti overlay 合同）：** `ingestEngineUserPromptMessage`（Hermes / managed 共用）在 submit 前只把乐观 user 写入 **coordinator overlay**（`seedOptimisticMessage`），**不**进 Engine durable 桶。Hermes 种 `user:<clientSubmitId>`；Managed 种 `client-submit:user:<id>`（与 Host 落库一致）。权威到达后 `reconcileAuthoritativeHistory` 按 submit/turn 驱逐 overlay。开回合 UI 用 transcript `processing:<clientSubmitId>` 脉冲。首条 assistant 等 daemon/SSE durable id；`applyOpenAssistantStreamingChrome` + `foldOpenTurnIntoLiveHost` 只折那条真实 host。
 
 ### 2.3 Settle（Tutti 对齐：`running → settling → settled`）
 
@@ -132,10 +132,10 @@ Workspace 侧（或 collab.db）维护稳定映射，避免把 gateway id 直接
 
 映射规则：
 
-1. CreateSession → 分配 `agentSessionId`，探测/打开 gateway session，写入 `gatewaySessionId`。
-2. SendInput → 新 `turnId`，调用 gateway send-stream，绑定 `hermesRunId`。
+1. CreateSession → 打开 gateway session；**durable `agentSessionId` = `gatewaySessionId`**（避免 Engine UUID 与 gateway 分叉导致刷新后 mapped 空页）。若 Host 曾预分配 UUID，仍写一条 UUID→gateway 映射供过渡查找。
+2. SendInput → 新 `turnId`，调用 gateway send-stream，绑定 `hermesRunId`；hermes-bridge persist 写入 daemon `hermes:<profile>` 下的 gateway session id。
 3. CancelTurn → 走 gateway abort API；**禁止**对 tmux TUI 发送 C-c 杀进程。Turn cancel = 停止等待 + canonical settle（`outcome=canceled`）。
-4. Reconcile → 以映射表 + gateway 只读状态重放 activity，不 invent 成功。
+4. Reconcile / `/api/history` → `resolveHermesDaemonSessionLookup`（gateway 优先）；daemon 404 不是 confirmed empty，可回退 gateway/profile；仅 daemon 确认 0 行时才对 mapped session 返回空页。History 的 `profile` 必须与 persist 的 workspace profile 一致。
 
 ## 5. Cancel 规则
 

@@ -398,6 +398,8 @@ export async function startManagedChatRun(input: {
   content?: AgentRunInput['content']
   /** UI-only user text when task/content carry injected platform skills. */
   displayPrompt?: string
+  /** Matches optimistic `client-submit:user:<id>` on the Engine. */
+  clientSubmitId?: string
   sessionId?: string | null
   roomId?: string | null
   cwd?: string | null
@@ -451,6 +453,7 @@ export async function startManagedChatRun(input: {
   })
 
   const displayPrompt = input.displayPrompt?.trim() ?? ''
+  const clientSubmitId = input.clientSubmitId?.trim() ?? ''
   try {
     await adapter.startRun({
       runId,
@@ -458,6 +461,7 @@ export async function startManagedChatRun(input: {
       task: input.task,
       ...(input.content ? { content: input.content } : {}),
       ...(displayPrompt ? { displayPrompt } : {}),
+      ...(clientSubmitId ? { clientSubmitId } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),

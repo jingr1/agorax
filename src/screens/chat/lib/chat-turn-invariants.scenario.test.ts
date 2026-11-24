@@ -23,6 +23,7 @@ import {
 import { projectChatToTranscriptRows } from './agent-transcript-vm'
 import { deriveHermesListStreamingChrome } from '../chat-screen-utils'
 import { applyOpenAssistantStreamingChrome } from './engine-open-assistant-stream'
+import { createTestActivityCoordinator } from './test-activity-coordinator'
 import type { ChatMessage } from '../types'
 
 describe('chat turn invariants (architectural)', () => {
@@ -40,6 +41,10 @@ describe('chat turn invariants (architectural)', () => {
       onActivityEvent: () => undefined,
     })
     const engine = createHermesAgentEngine({ workspaceId, commandPort })
+    const { coordinator, project } = createTestActivityCoordinator({
+      engine,
+      workspaceId,
+    })
     hydrateHermesAgentEngine(
       engine,
       createHermesSessionSkeleton({ workspaceId, agentSessionId }),
@@ -48,6 +53,8 @@ describe('chat turn invariants (architectural)', () => {
     expect(
       ingestEngineUserPromptMessage({
         engine,
+        seedOptimisticMessage: (message) =>
+          coordinator.seedOptimisticMessage(message),
         workspaceId,
         agentSessionId,
         clientSubmitId: 'c1',
@@ -55,6 +62,10 @@ describe('chat turn invariants (architectural)', () => {
         occurredAtUnixMs: 1_000,
       }),
     ).toBe(true)
+    // Tutti: optimistic user is overlay-only until durable arrives.
+    expect(selectSessionMessages(engine.getSnapshot(), agentSessionId)).toEqual(
+      [],
+    )
 
     // Mid-stream assistant for turn 1 (still open).
     engine.dispatch({
@@ -76,10 +87,12 @@ describe('chat turn invariants (architectural)', () => {
       ],
     })
 
-    // Follow-up while busy — must NOT enter the Engine list.
+    // Follow-up while busy — must NOT enter overlay or Engine.
     expect(
       ingestEngineUserPromptMessage({
         engine,
+        seedOptimisticMessage: (message) =>
+          coordinator.seedOptimisticMessage(message),
         workspaceId,
         agentSessionId,
         clientSubmitId: 'c2',
@@ -88,13 +101,23 @@ describe('chat turn invariants (architectural)', () => {
       }),
     ).toBe(false)
 
-    const ids = selectSessionMessages(engine.getSnapshot(), agentSessionId).map(
-      (m) => m.messageId,
-    )
-    expect(ids).toEqual(['user:c1', 'assistant:run-1'])
-    expect(ids).not.toContain('user:c2')
+    expect(
+      selectSessionMessages(engine.getSnapshot(), agentSessionId).map(
+        (m) => m.messageId,
+      ),
+    ).toEqual(['assistant:run-1'])
+
+    const sessionMessages = coordinator.project(
+      project(engine.getSnapshot()),
+    ).sessionMessagesById[agentSessionId]
+    expect(sessionMessages?.map((m) => m.messageId)).toEqual([
+      'user:c1',
+      'assistant:run-1',
+    ])
+    expect(sessionMessages?.map((m) => m.messageId)).not.toContain('user:c2')
 
     const chat = selectHermesChatState(engine.getSnapshot(), agentSessionId, {
+      sessionMessages,
       isSubmitting: true,
     })
     expect(chat.messages.map((m) => m.messageId ?? m.id)).toEqual([
@@ -114,6 +137,7 @@ describe('chat turn invariants (architectural)', () => {
       true,
     )
 
+    coordinator.dispose()
     engine.dispose()
   })
 
@@ -230,6 +254,10 @@ describe('chat turn invariants (architectural)', () => {
       onActivityEvent: () => undefined,
     })
     const engine = createHermesAgentEngine({ workspaceId, commandPort })
+    const { coordinator, project } = createTestActivityCoordinator({
+      engine,
+      workspaceId,
+    })
     hydrateHermesAgentEngine(
       engine,
       createHermesSessionSkeleton({ workspaceId, agentSessionId }),
@@ -238,6 +266,8 @@ describe('chat turn invariants (architectural)', () => {
     expect(
       ingestEngineUserPromptMessage({
         engine,
+        seedOptimisticMessage: (message) =>
+          coordinator.seedOptimisticMessage(message),
         workspaceId,
         agentSessionId,
         clientSubmitId: 'a',
@@ -249,6 +279,8 @@ describe('chat turn invariants (architectural)', () => {
     expect(
       ingestEngineUserPromptMessage({
         engine,
+        seedOptimisticMessage: (message) =>
+          coordinator.seedOptimisticMessage(message),
         workspaceId,
         agentSessionId,
         clientSubmitId: 'b',
@@ -256,11 +288,16 @@ describe('chat turn invariants (architectural)', () => {
         occurredAtUnixMs: 2,
       }),
     ).toBe(true)
+    // Overlay holds both optimistic users; Engine durable bucket stays empty.
+    expect(selectSessionMessages(engine.getSnapshot(), agentSessionId)).toEqual(
+      [],
+    )
     expect(
-      selectSessionMessages(engine.getSnapshot(), agentSessionId).map(
-        (m) => m.messageId,
-      ),
+      coordinator
+        .project(project(engine.getSnapshot()))
+        .sessionMessagesById[agentSessionId]?.map((m) => m.messageId),
     ).toEqual(['user:a', 'user:b'])
+    coordinator.dispose()
     engine.dispose()
   })
 })

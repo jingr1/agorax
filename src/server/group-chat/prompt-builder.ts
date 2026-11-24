@@ -4,6 +4,7 @@
  * This is a direct translation of upstream buildGroupChatTurnPrompt, adapted
  * for workspace storage shapes (RoomMessage instead of plugin log entries).
  */
+import { applyAgentPreferences } from '../agent-preferences'
 import type { GroupMember, RoomMessage } from './types'
 import { groupMemberKey } from './mention-routing'
 
@@ -146,13 +147,15 @@ export function buildTurnContext(
     mission,
   })
   if (summary) {
-    return [
-      '[Earlier conversation summary]',
-      'Note: summary attributes room members by agent_id. Model/provider names in the summary are not you — do not claim their quota or billing failures as your own.',
-      summary,
-      '',
-      prompt,
-    ].join('\n')
+    return applyAgentPreferences(
+      [
+        '[Earlier conversation summary]',
+        'Note: summary attributes room members by agent_id. Model/provider names in the summary are not you — do not claim their quota or billing failures as your own.',
+        summary,
+        '',
+        prompt,
+      ].join('\n'),
+    )
   }
-  return prompt
+  return applyAgentPreferences(prompt)
 }

@@ -5,6 +5,7 @@
 
 import { AgoraxManagedAgentHttpClient } from './agent-runtime/agorax-managed-agent-http-client'
 import type { AgentActivityDurableMessage } from '@agorax/agent-activity-core'
+import { listProfilesLight } from './profiles-browser'
 
 export function hermesDaemonWorkspaceId(profileName?: string): string {
   const profile = (profileName ?? 'default').trim() || 'default'
@@ -220,17 +221,173 @@ export async function listHermesDaemonMessages(input: {
       limit: input.limit,
     })
   } catch (error) {
-    // Missing session → treat as no canonical rows (external gateway history).
+    // Missing session in this hermes:<profile> workspace — not "confirmed
+    // empty". Callers must fall through (other id / profile / gateway) instead
+    // of treating 404 as a mapped fail-closed blank page.
     if (
       error &&
       typeof error === 'object' &&
       'status' in error &&
       (error as { status: number }).status === 404
     ) {
-      return { messages: [], latestVersion: 0, hasMore: false }
+      return null
     }
     throw error
   }
+}
+
+/**
+ * Prefer the UI/active profile, then every known Hermes profile.
+ * Deep links to `/chat/<uuid>` often arrive while activeAgentId is still
+ * `default` even though daemon rows live under `hermes:<worker>`.
+ */
+export function listHermesDaemonProfileCandidates(
+  preferred?: string | null,
+): string[] {
+  const preferredNorm = (preferred ?? 'default').trim() || 'default'
+  const names = new Set<string>(['default'])
+  try {
+    for (const profile of listProfilesLight()) {
+      const name = profile.name?.trim()
+      if (name) names.add(name)
+    }
+  } catch {
+    // Tests / missing HERMES_HOME — still try preferred + default.
+  }
+  const ordered: string[] = [preferredNorm]
+  for (const name of names) {
+    if (name !== preferredNorm) ordered.push(name)
+  }
+  return ordered
+}
+
+export type HermesDaemonMessageHit = {
+  messages: AgentActivityDurableMessage[]
+  latestVersion: number
+  hasMore: boolean
+  profileName: string
+  daemonSessionId: string
+}
+
+/**
+ * Resolve daemon activity for a route session id across profile workspaces.
+ *
+ * Preferred profile first. Cross-profile scan only after every candidate id
+ * 404s under the preferred workspace — never steal another profile's rows
+ * when the preferred workspace already has an empty session.
+ */
+export async function findHermesDaemonMessages(input: {
+  candidateSessionIds: readonly string[]
+  preferredProfile?: string | null
+  afterVersion?: number
+  limit?: number
+}): Promise<HermesDaemonMessageHit | null> {
+  const candidates = input.candidateSessionIds
+    .map((id) => id.trim())
+    .filter(Boolean)
+  if (candidates.length === 0) return null
+
+  const profiles = listHermesDaemonProfileCandidates(input.preferredProfile)
+  const preferred = profiles[0] ?? 'default'
+  let preferredConfirmedEmpty = false
+
+  for (const daemonSessionId of candidates) {
+    const page = await listHermesDaemonMessages({
+      agentSessionId: daemonSessionId,
+      profileName: preferred,
+      afterVersion: input.afterVersion,
+      limit: input.limit,
+    })
+    if (!page) continue
+    if (page.messages.length > 0) {
+      return {
+        ...page,
+        profileName: preferred,
+        daemonSessionId,
+      }
+    }
+    preferredConfirmedEmpty = true
+  }
+
+  if (preferredConfirmedEmpty) {
+    return {
+      messages: [],
+      latestVersion: 0,
+      hasMore: false,
+      profileName: preferred,
+      daemonSessionId: candidates[0]!,
+    }
+  }
+
+  for (const profileName of profiles.slice(1)) {
+    for (const daemonSessionId of candidates) {
+      const page = await listHermesDaemonMessages({
+        agentSessionId: daemonSessionId,
+        profileName,
+        afterVersion: input.afterVersion,
+        limit: input.limit,
+      })
+      if (!page || page.messages.length === 0) continue
+      return {
+        ...page,
+        profileName,
+        daemonSessionId,
+      }
+    }
+  }
+
+  return null
+}
+
+export type HermesDaemonDetailHit = {
+  detail: Awaited<
+    ReturnType<AgoraxManagedAgentHttpClient['getSessionDetail']>
+  >
+  profileName: string
+  daemonSessionId: string
+}
+
+export async function findHermesDaemonSessionDetail(input: {
+  candidateSessionIds: readonly string[]
+  preferredProfile?: string | null
+}): Promise<HermesDaemonDetailHit | null> {
+  const candidates = input.candidateSessionIds
+    .map((id) => id.trim())
+    .filter(Boolean)
+  if (candidates.length === 0) return null
+
+  const baseUrl = process.env.AGORAX_MANAGED_AGENT_URL?.trim()
+  if (!baseUrl) return null
+
+  const profiles = listHermesDaemonProfileCandidates(input.preferredProfile)
+  let lastNotFound: unknown = null
+
+  for (const profileName of profiles) {
+    const http = new AgoraxManagedAgentHttpClient({
+      baseUrl,
+      workspaceId: hermesDaemonWorkspaceId(profileName),
+    })
+    for (const daemonSessionId of candidates) {
+      try {
+        const detail = await http.getSessionDetail(daemonSessionId)
+        return { detail, profileName, daemonSessionId }
+      } catch (error) {
+        if (
+          error &&
+          typeof error === 'object' &&
+          'status' in error &&
+          (error as { status: number }).status === 404
+        ) {
+          lastNotFound = error
+          continue
+        }
+        throw error
+      }
+    }
+  }
+
+  if (lastNotFound) return null
+  return null
 }
 
 function payloadText(payload: Record<string, unknown> | undefined): string {

@@ -13,6 +13,7 @@ import {
   tmuxPaneLooksLikeHermesTui,
   tmuxPaneLooksLikeShellReady,
 } from './swarm-dispatch'
+import { resetAgentPreferencesCacheForTests } from '../../server/agent-preferences'
 
 describe('resolveWaitForCheckpoint', () => {
   it('waits by default for curl-style callers', () => {
@@ -343,22 +344,31 @@ describe('buildWorkerPrompt', () => {
   }
 
   it('uses Name — Role as the human-facing label while preserving swarmN as machine ID', () => {
-    const prompt = buildWorkerPrompt({
-      workerId: 'swarm5',
-      task: 'Patch the conductor card copy.',
-      rationale: 'Builder executes implementation work.',
-      roster,
-    })
+    process.env.AGORAX_AGENT_PREFERENCES_TEXT = 'Be terse.'
+    resetAgentPreferencesCacheForTests()
+    try {
+      const prompt = buildWorkerPrompt({
+        workerId: 'swarm5',
+        task: 'Patch the conductor card copy.',
+        rationale: 'Builder executes implementation work.',
+        roster,
+      })
 
-    expect(prompt).toContain('Worker: Builder — Primary Builder')
-    expect(prompt).toContain('Machine ID: swarm5')
-    expect(prompt).toContain(
-      'Mission: Ship focused product slices with tests and clean diffs.',
-    )
-    expect(prompt).toContain(
-      'Capabilities: code-editing, ui-implementation, build-verification',
-    )
-    expect(prompt).toContain('Skills: swarm-ui-worker, swarm-worker-core')
+      expect(prompt).toContain('<!-- agorax-agent-preferences -->')
+      expect(prompt).toContain('Be terse.')
+      expect(prompt).toContain('Worker: Builder — Primary Builder')
+      expect(prompt).toContain('Machine ID: swarm5')
+      expect(prompt).toContain(
+        'Mission: Ship focused product slices with tests and clean diffs.',
+      )
+      expect(prompt).toContain(
+        'Capabilities: code-editing, ui-implementation, build-verification',
+      )
+      expect(prompt).toContain('Skills: swarm-ui-worker, swarm-worker-core')
+    } finally {
+      delete process.env.AGORAX_AGENT_PREFERENCES_TEXT
+      resetAgentPreferencesCacheForTests()
+    }
   })
 
   it('still injects role context for direct one-shot dispatch unless raw mode is explicit', () => {

@@ -67,6 +67,11 @@ export interface AgentActivityWorkspaceEventCoordinator {
   ): AgentActivityWorkspaceEventResult;
   isSessionDeleted(agentSessionId: string): boolean;
   project(canonical: AgentActivitySnapshot): AgentActivitySnapshot;
+  /**
+   * Tutti send-time contract: seed optimistic user into overlay only.
+   * Engine durable bucket stays empty until Host/daemon truth arrives.
+   */
+  seedOptimisticMessage(message: AgentActivityMessage): boolean;
   reconcileDiscontinuity(input: {
     fallbackSessionIds?: readonly string[];
     reconcileKeys: readonly AgentActivityWorkspaceReconcileKey[];
@@ -532,6 +537,26 @@ export function createAgentActivityWorkspaceEventCoordinator({
           needsState: true
         });
       }
+    },
+    seedOptimisticMessage(message) {
+      if (disposed) return false;
+      const agentSessionId = message.agentSessionId.trim();
+      const messageWorkspaceId = message.workspaceId.trim();
+      if (
+        !agentSessionId ||
+        !message.messageId.trim() ||
+        messageWorkspaceId !== normalizedWorkspaceId
+      ) {
+        return false;
+      }
+      overlay.seed({
+        ...message,
+        workspaceId: normalizedWorkspaceId,
+        agentSessionId
+      });
+      overlaySessionIds.add(agentSessionId);
+      markChanged("immediate");
+      return true;
     },
     reconcileMessages(agentSessionId, canonicalMessages) {
       if (disposed) return;

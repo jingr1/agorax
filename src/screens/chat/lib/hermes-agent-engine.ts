@@ -23,6 +23,7 @@ import {
   type AgentActivityTurn,
   type AgentActivityTurnCancelResponse,
   type AgentActivityUpdatedEvent,
+  type AgentActivityWorkspaceEventCoordinator,
   type AgentSessionActivateEffectResult,
   type AgentSessionEngine,
   type AgentSessionEngineState,
@@ -37,6 +38,7 @@ import {
 import {
   projectActivityMessagesToChat,
   selectAssistantStreamingMessageId,
+  turnHasInFlightActivityWork,
 } from './activity-list-projection'
 import { applyOpenAssistantStreamingChrome } from './engine-open-assistant-stream'
 import { ingestEngineUserPromptMessage } from './engine-user-prompt-ingest'
@@ -357,7 +359,19 @@ export function createHermesCommandPort(
         if (!gatewaySessionId) {
           throw new Error('Hermes create session returned no sessionKey')
         }
-        const agentSessionId = input.agentSessionId.trim() || gatewaySessionId
+        // Durable id = gateway session key. Persist / history / refresh all key
+        // off that id; keeping a separate Engine UUID left mapped empty pages
+        // after reload when the route still held the pre-promote UUID.
+        const agentSessionId = gatewaySessionId
+        const requestedId = input.agentSessionId.trim()
+        if (requestedId && requestedId !== gatewaySessionId) {
+          await persistMapping({
+            agentSessionId: requestedId,
+            gatewaySessionId,
+            turnId: null,
+            hermesRunId: null,
+          })
+        }
         await persistMapping({
           agentSessionId,
           gatewaySessionId,
@@ -1035,11 +1049,13 @@ export function reconcileHermesHistoryIntoEngine(input: {
 }
 
 /**
- * Optimistic user row + empty assistant host before SSE `started`.
- * Same turnId as commandPort send so later assistant:<runId> folds onto this host.
+ * Optimistic user into coordinator overlay only (Tutti contract) before SSE
+ * `started`. Same turnId as commandPort send so later assistant:<runId> folds
+ * onto the durable host once it lands in Engine.
  */
 export function ingestHermesUserPromptMessage(input: {
   engine: AgentSessionEngine
+  coordinator: AgentActivityWorkspaceEventCoordinator
   workspaceId: string
   agentSessionId: string
   clientSubmitId: string
@@ -1047,7 +1063,14 @@ export function ingestHermesUserPromptMessage(input: {
   occurredAtUnixMs?: number
 }): boolean {
   return ingestEngineUserPromptMessage({
-    ...input,
+    engine: input.engine,
+    seedOptimisticMessage: (message) =>
+      input.coordinator.seedOptimisticMessage(message),
+    workspaceId: input.workspaceId,
+    agentSessionId: input.agentSessionId,
+    clientSubmitId: input.clientSubmitId,
+    text: input.text,
+    occurredAtUnixMs: input.occurredAtUnixMs,
     ensureSession: ({ workspaceId, agentSessionId }) => {
       hydrateHermesAgentEngine(
         input.engine,
@@ -1085,6 +1108,9 @@ export function selectHermesChatState(
   const activityStreamingId = turnActive
     ? selectAssistantStreamingMessageId(sessionMessages, activeTurn.turnId)
     : null
+  const contentInFlight = turnActive
+    ? turnHasInFlightActivityWork(sessionMessages, activeTurn.turnId)
+    : false
   const chrome = applyOpenAssistantStreamingChrome({
     messages: projectActivityMessagesToChat(
       sessionMessages,
@@ -1093,6 +1119,7 @@ export function selectHermesChatState(
     activityStreamingId,
     turnActive,
     submitting,
+    contentInFlight,
   })
   const terminalTurn = activeTurn ?? latestTurn
   const visibleError = sessionMessages.find(

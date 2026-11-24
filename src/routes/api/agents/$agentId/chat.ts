@@ -13,6 +13,7 @@ import { getAgentRuntimeRouter } from '../../../../server/agent-runtime/router'
 import { managedPromptContentFromAttachments } from '../../../../server/agent-runtime/agorax-managed-prompt-content'
 import { loadWorkspaceCatalog } from '../../workspace'
 import { buildWorkspaceScopedTextMessage } from '../../../../lib/workspace-message-scope'
+import { applyAgentPreferences } from '../../../../server/agent-preferences'
 import type { AgentStreamEvent } from '../../../../server/agent-runtime/types'
 
 /**
@@ -115,10 +116,13 @@ export const Route = createFileRoute('/api/agents/$agentId/chat')({
 
         // With --resume, Claude already has history — only send the new turn.
         // First turn (--session-id) also stays single-message; no prompt replay.
-        const scopedUser = buildWorkspaceScopedTextMessage(message, workspace)
+        const scopedUser = buildWorkspaceScopedTextMessage(
+          applyAgentPreferences(message),
+          workspace,
+        )
         const task = [
           `User: ${scopedUser}`,
-          '直接回应用户，面向用户的叙述使用简体中文（代码、命令、技术标识保持英文）。如有需要可通过 MCP 使用 Hermes 工具。',
+          '直接回应用户。如有需要可通过 MCP 使用 Hermes 工具。',
         ].join('\n')
         let content
         try {

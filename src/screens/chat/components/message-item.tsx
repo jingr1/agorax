@@ -51,6 +51,7 @@ import { CHAT_SUBMIT_SELECTION_EVENT } from '@/screens/chat/chat-events'
 const WORDS_PER_TICK = 4
 const TICK_INTERVAL_MS = 50
 const STUCK_SENDING_THRESHOLD_MS = 120_000
+const EMPTY_TOOL_CALLS: ReturnType<typeof getToolCallsFromMessage> = []
 
 function isWhitespaceCharacter(value: string): boolean {
   return /\s/.test(value)
@@ -2181,12 +2182,10 @@ function MessageItemComponent({
   }, [])
 
   useEffect(() => {
-    if (remoteStreamingActive) {
-      setDisplayText(remoteStreamingText ?? fullText)
-      return
-    }
-
-    setDisplayText((current) => (current === fullText ? current : fullText))
+    const next = remoteStreamingActive
+      ? (remoteStreamingText ?? fullText)
+      : fullText
+    setDisplayText((current) => (current === next ? current : next))
   }, [remoteStreamingActive, remoteStreamingText, fullText])
 
   // Reset word count when simulate streaming starts for a new message
@@ -2245,8 +2244,12 @@ function MessageItemComponent({
       targetWordCountRef.current = nextTotalWords
       previousTextRef.current = displayText
       previousTextLengthRef.current = displayText.length
-      setRevealedWordCount(nextTotalWords)
-      setRevealedText(displayText)
+      setRevealedWordCount((current) =>
+        current === nextTotalWords ? current : nextTotalWords,
+      )
+      setRevealedText((current) =>
+        current === displayText ? current : displayText,
+      )
       return
     }
 
@@ -2401,8 +2404,12 @@ function MessageItemComponent({
   const canRetryMessage =
     isUser && (hasText || hasAttachments || hasInlineImages)
 
-  // Get tool calls from this message (for assistant messages)
-  const toolCalls = role === 'assistant' ? getToolCallsFromMessage(message) : []
+  // Get tool calls from this message (for assistant messages).
+  // Stable empty array — a fresh `[]` each render busts tool useMemos.
+  const toolCalls = useMemo(
+    () => (role === 'assistant' ? getToolCallsFromMessage(message) : EMPTY_TOOL_CALLS),
+    [role, message],
+  )
   const embeddedStreamToolCalls = useMemo(() => {
     const value = (message as any).__streamToolCalls
     if (!Array.isArray(value)) return []
@@ -2594,13 +2601,14 @@ function MessageItemComponent({
   // Only show retry for messages genuinely stuck in 'sending' (API call hasn't
   // returned yet after 30s). 'queued' messages are delivered — never show retry.
   const [isStuckSending, setIsStuckSending] = useState(false)
+  const messageStatus = message.status
+  const messageTimestamp = rawTimestamp(message)
   useEffect(() => {
-    if (!isUser || message.status !== 'sending') {
-      setIsStuckSending(false)
+    if (!isUser || messageStatus !== 'sending') {
+      setIsStuckSending((was) => (was ? false : was))
       return
     }
-    const ts = rawTimestamp(message)
-    const elapsed = ts ? Date.now() - ts : 0
+    const elapsed = messageTimestamp ? Date.now() - messageTimestamp : 0
     const remaining = Math.max(0, STUCK_SENDING_THRESHOLD_MS - elapsed)
     // Already past 30s threshold
     if (remaining === 0) {
@@ -2609,7 +2617,7 @@ function MessageItemComponent({
     }
     const timer = window.setTimeout(() => setIsStuckSending(true), remaining)
     return () => window.clearTimeout(timer)
-  }, [isUser, message, message.status])
+  }, [isUser, messageStatus, messageTimestamp])
 
   if (execNotification) {
     const isSuccess = execNotification.ok ?? execNotification.exitCode === 0

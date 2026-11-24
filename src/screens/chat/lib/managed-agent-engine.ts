@@ -4,7 +4,10 @@ import {
   selectEngineActiveTurn,
   selectEngineLatestTurn,
   selectEngineInteractionsForSession,
+  selectEnginePromptQueueError,
   selectEngineSession,
+  selectLatestActivationForSession,
+  selectLatestPendingSubmitForSession,
   selectSessionMessages,
   type AgentActivityMessage,
   type AgentActivitySendInputResult,
@@ -12,6 +15,7 @@ import {
   type AgentActivitySessionDetailSnapshot,
   type AgentActivitySubmitInteractiveResult,
   type AgentActivityTurnCancelResponse,
+  type AgentActivityWorkspaceEventCoordinator,
   type AgentSessionActivateEffectResult,
   type AgentSessionEngine,
   type AgentSessionEngineState,
@@ -35,6 +39,7 @@ import {
 import {
   projectActivityMessagesToChat,
   selectAssistantStreamingMessageId,
+  turnHasInFlightActivityWork,
 } from './activity-list-projection'
 import { applyOpenAssistantStreamingChrome } from './engine-open-assistant-stream'
 import { ingestEngineUserPromptMessage } from './engine-user-prompt-ingest'
@@ -155,6 +160,11 @@ export function createManagedAgentCommandPort(
             agentSessionId: input.agentSessionId,
             message: input.initialDisplayPrompt ?? '',
             promptContent: input.initialContent,
+            // Must match optimistic `client-submit:user:<id>` or Host stamps
+            // client-submit:user:<sessionId> and the list shows two users.
+            ...(input.clientSubmitId?.trim()
+              ? { clientSubmitId: input.clientSubmitId.trim() }
+              : {}),
             ...(input.settings?.model ? { model: input.settings.model } : {}),
             ...(input.settings?.reasoningEffort
               ? { reasoningEffort: input.settings.reasoningEffort }
@@ -421,9 +431,11 @@ export function createManagedSessionSkeleton(input: {
 /**
  * Same send-time shell as Hermes (`ingestEngineUserPromptMessage`).
  * Call before `submitPrompt` / activate-with-initial with the same clientSubmitId.
+ * Optimistic user goes to coordinator overlay only (Tutti contract).
  */
 export function ingestManagedUserPromptMessage(input: {
   engine: AgentSessionEngine
+  coordinator: AgentActivityWorkspaceEventCoordinator
   workspaceId: string
   agentSessionId: string
   clientSubmitId: string
@@ -431,13 +443,18 @@ export function ingestManagedUserPromptMessage(input: {
   occurredAtUnixMs?: number
   agentTargetId?: string
 }): boolean {
+  const clientSubmitId = input.clientSubmitId.trim()
   return ingestEngineUserPromptMessage({
     engine: input.engine,
+    seedOptimisticMessage: (message) =>
+      input.coordinator.seedOptimisticMessage(message),
     workspaceId: input.workspaceId,
     agentSessionId: input.agentSessionId,
-    clientSubmitId: input.clientSubmitId,
+    clientSubmitId,
     text: input.text,
     occurredAtUnixMs: input.occurredAtUnixMs,
+    // Host/daemon stamp `client-submit:user:<id>` — must match optimistic seed.
+    userMessageId: `client-submit:user:${clientSubmitId}`,
     ensureSession: ({ workspaceId, agentSessionId }) => {
       const now = Date.now()
       input.engine.dispatch({
@@ -461,6 +478,13 @@ export function ingestManagedUserPromptMessage(input: {
 export function hydrateManagedAgentEngine(
   engine: AgentSessionEngine,
   detail: ManagedAgentActivityDetail,
+  options?: {
+    /**
+     * Tutti: after durable messages land in Engine, drop overlay optimistic
+     * users whose submit/turn is no longer effective.
+     */
+    coordinator?: AgentActivityWorkspaceEventCoordinator
+  },
 ): void {
   engine.dispatch({
     type: 'session/detailSnapshotReceived',
@@ -478,6 +502,16 @@ export function hydrateManagedAgentEngine(
   // rows without interaction.requested. Upsert synthesized pending cards so
   // submitInteractionResponse can admit the click (engine requires pending).
   syncPendingApprovalsIntoEngine(engine, detail.messages, detail.interactions)
+
+  const coordinator = options?.coordinator
+  if (!coordinator) return
+  const agentSessionId = detail.session.agentSessionId
+  const canonical = selectSessionMessages(engine.getSnapshot(), agentSessionId)
+  coordinator.reconcileAuthoritativeHistory(
+    agentSessionId,
+    canonical,
+    detail.turns,
+  )
 }
 
 /**
@@ -556,6 +590,8 @@ export function selectManagedAgentChatState(
     isSubmitting?: boolean
   },
 ) {
+  // Tutti contract: optimistic users live in overlay only and are dropped by
+  // reconcileAuthoritativeHistory — no Managed-only text/id collapse here.
   const sessionMessages =
     options?.sessionMessages ??
     (agentSessionId ? selectSessionMessages(state, agentSessionId) : [])
@@ -582,12 +618,31 @@ export function selectManagedAgentChatState(
   const terminalError = terminalTurn?.phase === 'settled' && terminalTurn.outcome === 'failed'
     ? terminalTurn.error?.message ?? null
     : null
+  // Hidden auto-submits are removed from the prompt queue on failure, so the
+  // durable error lives on pendingIntents (and on the visible queue when the
+  // composer still shows a queued row). Without this, sendInput 502s look silent.
+  const queueError = selectEnginePromptQueueError(state, agentSessionId)
+  const latestSubmit = selectLatestPendingSubmitForSession(state, agentSessionId)
+  const submitError =
+    latestSubmit?.status === 'failed'
+      ? latestSubmit.errorMessage?.trim() || null
+      : null
+  const latestActivation = selectLatestActivationForSession(state, agentSessionId)
+  const activationError =
+    latestActivation?.status === 'failed'
+      ? latestActivation.errorMessage?.trim() || null
+      : null
   const turnActive = activeTurn !== null && activeTurn.phase !== 'settled'
   const submitting = options?.isSubmitting === true
   const activityStreamingId = turnActive
     ? selectAssistantStreamingMessageId(sessionMessages, activeTurn.turnId)
     : null
+  const contentInFlight = turnActive
+    ? turnHasInFlightActivityWork(sessionMessages, activeTurn.turnId)
+    : false
   // Homologous with selectHermesChatState — pending shell + foldOpenTurn.
+  // contentInFlight (not turnActive alone) drives Stop / caret so Managed
+  // post-delta Host lag does not keep streaming chrome after content is done.
   const chrome = applyOpenAssistantStreamingChrome({
     messages: projectActivityMessagesToChat(
       sessionMessages,
@@ -596,6 +651,7 @@ export function selectManagedAgentChatState(
     activityStreamingId,
     turnActive,
     submitting,
+    contentInFlight,
   })
   return {
     messages: chrome.messages,
@@ -614,6 +670,9 @@ export function selectManagedAgentChatState(
     /** Assistant message id that should receive live streaming chrome. */
     streamingMessageId: chrome.streamingMessageId,
     error: terminalError ??
+      submitError ??
+      activationError ??
+      queueError ??
       (visibleError
         ? visibleErrorText(visibleError.payload)
         : providerNotice && terminalTurn?.phase === 'settled'
@@ -623,22 +682,54 @@ export function selectManagedAgentChatState(
       sessionMessages,
       selectEngineInteractionsForSession(state, agentSessionId),
     ),
+    /**
+     * Homologous with selectHermesChatState: while the turn is open, keep
+     * completed tools in the overlay so Activity does not vanish after a fast
+     * tool finishes. Approval rows stay interaction cards, not tool chrome.
+     */
     activeToolCalls: agentSessionId
       ? sessionMessages
-          .filter((message) =>
-            isToolCallKind(message.kind) &&
-            !isTerminalToolStatus(message.status) &&
-            // Approval rows are interaction cards, not completed tools.
-            !isWaitingApprovalToolStatus(
-              message.status,
-              message.payload,
-            )
-          )
+          .filter((message) => {
+            if (!isToolCallKind(message.kind)) return false
+            if (
+              isWaitingApprovalToolStatus(message.status, message.payload)
+            ) {
+              return false
+            }
+            if (turnActive) {
+              const turnId = activeTurn?.turnId?.trim()
+              if (
+                turnId &&
+                message.turnId?.trim() &&
+                message.turnId.trim() !== turnId
+              ) {
+                return false
+              }
+              return true
+            }
+            return !isTerminalToolStatus(message.status)
+          })
           .map((message) => ({
             id: message.messageId,
             name: toolNameFromPayload(message.payload),
-            phase: normalizeActiveToolPhase(message.status),
+            phase: turnActive
+              ? isTerminalToolStatus(message.status)
+                ? message.status === 'failed' || message.status === 'error'
+                  ? 'error'
+                  : 'done'
+                : normalizeActiveToolPhase(message.status)
+              : normalizeActiveToolPhase(message.status),
             args: record(message.payload.input ?? message.payload.arguments),
+            result:
+              typeof message.payload.output === 'string'
+                ? message.payload.output
+                : typeof message.payload.result === 'string'
+                  ? message.payload.result
+                  : typeof message.payload.error === 'string'
+                    ? message.payload.error
+                    : typeof message.payload.errorMessage === 'string'
+                      ? message.payload.errorMessage
+                      : undefined,
           }))
       : [],
   }

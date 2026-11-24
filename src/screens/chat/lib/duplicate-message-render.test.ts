@@ -10,6 +10,7 @@ import {
   selectHermesChatState,
 } from './hermes-agent-engine'
 import { __resetRememberedOpenTurnForTests } from './engine-user-prompt-ingest'
+import { createTestActivityCoordinator } from './test-activity-coordinator'
 import { projectChatToTranscriptRows } from './agent-transcript-vm'
 import type { AgentActivityDurableMessage } from '@agorax/agent-activity-core'
 
@@ -28,12 +29,17 @@ describe('Hermes display SoT (no busy history merge)', () => {
       onActivityEvent: () => undefined,
     })
     const engine = createHermesAgentEngine({ workspaceId, commandPort })
+    const { coordinator, project } = createTestActivityCoordinator({
+      engine,
+      workspaceId,
+    })
     hydrateHermesAgentEngine(
       engine,
       createHermesSessionSkeleton({ workspaceId, agentSessionId }),
     )
     ingestHermesUserPromptMessage({
       engine,
+      coordinator,
       workspaceId,
       agentSessionId,
       clientSubmitId: 'c-dup',
@@ -42,6 +48,8 @@ describe('Hermes display SoT (no busy history merge)', () => {
     })
 
     const before = selectHermesChatState(engine.getSnapshot(), agentSessionId, {
+      sessionMessages: coordinator.project(project(engine.getSnapshot()))
+        .sessionMessagesById[agentSessionId],
       isSubmitting: true,
     }).messages.map((m) => m.id || m.messageId)
 
@@ -73,6 +81,8 @@ describe('Hermes display SoT (no busy history merge)', () => {
     ).toBe(0)
 
     const chat = selectHermesChatState(engine.getSnapshot(), agentSessionId, {
+      sessionMessages: coordinator.project(project(engine.getSnapshot()))
+        .sessionMessagesById[agentSessionId],
       isSubmitting: true,
     })
     expect(chat.messages.map((m) => m.id || m.messageId)).toEqual(before)
@@ -87,6 +97,7 @@ describe('Hermes display SoT (no busy history merge)', () => {
     })
     expect(rows.map((r) => r.kind)).toEqual(['message', 'processing'])
     expect(rows[1]?.key).toBe('processing:c-dup')
+    coordinator.dispose()
     engine.dispose()
   })
 
@@ -100,18 +111,17 @@ describe('Hermes display SoT (no busy history merge)', () => {
       onActivityEvent: () => undefined,
     })
     const engine = createHermesAgentEngine({ workspaceId, commandPort })
-    const coordinator = {
-      reconcileAuthoritativeHistory: (
-        _sid: string,
-        _messages: readonly AgentActivityDurableMessage[],
-      ) => undefined,
-    }
+    const { coordinator } = createTestActivityCoordinator({
+      engine,
+      workspaceId,
+    })
     hydrateHermesAgentEngine(
       engine,
       createHermesSessionSkeleton({ workspaceId, agentSessionId }),
     )
     ingestHermesUserPromptMessage({
       engine,
+      coordinator,
       workspaceId,
       agentSessionId,
       clientSubmitId: 't1',
@@ -183,6 +193,7 @@ describe('Hermes display SoT (no busy history merge)', () => {
     )
     expect(JSON.stringify(t1)).toContain('谢。')
     expect(JSON.stringify(t1)).not.toContain('只回复一个字')
+    coordinator.dispose()
     engine.dispose()
   })
 })

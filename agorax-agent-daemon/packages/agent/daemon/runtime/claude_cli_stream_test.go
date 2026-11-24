@@ -21,8 +21,8 @@ func TestClaudeStreamParserDecodesInitAssistantToolAndResult(t *testing.T) {
 		events = append(events, parser.push([]byte(line+"\n"))...)
 	}
 
-	if len(events) != 5 {
-		t.Fatalf("parsed events = %#v, want 5", events)
+	if len(events) != 6 {
+		t.Fatalf("parsed events = %#v, want 6", events)
 	}
 	if events[0].kind != "init" || events[0].sessionID != "sess-1" || events[0].model != "claude-sonnet-4-5" {
 		t.Fatalf("init event = %#v", events[0])
@@ -30,26 +30,29 @@ func TestClaudeStreamParserDecodesInitAssistantToolAndResult(t *testing.T) {
 	if events[1].kind != "text" || events[1].text != "Here is the file." {
 		t.Fatalf("text event = %#v", events[1])
 	}
-	if events[2].kind != "tool_start" || events[2].toolID != "toolu_1" || events[2].toolName != "Read" {
-		t.Fatalf("tool_start event = %#v", events[2])
+	if events[2].kind != "assistant_segment_complete" {
+		t.Fatalf("assistant_segment_complete event = %#v", events[2])
 	}
-	if events[2].toolInput["file_path"] != "/tmp/a.go" {
-		t.Fatalf("tool input = %#v", events[2].toolInput)
+	if events[3].kind != "tool_start" || events[3].toolID != "toolu_1" || events[3].toolName != "Read" {
+		t.Fatalf("tool_start event = %#v", events[3])
 	}
-	if events[3].kind != "tool_end" || events[3].toolID != "toolu_1" || events[3].toolName != "Read" || events[3].toolError {
-		t.Fatalf("tool_end event = %#v", events[3])
+	if events[3].toolInput["file_path"] != "/tmp/a.go" {
+		t.Fatalf("tool input = %#v", events[3].toolInput)
 	}
-	if events[3].text != "package main" {
-		t.Fatalf("tool output = %q", events[3].text)
+	if events[4].kind != "tool_end" || events[4].toolID != "toolu_1" || events[4].toolName != "Read" || events[4].toolError {
+		t.Fatalf("tool_end event = %#v", events[4])
 	}
-	if events[4].kind != "result" || events[4].result.subtype != "success" || events[4].result.text != "Here is the file." {
-		t.Fatalf("result event = %#v", events[4])
+	if events[4].text != "package main" {
+		t.Fatalf("tool output = %q", events[4].text)
 	}
-	if events[4].result.numTurns != 2 || events[4].result.durationMS != 1200 || events[4].result.totalCostUSD != 0.01 {
-		t.Fatalf("result stats = %#v", events[4].result)
+	if events[5].kind != "result" || events[5].result.subtype != "success" || events[5].result.text != "Here is the file." {
+		t.Fatalf("result event = %#v", events[5])
 	}
-	if events[4].result.usage["input_tokens"] != float64(10) {
-		t.Fatalf("result usage = %#v", events[4].result.usage)
+	if events[5].result.numTurns != 2 || events[5].result.durationMS != 1200 || events[5].result.totalCostUSD != 0.01 {
+		t.Fatalf("result stats = %#v", events[5].result)
+	}
+	if events[5].result.usage["input_tokens"] != float64(10) {
+		t.Fatalf("result usage = %#v", events[5].result.usage)
 	}
 }
 
@@ -66,8 +69,11 @@ func TestClaudeStreamParserPrefersPartialsAndSkipsDuplicatedAssistantText(t *tes
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}`+"\n",
 	))...)
 
-	if len(events) != 2 || events[0].text != "Hel" || events[1].text != "lo" {
-		t.Fatalf("events = %#v, want only the two partial deltas", events)
+	if len(events) != 3 ||
+		events[0].text != "Hel" ||
+		events[1].text != "lo" ||
+		events[2].kind != "assistant_segment_complete" {
+		t.Fatalf("events = %#v, want two partial deltas then assistant_segment_complete", events)
 	}
 }
 

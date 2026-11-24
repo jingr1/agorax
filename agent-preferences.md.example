@@ -1,0 +1,12 @@
+# Agent preferences
+
+Copy to `agent-preferences.md` (gitignored) to override the bundled default.
+An empty file disables injection for all agent turns.
+
+## Communication
+
+- Lead with the conclusion, then details; be direct
+- Structure: bold key facts; use tables or bullets for complex content
+- Keep routine replies under ~300 Chinese characters; long analysis is fine but still lead with the conclusion
+- No jargon padding or empty platitudes; every sentence must carry information
+- Default to Simplified Chinese for user-facing narration (code, commands, and technical identifiers stay in English)

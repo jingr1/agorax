@@ -12,9 +12,10 @@ import {
   ingestEngineUserPromptMessage,
 } from './engine-user-prompt-ingest'
 import { projectChatToTranscriptRows } from './agent-transcript-vm'
+import { createTestActivityCoordinator } from './test-activity-coordinator'
 
 describe('ingestEngineUserPromptMessage', () => {
-  it('seeds only optimistic user; open-turn face is transcript processing', () => {
+  it('seeds optimistic user into overlay only; Engine bucket stays empty', () => {
     const workspaceId = 'ws'
     const commandPort = createHermesCommandPort({
       workspaceId,
@@ -23,6 +24,10 @@ describe('ingestEngineUserPromptMessage', () => {
       onActivityEvent: () => undefined,
     })
     const engine = createHermesAgentEngine({ workspaceId, commandPort })
+    const { coordinator, project } = createTestActivityCoordinator({
+      engine,
+      workspaceId,
+    })
     hydrateHermesAgentEngine(
       engine,
       createHermesSessionSkeleton({
@@ -33,6 +38,8 @@ describe('ingestEngineUserPromptMessage', () => {
     expect(
       ingestEngineUserPromptMessage({
         engine,
+        seedOptimisticMessage: (message) =>
+          coordinator.seedOptimisticMessage(message),
         workspaceId,
         agentSessionId: 'sess-1',
         clientSubmitId: 'c-continue',
@@ -41,17 +48,18 @@ describe('ingestEngineUserPromptMessage', () => {
       }),
     ).toBe(true)
 
-    expect(
-      selectSessionMessages(engine.getSnapshot(), 'sess-1').map(
-        (m) => m.messageId,
-      ),
-    ).toEqual(['user:c-continue'])
+    // Tutti contract: durable Engine bucket has no optimistic user.
+    expect(selectSessionMessages(engine.getSnapshot(), 'sess-1')).toEqual([])
     expect(getRememberedOpenTurn('sess-1')).toEqual({
       clientSubmitId: 'c-continue',
       turnId: 'turn-c-continue',
     })
 
+    const sessionMessages = coordinator.project(
+      project(engine.getSnapshot()),
+    ).sessionMessagesById['sess-1']
     const chat = selectHermesChatState(engine.getSnapshot(), 'sess-1', {
+      sessionMessages,
       isSubmitting: true,
     })
     expect(chat.turnBusy).toBe(true)
@@ -62,6 +70,7 @@ describe('ingestEngineUserPromptMessage', () => {
         openTurnKey: 'c-continue',
       }).map((r) => r.key),
     ).toEqual(['user:c-continue', 'processing:c-continue'])
+    coordinator.dispose()
     engine.dispose()
   })
 })

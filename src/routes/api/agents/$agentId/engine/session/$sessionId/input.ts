@@ -8,6 +8,7 @@ import {
 import { resolveAgoraxManagedSessionIdentity } from '../../../../../../../server/agent-runtime/agorax-managed-agent-session-identity'
 import { resolveManagedChatWorkspaceCwd } from '../../../../../../../server/agent-runtime/managed-chat-workspace'
 import { buildWorkspaceScopedTextMessage } from '../../../../../../../lib/workspace-message-scope'
+import { applyAgentPreferences } from '../../../../../../../server/agent-preferences'
 import { loadWorkspaceCatalog } from '../../../../../workspace'
 import type { ManagedAgentInputResponseDto } from '@/lib/managed-agent-runtime/command-dtos'
 import type { AgoraxManagedPromptContentBlock } from '@/lib/managed-agent-runtime/prompt-content'
@@ -66,8 +67,9 @@ export const Route = createFileRoute(
           workspace,
           params.agentId,
         )
+        // Preferences before Workspace::v1 so the WebUI prefix stays leading.
         const scopedRuntimeText = buildWorkspaceScopedTextMessage(
-          injected.text,
+          applyAgentPreferences(injected.text),
           workspace,
         )
         let promptContent: Array<AgoraxManagedPromptContentBlock> | undefined

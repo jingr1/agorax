@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createManagedAgentCommandPort,
   createManagedAgentEngine,
@@ -9,10 +9,19 @@ import {
   selectManagedAgentChatState,
   syncPendingApprovalsIntoEngine,
 } from './managed-agent-engine'
-import { selectEngineInteractionsForSession } from '@agorax/agent-activity-core'
+import {
+  selectEngineInteractionsForSession,
+  selectSessionMessages,
+} from '@agorax/agent-activity-core'
 import type { AgentActivityMessage, AgentActivitySessionCapabilities } from '@agorax/agent-activity-core'
+import { createTestActivityCoordinator } from './test-activity-coordinator'
+import { __resetRememberedOpenTurnForTests } from './engine-user-prompt-ingest'
 
 describe('Managed Agent Engine adapter', () => {
+  beforeEach(() => {
+    __resetRememberedOpenTurnForTests()
+  })
+
   it('queues follow-ups until the canonical active turn settles', () => {
     const sendInput = vi.fn().mockReturnValue(new Promise(() => undefined))
     const engine = createManagedAgentEngine({ workspaceId: 'workspace-1', commandPort: {
@@ -164,32 +173,185 @@ describe('Managed Agent Engine adapter', () => {
     const state = selectManagedAgentChatState(engine.getSnapshot(), 'session-1')
     expect(state.messages).toHaveLength(1)
     expect(state.activeTurn?.turnId).toBe('turn-1')
+    // Missing Activity status is treated as in-flight (live hydrate).
     expect(state.isStreaming).toBe(true)
-    // agorax: turn busy stays true even when reply text already hosts.
+    // turnBusy stays true for queue gating even after reply text hosts.
     expect(state.turnBusy).toBe(true)
     expect(state.streamingMessageId).toBe('message-1')
     expect(state.interactions[0]?.requestId).toBe('request-1')
     engine.dispose()
   })
 
-  it('ingestManagedUserPromptMessage seeds only optimistic user (homologous with Hermes)', () => {
+  it('clears isStreaming when assistant Activity is completed while Host turn still runs', () => {
+    // Managed providers often keep turn phase running after the last visible
+    // delta. Content-stream chrome must not wait for Host settle.
     const engine = createManagedAgentEngine({
       workspaceId: 'workspace-1',
       commandPort: { kind: 'typed', effects: unsupportedEffects(), execute: async () => undefined },
     })
+    hydrateManagedAgentEngine(engine, {
+      ...detailDefaults,
+      workspaceId: 'workspace-1',
+      session: session(),
+      turns: [turn()],
+      messages: [{
+        workspaceId: 'workspace-1',
+        agentSessionId: 'session-1',
+        messageId: 'message-1',
+        turnId: 'turn-1',
+        role: 'assistant',
+        kind: 'text',
+        status: 'completed',
+        payload: { text: 'hello' },
+        version: 1,
+        sequence: 1,
+        occurredAtUnixMs: 1,
+      }],
+      interactions: [],
+    })
+
+    const state = selectManagedAgentChatState(engine.getSnapshot(), 'session-1')
+    expect(state.activeTurn?.phase).toBe('running')
+    expect(state.turnBusy).toBe(true)
+    expect(state.isStreaming).toBe(false)
+    expect(state.streamingMessageId).toBeNull()
+    engine.dispose()
+  })
+
+  it('ingestManagedUserPromptMessage seeds Tutti Host user id into overlay only', () => {
+    const engine = createManagedAgentEngine({
+      workspaceId: 'workspace-1',
+      commandPort: { kind: 'typed', effects: unsupportedEffects(), execute: async () => undefined },
+    })
+    const { coordinator, project } = createTestActivityCoordinator({
+      engine,
+      workspaceId: 'workspace-1',
+    })
     ingestManagedUserPromptMessage({
       engine,
+      coordinator,
       workspaceId: 'workspace-1',
       agentSessionId: 'session-1',
       clientSubmitId: 'c-m1',
       text: 'hello managed',
     })
+    expect(selectSessionMessages(engine.getSnapshot(), 'session-1')).toEqual([])
+    const sessionMessages = coordinator.project(
+      project(engine.getSnapshot()),
+    ).sessionMessagesById['session-1']
     const chat = selectManagedAgentChatState(engine.getSnapshot(), 'session-1', {
+      sessionMessages,
       isSubmitting: true,
     })
-    expect(chat.messages.map((m) => m.id)).toEqual(['user:c-m1'])
+    expect(chat.messages.map((m) => m.id)).toEqual([
+      'client-submit:user:c-m1',
+    ])
     expect(chat.turnBusy).toBe(true)
     expect(chat.streamingMessageId).toBeNull()
+    coordinator.dispose()
+    engine.dispose()
+  })
+
+  it('drops overlay optimistic user on hydrate when Host durable id diverges', () => {
+    // Tutti contract: optimistic is overlay-only; hydrate reconciles authoritative
+    // history so a Host row with a different messageId (e.g. runId fallback)
+    // evicts the overlay seed — Engine never held the orphan.
+    const engine = createManagedAgentEngine({
+      workspaceId: 'workspace-1',
+      commandPort: { kind: 'typed', effects: unsupportedEffects(), execute: async () => undefined },
+    })
+    const { coordinator, project } = createTestActivityCoordinator({
+      engine,
+      workspaceId: 'workspace-1',
+    })
+    ingestManagedUserPromptMessage({
+      engine,
+      coordinator,
+      workspaceId: 'workspace-1',
+      agentSessionId: 'session-1',
+      clientSubmitId: 'opt-uuid',
+      text: '你好',
+      occurredAtUnixMs: 1,
+    })
+    expect(
+      coordinator.project(project(engine.getSnapshot())).sessionMessagesById[
+        'session-1'
+      ]?.map((m) => m.messageId),
+    ).toEqual(['client-submit:user:opt-uuid'])
+
+    const settledHostTurn = {
+      ...turn(),
+      turnId: 'host-turn-uuid',
+      phase: 'settled' as const,
+      outcome: 'completed' as const,
+      settledAtUnixMs: 3,
+      updatedAtUnixMs: 3,
+    }
+    hydrateManagedAgentEngine(
+      engine,
+      {
+        ...detailDefaults,
+        workspaceId: 'workspace-1',
+        session: {
+          ...session(),
+          activeTurnId: null,
+          activeTurn: null,
+          latestTurn: settledHostTurn,
+          messageVersion: 3,
+          updatedAtUnixMs: 3,
+        },
+        turns: [settledHostTurn],
+        messages: [
+          {
+            workspaceId: 'workspace-1',
+            agentSessionId: 'session-1',
+            messageId: 'client-submit:user:session-1',
+            turnId: 'host-turn-uuid',
+            role: 'user',
+            kind: 'text',
+            payload: {
+              text: '你好',
+              clientSubmitId: 'session-1',
+              displayPrompt: '你好',
+            },
+            version: 2,
+            sequence: 2,
+            occurredAtUnixMs: 2,
+          },
+          {
+            workspaceId: 'workspace-1',
+            agentSessionId: 'session-1',
+            messageId: 'assistant-1',
+            turnId: 'host-turn-uuid',
+            role: 'assistant',
+            kind: 'text',
+            payload: { text: '你好！有什么我可以帮你的吗？' },
+            version: 3,
+            sequence: 3,
+            occurredAtUnixMs: 3,
+          },
+        ],
+        interactions: [],
+      },
+      { coordinator },
+    )
+    expect(
+      selectSessionMessages(engine.getSnapshot(), 'session-1').map(
+        (m) => m.messageId,
+      ),
+    ).toEqual(['client-submit:user:session-1', 'assistant-1'])
+    const sessionMessages = coordinator.project(
+      project(engine.getSnapshot()),
+    ).sessionMessagesById['session-1']
+    const chat = selectManagedAgentChatState(engine.getSnapshot(), 'session-1', {
+      sessionMessages,
+    })
+    expect(chat.messages.map((m) => m.id)).toEqual([
+      'client-submit:user:session-1',
+      'assistant-1',
+    ])
+    expect(chat.turnBusy).toBe(false)
+    coordinator.dispose()
     engine.dispose()
   })
 
@@ -198,20 +360,41 @@ describe('Managed Agent Engine adapter', () => {
       workspaceId: 'workspace-1',
       commandPort: { kind: 'typed', effects: unsupportedEffects(), execute: async () => undefined },
     })
-    ingestManagedUserPromptMessage({
+    const { coordinator, project } = createTestActivityCoordinator({
       engine,
       workspaceId: 'workspace-1',
-      agentSessionId: 'session-1',
+    })
+    const agentSessionId = 'session-bind-open'
+    ingestManagedUserPromptMessage({
+      engine,
+      coordinator,
+      workspaceId: 'workspace-1',
+      agentSessionId,
       clientSubmitId: 'c-fold',
       text: 'ping',
       occurredAtUnixMs: 1_700_000_000_000,
     })
+    // Durable Host page (same submit id) lands in Engine; overlay reconciles.
+    // Assistant-only pages would drop the user the way a stale RQ replace used to.
     engine.dispatch({
       type: 'message/snapshotReceived',
       messages: [
         {
           workspaceId: 'workspace-1',
-          agentSessionId: 'session-1',
+          agentSessionId,
+          messageId: 'client-submit:user:c-fold',
+          turnId: 'turn-c-fold',
+          role: 'user',
+          kind: 'text',
+          status: 'completed',
+          payload: { text: 'ping', clientSubmitId: 'c-fold' },
+          version: 1_700_000_000_000,
+          sequence: 1_700_000_000_000,
+          occurredAtUnixMs: 1_700_000_000_000,
+        },
+        {
+          workspaceId: 'workspace-1',
+          agentSessionId,
           messageId: 'daemon-asst-1',
           turnId: 'daemon-turn-uuid',
           role: 'assistant',
@@ -224,17 +407,18 @@ describe('Managed Agent Engine adapter', () => {
         },
       ],
     })
-    const chat = selectManagedAgentChatState(engine.getSnapshot(), 'session-1', {
+    const chat = selectManagedAgentChatState(engine.getSnapshot(), agentSessionId, {
       isSubmitting: true,
     })
     expect(chat.messages.map((m) => m.id)).toEqual([
-      'user:c-fold',
+      'client-submit:user:c-fold',
       'daemon-asst-1',
     ])
     expect(chat.messages[1]).toMatchObject({
       content: [{ type: 'text', text: 'pong from daemon' }],
     })
     expect(chat.streamingMessageId).toBe('daemon-asst-1')
+    coordinator.dispose()
     engine.dispose()
   })
 
@@ -342,7 +526,13 @@ describe('Managed Agent Engine adapter', () => {
 
     const state = selectManagedAgentChatState(engine.getSnapshot(), 'session-1')
     expect(state.activeToolCalls).toEqual([
-      { id: 'tool-1', name: 'read_file', phase: 'running', args: { path: 'README.md' } },
+      {
+        id: 'tool-1',
+        name: 'read_file',
+        phase: 'running',
+        args: { path: 'README.md' },
+        result: undefined,
+      },
     ])
     // Same-turn Activity rows fold to one host (shared with Hermes).
     expect(state.messages).toHaveLength(1)
@@ -355,6 +545,52 @@ describe('Managed Agent Engine adapter', () => {
         (part) => part.type === 'toolCall' && part.name === 'read_file',
       ),
     ).toBe(true)
+    engine.dispose()
+  })
+
+  it('keeps completed tools in activeToolCalls while the turn is busy', () => {
+    const engine = createManagedAgentEngine({
+      workspaceId: 'workspace-1',
+      commandPort: { kind: 'typed', effects: unsupportedEffects(), execute: async () => undefined },
+    })
+    hydrateManagedAgentEngine(engine, {
+      ...detailDefaults,
+      workspaceId: 'workspace-1',
+      session: session(),
+      turns: [turn()],
+      messages: [
+        {
+          workspaceId: 'workspace-1',
+          agentSessionId: 'session-1',
+          messageId: 'tool-done',
+          turnId: 'turn-1',
+          role: 'assistant',
+          kind: 'tool_call',
+          status: 'completed',
+          payload: {
+            toolName: 'web_search',
+            input: { q: 'x' },
+            output: 'hits',
+          },
+          version: 1,
+          sequence: 1,
+          occurredAtUnixMs: 1,
+        },
+      ],
+      interactions: [],
+    })
+
+    const state = selectManagedAgentChatState(engine.getSnapshot(), 'session-1')
+    expect(state.turnBusy).toBe(true)
+    expect(state.activeToolCalls).toEqual([
+      {
+        id: 'tool-done',
+        name: 'web_search',
+        phase: 'done',
+        args: { q: 'x' },
+        result: 'hits',
+      },
+    ])
     engine.dispose()
   })
 
@@ -373,7 +609,13 @@ describe('Managed Agent Engine adapter', () => {
     })
 
     expect(selectManagedAgentChatState(engine.getSnapshot(), 'session-1').activeToolCalls).toEqual([
-      { id: 'tool-legacy', name: 'read_file', phase: 'running', args: { path: 'README.md' } },
+      {
+        id: 'tool-legacy',
+        name: 'read_file',
+        phase: 'running',
+        args: { path: 'README.md' },
+        result: undefined,
+      },
     ])
     engine.dispose()
   })
@@ -484,8 +726,24 @@ describe('Managed Agent Engine adapter', () => {
     })
 
     const state = selectManagedAgentChatState(engine.getSnapshot(), 'session-1')
-    // Terminal tool calls leave the active list.
-    expect(state.activeToolCalls).toEqual([])
+    // Busy turn keeps terminal tools in the overlay (Hermes homology) so
+    // Activity does not disappear after a fast tool finishes.
+    expect(state.activeToolCalls).toEqual([
+      {
+        id: 'tool-1',
+        name: 'bash',
+        phase: 'done',
+        args: { command: 'ls' },
+        result: 'README.md\nsrc',
+      },
+      {
+        id: 'tool-2',
+        name: 'bash',
+        phase: 'error',
+        args: { command: 'false' },
+        result: 'command exited 1',
+      },
+    ])
     // Same turn → one host carrying both tool cards.
     expect(state.messages).toHaveLength(1)
     expect(state.messages[0]).toMatchObject({ id: 'tool-1', role: 'assistant' })
@@ -506,6 +764,57 @@ describe('Managed Agent Engine adapter', () => {
         }),
       ]),
     )
+    engine.dispose()
+  })
+
+  it('surfaces prompt-queue send failures as chat error', async () => {
+    const sendInput = vi.fn().mockRejectedValue(
+      new Error('provider session id is required'),
+    )
+    const engine = createManagedAgentEngine({
+      workspaceId: 'workspace-1',
+      commandPort: {
+        kind: 'typed',
+        effects: { ...unsupportedEffects(), sendInput },
+        execute: async () => undefined,
+      },
+    })
+    const settledTurn = {
+      ...turn(),
+      phase: 'settled' as const,
+      outcome: 'completed' as const,
+      settledAtUnixMs: 2,
+      updatedAtUnixMs: 2,
+    }
+    hydrateManagedAgentEngine(engine, {
+      ...detailDefaults,
+      workspaceId: 'workspace-1',
+      session: {
+        ...session(),
+        activeTurnId: null,
+        activeTurn: null,
+        latestTurn: settledTurn,
+      },
+      turns: [settledTurn],
+      messages: [],
+      interactions: [],
+    })
+    expect(
+      engine.submitPrompt({
+        agentSessionId: 'session-1',
+        clientSubmitId: 'fail-1',
+        content: [{ type: 'text', text: 'ping' }],
+      }),
+    ).toEqual({ accepted: true, queued: false })
+
+    await vi.waitFor(() => {
+      const message = selectManagedAgentChatState(
+        engine.getSnapshot(),
+        'session-1',
+      ).error
+      expect(message).toBeTruthy()
+      expect(message).toContain('provider session id is required')
+    })
     engine.dispose()
   })
 

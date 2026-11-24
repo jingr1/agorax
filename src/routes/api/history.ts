@@ -17,14 +17,14 @@ import {
 } from '../../server/profiles-browser'
 import {
   daemonActivityToChatHistory,
-  listHermesDaemonMessages,
+  findHermesDaemonMessages,
 } from '../../server/hermes-daemon-bridge'
 import {
   hasHermesCanonicalMessages,
   hermesCanonicalMessagesToChatHistory,
   listHermesCanonicalMessages,
 } from '../../server/hermes-canonical-store'
-import { getAgoraxRunMappingByAgentSessionId } from '../../server/agorax-run-mapping'
+import { resolveHermesDaemonSessionLookup } from '../../server/agorax-run-mapping'
 
 function legacyCanonicalHistoryJson(
   sqliteSessionId: string,
@@ -73,21 +73,21 @@ export const Route = createFileRoute('/api/history')({
                 ? friendlyId
                 : ''
           if (sqliteSessionId) {
-            // Display SoT for Agorax-initiated Hermes: daemon agent.db only.
-            // Never fall through to gateway msg-* for mapped sessions — that
-            // reintroduces dual SoT and cross-turn length-win in the UI.
-            const mapped =
-              getAgoraxRunMappingByAgentSessionId(sqliteSessionId) !== null
+            // Display SoT for Agorax-initiated Hermes: daemon agent.db.
+            // Engine agentSessionId may differ from gatewaySessionId (new-chat
+            // activate); persist lands on gateway id — resolve via mapping.
+            // Deep links may also arrive under the wrong active profile; scan
+            // other hermes:<profile> workspaces after preferred 404s.
+            const lookup = resolveHermesDaemonSessionLookup(sqliteSessionId)
+            const mapped = lookup.mapping !== null
             try {
-              const daemonPage = await listHermesDaemonMessages({
-                agentSessionId: sqliteSessionId,
-                profileName: profile,
+              const hit = await findHermesDaemonMessages({
+                candidateSessionIds: lookup.candidateSessionIds,
+                preferredProfile: profile,
                 limit: limit > 0 ? limit : 1000,
               })
-              if (daemonPage && daemonPage.messages.length > 0) {
-                const chatMessages = daemonActivityToChatHistory(
-                  daemonPage.messages,
-                )
+              if (hit && hit.messages.length > 0) {
+                const chatMessages = daemonActivityToChatHistory(hit.messages)
                 const bounded =
                   limit > 0 ? chatMessages.slice(-limit) : chatMessages
                 return json({
@@ -95,7 +95,22 @@ export const Route = createFileRoute('/api/history')({
                   sessionId: sqliteSessionId,
                   messages: bounded,
                   source: 'daemon-agent-db',
-                  latestVersion: daemonPage.latestVersion,
+                  latestVersion: hit.latestVersion,
+                  daemonSessionId: hit.daemonSessionId,
+                  resolvedProfile: hit.profileName,
+                })
+              }
+              // Mapped + preferred workspace confirmed empty: idle.
+              // Do NOT fail-closed on daemon 404/unreachable — that wiped new
+              // sessions when profile/id mismatched while gateway still had msg-*.
+              if (mapped && hit && hit.messages.length === 0) {
+                return json({
+                  sessionKey: sqliteSessionId,
+                  sessionId: sqliteSessionId,
+                  messages: [],
+                  source: 'daemon-agent-db',
+                  latestVersion: 0,
+                  resolvedProfile: hit.profileName,
                 })
               }
             } catch (err) {
@@ -106,23 +121,14 @@ export const Route = createFileRoute('/api/history')({
             ) {
               return legacyCanonicalHistoryJson(sqliteSessionId, limit)
             }
-            // Mapped Agorax session: never fall through to gateway/profile
-            // msg-* (dual display SoT). Empty daemon page is the correct idle.
-            if (mapped) {
-              return json({
-                sessionKey: sqliteSessionId,
-                sessionId: sqliteSessionId,
-                messages: [],
-                source: 'daemon-agent-db',
-                latestVersion: 0,
-              })
-            }
             const local = getMessagesForProfile(
               profile,
               sqliteSessionId,
               limit > 0 ? limit : 1000,
             )
-            if (local) {
+            // Empty array means "no rows", not a hit — fall through so wrong
+            // active profile can still resolve via gateway / other stores.
+            if (local && local.length > 0) {
               const bounded = limit > 0 ? local.slice(-limit) : local
               return json({
                 sessionKey: sqliteSessionId,

@@ -56,6 +56,7 @@ export {
 } from "./usage.ts";
 export {
   createAgentActivityWorkspaceEventCoordinator,
+  type AgentActivityWorkspaceEventCoordinator,
   type AgentActivityWorkspaceEventIngestOptions,
   type AgentActivityWorkspaceEventInput
 } from "./workspaceEventCoordinator.ts";

@@ -93,7 +93,9 @@ async function fetchProfiles(): Promise<ProfilesListResponse> {
   return (await response.json()) as ProfilesListResponse
 }
 
-async function activateProfile(name: string): Promise<ActivateProfileResponse> {
+export async function activateProfile(
+  name: string,
+): Promise<ActivateProfileResponse> {
   const response = await fetch('/api/profiles/activate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

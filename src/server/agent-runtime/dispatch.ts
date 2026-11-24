@@ -33,6 +33,7 @@ import {
 } from '../git-ops'
 import { countRunningRunsForAgent } from '../mcp/task-runs'
 import { appendMissionSpecFreshnessHint } from '../task-pipeline/mission-spec-freshness'
+import { applyAgentPreferences } from '../agent-preferences'
 import {
   claimTask,
   markTaskStarted,
@@ -284,7 +285,9 @@ async function dispatchClaimedAssignment(
       subscribeEvents: false,
       runId,
       agentId,
-      task: appendMissionSpecFreshnessHint(assignment.task, mission.id),
+      task: applyAgentPreferences(
+        appendMissionSpecFreshnessHint(assignment.task, mission.id),
+      ),
       cwd,
       roomId: input.roomId ?? null,
       taskId: mission.id,

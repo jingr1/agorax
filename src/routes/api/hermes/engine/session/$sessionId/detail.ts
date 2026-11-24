@@ -1,19 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { json } from '@tanstack/react-start'
 import { isAuthenticated } from '@/server/auth-middleware'
-import {
-  AgoraxManagedAgentHttpClient,
-  AgoraxManagedAgentHttpError,
-} from '@/server/agent-runtime/agorax-managed-agent-http-client'
-import {
-  getHermesDaemonBridgeClient,
-  hermesDaemonWorkspaceId,
-} from '@/server/hermes-daemon-bridge'
+import { AgoraxManagedAgentHttpError } from '@/server/agent-runtime/agorax-managed-agent-http-client'
+import { findHermesDaemonSessionDetail } from '@/server/hermes-daemon-bridge'
+import { resolveHermesDaemonSessionLookup } from '@/server/agorax-run-mapping'
 import type { AgentActivityEditRetryAvailability } from '@agorax/agent-activity-core'
 
 /**
  * Tutti-aligned Hermes session detail for authoritative reconcile fence.
- * Reads daemon activity under workspace `hermes:<profile>`.
+ * Reads daemon activity under workspace `hermes:<profile>`, falling back to
+ * other known Hermes profiles when the preferred workspace 404s.
  */
 export const Route = createFileRoute(
   '/api/hermes/engine/session/$sessionId/detail',
@@ -31,22 +27,25 @@ export const Route = createFileRoute(
         if (!sessionId) {
           return json({ error: 'sessionId required' }, { status: 400 })
         }
-        const client = getHermesDaemonBridgeClient({ profileName: profile })
-        if (!client) {
+        if (!process.env.AGORAX_MANAGED_AGENT_URL?.trim()) {
           return json(
             { error: 'Hermes daemon transport is not configured' },
             { status: 503 },
           )
         }
         try {
-          // Prefer full activity aggregate (same client as managed).
-          const baseUrl = process.env.AGORAX_MANAGED_AGENT_URL!.trim()
-          const workspaceId = hermesDaemonWorkspaceId(profile)
-          const http = new AgoraxManagedAgentHttpClient({
-            baseUrl,
-            workspaceId,
+          const lookup = resolveHermesDaemonSessionLookup(sessionId)
+          const hit = await findHermesDaemonSessionDetail({
+            candidateSessionIds: lookup.candidateSessionIds,
+            preferredProfile: profile,
           })
-          const detail = await http.getSessionDetail(sessionId)
+          if (!hit) {
+            return json(
+              { error: 'workspace agent session not found' },
+              { status: 404 },
+            )
+          }
+          const { detail } = hit
           const historyRevision = Math.max(
             0,
             typeof detail.session.messageVersion === 'number'
@@ -67,6 +66,8 @@ export const Route = createFileRoute(
               projection: 'authoritative',
               lifecycleCapabilitiesProjected: false,
             },
+            daemonSessionId: hit.daemonSessionId,
+            resolvedProfile: hit.profileName,
           })
         } catch (error) {
           const status =

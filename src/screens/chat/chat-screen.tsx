@@ -435,7 +435,10 @@ export function ChatScreen({
     historyRefetchInterval:
       sseConnectionState === 'connected' ? 60_000 : 20_000,
     portableMode: isPortableMode,
-    profileName: activeProfileName,
+    // Must match Engine / hermes-bridge persist workspace (`hermes:<profile>`).
+    // activeProfile alone can lag workspaceProfile and make mapped history
+    // fail-closed empty after refresh on newly created sessions.
+    profileName: workspaceProfileName || activeProfileName,
     sessionVerified,
   })
 

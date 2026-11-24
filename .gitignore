@@ -69,6 +69,8 @@ releases/
 .agorax/
 # Local agent registry (seeded from agents.yaml.example; New Agent writes here)
 agents.yaml
+# Local agent preferences (seeded from agent-preferences.md.example / bundled default)
+agent-preferences.md
 agorax-agent.db
 agorax-agent.db-shm
 agorax-agent.db-wal

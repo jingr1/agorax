@@ -13,6 +13,7 @@ import {
   reconcileHermesHistoryIntoEngine,
   selectHermesChatState,
 } from './hermes-agent-engine'
+import { createTestActivityCoordinator } from './test-activity-coordinator'
 import type { AgoraxRunMapping } from '@/server/agent-runtime/hermes-native-bridge'
 
 function mappingStore() {
@@ -570,6 +571,7 @@ describe('hermes-agent-engine', () => {
     })
     ingestHermesUserPromptMessage({
       engine,
+      coordinator,
       workspaceId,
       agentSessionId: 'daemon-1',
       clientSubmitId: 't1',
@@ -935,6 +937,7 @@ describe('hermes-agent-engine', () => {
     )
     ingestHermesUserPromptMessage({
       engine,
+      coordinator,
       workspaceId,
       agentSessionId: 'agent-stamp',
       clientSubmitId: 'c-stamp',
@@ -1051,9 +1054,14 @@ describe('hermes-agent-engine', () => {
       onActivityEvent: () => undefined,
     })
     const engine = createHermesAgentEngine({ workspaceId, commandPort })
+    const { coordinator, project } = createTestActivityCoordinator({
+      engine,
+      workspaceId,
+    })
     const occurredAtUnixMs = 1_700_000_000_000
     ingestHermesUserPromptMessage({
       engine,
+      coordinator,
       workspaceId,
       agentSessionId: 'host-1',
       clientSubmitId: 'c-host',
@@ -1079,6 +1087,8 @@ describe('hermes-agent-engine', () => {
       ],
     })
     const chat = selectHermesChatState(engine.getSnapshot(), 'host-1', {
+      sessionMessages: coordinator.project(project(engine.getSnapshot()))
+        .sessionMessagesById['host-1'],
       isSubmitting: true,
     })
     expect(chat.messages.map((m) => m.id)).toEqual([
@@ -1090,9 +1100,11 @@ describe('hermes-agent-engine', () => {
       content: [{ type: 'text', text: 'pong' }],
     })
     expect(chat.streamingMessageId).toBe('assistant:run-live')
+    coordinator.dispose()
+    engine.dispose()
   })
 
-  it('ingestHermesUserPromptMessage seeds only optimistic user', () => {
+  it('ingestHermesUserPromptMessage seeds only optimistic user into overlay', () => {
     const workspaceId = 'ws'
     const commandPort = createHermesCommandPort({
       workspaceId,
@@ -1101,14 +1113,21 @@ describe('hermes-agent-engine', () => {
       onActivityEvent: () => undefined,
     })
     const engine = createHermesAgentEngine({ workspaceId, commandPort })
+    const { coordinator, project } = createTestActivityCoordinator({
+      engine,
+      workspaceId,
+    })
     ingestHermesUserPromptMessage({
       engine,
+      coordinator,
       workspaceId,
       agentSessionId: 'send-1',
       clientSubmitId: 'c-99',
       text: 'hello engine',
     })
     const chat = selectHermesChatState(engine.getSnapshot(), 'send-1', {
+      sessionMessages: coordinator.project(project(engine.getSnapshot()))
+        .sessionMessagesById['send-1'],
       isSubmitting: true,
     })
     expect(chat.messages).toEqual([
@@ -1120,5 +1139,7 @@ describe('hermes-agent-engine', () => {
     ])
     expect(chat.streamingMessageId).toBeNull()
     expect(chat.turnBusy).toBe(true)
+    coordinator.dispose()
+    engine.dispose()
   })
 })

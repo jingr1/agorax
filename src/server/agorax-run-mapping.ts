@@ -147,3 +147,40 @@ export function patchAgoraxRunMapping(
     input,
   )
 }
+
+/**
+ * Resolve the daemon agent.db session id for a route/Engine session key.
+ *
+ * New Hermes chats often keep Engine `agentSessionId` ≠ gateway session id
+ * until promote; persist writes under `gatewaySessionId`. History / reconcile
+ * must read that id (or try both) or refresh shows a mapped empty page.
+ */
+export function resolveHermesDaemonSessionLookup(
+  sessionId: string,
+  input?: { dbPath?: string },
+): {
+  mapping: AgoraxRunMapping | null
+  /** Prefer gateway id when present — that is where hermes-bridge persist lands. */
+  primarySessionId: string
+  /** Distinct ids to try (gateway first, then Engine / route id). */
+  candidateSessionIds: string[]
+} {
+  const id = sessionId.trim()
+  if (!id) {
+    return { mapping: null, primarySessionId: '', candidateSessionIds: [] }
+  }
+  const mapping =
+    getAgoraxRunMappingByAgentSessionId(id, input) ??
+    getAgoraxRunMappingByGatewaySessionId(id, input)
+  const gateway = mapping?.gatewaySessionId?.trim() || ''
+  const agent = mapping?.agentSessionId?.trim() || ''
+  const candidates: string[] = []
+  for (const candidate of [gateway, agent, id]) {
+    if (candidate && !candidates.includes(candidate)) candidates.push(candidate)
+  }
+  return {
+    mapping,
+    primarySessionId: candidates[0] || id,
+    candidateSessionIds: candidates,
+  }
+}

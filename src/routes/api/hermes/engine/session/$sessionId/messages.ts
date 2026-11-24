@@ -1,11 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { json } from '@tanstack/react-start'
 import { isAuthenticated } from '@/server/auth-middleware'
-import {
-  AgoraxManagedAgentHttpClient,
-  AgoraxManagedAgentHttpError,
-} from '@/server/agent-runtime/agorax-managed-agent-http-client'
-import { hermesDaemonWorkspaceId } from '@/server/hermes-daemon-bridge'
+import { AgoraxManagedAgentHttpError } from '@/server/agent-runtime/agorax-managed-agent-http-client'
+import { findHermesDaemonMessages } from '@/server/hermes-daemon-bridge'
+import { resolveHermesDaemonSessionLookup } from '@/server/agorax-run-mapping'
 
 const MAX_MESSAGE_PAGE_LIMIT = 1000
 
@@ -70,15 +68,25 @@ export const Route = createFileRoute(
           return json({ error: query.error }, { status: 400 })
         }
         try {
-          const client = new AgoraxManagedAgentHttpClient({
-            baseUrl,
-            workspaceId: hermesDaemonWorkspaceId(profile),
+          const lookup = resolveHermesDaemonSessionLookup(sessionId)
+          const hit = await findHermesDaemonMessages({
+            candidateSessionIds: lookup.candidateSessionIds,
+            preferredProfile: profile,
+            afterVersion: query.afterVersion,
+            limit: query.limit,
           })
-          const page = await client.listSessionMessages(sessionId, query)
+          if (!hit) {
+            return json(
+              { error: 'workspace agent session not found' },
+              { status: 404 },
+            )
+          }
           return json({
-            messages: page.messages,
-            latestVersion: page.latestVersion,
-            hasMore: page.hasMore,
+            messages: hit.messages,
+            latestVersion: hit.latestVersion,
+            hasMore: hit.hasMore,
+            daemonSessionId: hit.daemonSessionId,
+            resolvedProfile: hit.profileName,
           })
         } catch (error) {
           const status =

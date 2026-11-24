@@ -29,26 +29,12 @@ fi
 
 mkdir -p "$ROOT/.agorax"
 
-# Load repo .env into this process (same rules as the previous inline script).
-if [[ -f "$ROOT/.env" ]]; then
-  set -a
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    case "$line" in
-      '' | '#'*) continue ;;
-      *=*) ;;
-      *) continue ;;
-    esac
-    key=${line%%=*}
-    val=${line#*=}
-    case "$key" in
-      *[!A-Za-z0-9_]*) continue ;;
-    esac
-    val=${val%%#*}
-    val=$(printf '%s' "$val" | tr -d '\r')
-    eval "$key='$val'"
-  done <"$ROOT/.env"
-  set +a
-fi
+# shellcheck disable=SC1091
+source "$ROOT/scripts/load-dotenv-file.sh"
+# Repo .env first, then ~/.hermes/.env for provider keys (Codex tokenx
+# env_key=TOKENX_API_KEY_VPEL, etc.). Existing process env wins.
+agorax_load_dotenv_file "$ROOT/.env"
+agorax_load_dotenv_file "${HERMES_HOME:-$HOME/.hermes}/.env"
 
 health_ok() {
   curl -fsS --max-time 1 "$HEALTH_URL" >/dev/null 2>&1

@@ -107,7 +107,7 @@ export function MessageActionsBar({
             <TooltipTrigger
               type="button"
               onClick={onEdit}
-              className="inline-flex items-center justify-center rounded border border-transparent bg-transparent p-1 text-primary-700 hover:text-primary-900 hover:bg-primary-100 dark:hover:bg-primary-800"
+              className="inline-flex items-center justify-center rounded border border-transparent bg-transparent p-1 text-primary-700 hover:bg-[var(--transparency-hover)] hover:text-primary-900"
             >
               <HugeiconsIcon icon={Edit02Icon} size={16} strokeWidth={1.6} />
             </TooltipTrigger>
@@ -121,7 +121,7 @@ export function MessageActionsBar({
             <TooltipTrigger
               type="button"
               onClick={onRegenerate}
-              className="inline-flex items-center justify-center rounded border border-transparent bg-transparent p-1 text-primary-700 hover:text-primary-900 hover:bg-primary-100 dark:hover:bg-primary-800"
+              className="inline-flex items-center justify-center rounded border border-transparent bg-transparent p-1 text-primary-700 hover:bg-[var(--transparency-hover)] hover:text-primary-900"
             >
               <HugeiconsIcon icon={RefreshIcon} size={16} strokeWidth={1.6} />
             </TooltipTrigger>
@@ -136,7 +136,7 @@ export function MessageActionsBar({
             onClick={() => {
               handleCopy().catch(() => {})
             }}
-            className="inline-flex items-center justify-center rounded border border-transparent bg-transparent p-1 text-primary-700 hover:text-primary-900 hover:bg-primary-100 dark:hover:bg-primary-800"
+            className="inline-flex items-center justify-center rounded border border-transparent bg-transparent p-1 text-primary-700 hover:bg-[var(--transparency-hover)] hover:text-primary-900"
           >
             <HugeiconsIcon
               icon={copied ? Tick02Icon : Copy01Icon}

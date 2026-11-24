@@ -107,6 +107,49 @@ describe('applyOpenAssistantStreamingChrome', () => {
     ])
     expect(textFrom(chrome.messages[1]!)).toBe('旧回复还在生成')
   })
+
+  it('clears content-stream chrome when the open assistant is terminal even if Host turn is still open', () => {
+    // Managed通病: last delta done, message completed, Host turn still running.
+    // Stop / caret must follow content completion — not turnActive alone.
+    const chrome = applyOpenAssistantStreamingChrome({
+      messages: [
+        msg('user:c1', 'user'),
+        msg('assistant:run-1', 'assistant', {
+          __streamingStatus: 'complete',
+          content: [{ type: 'text', text: 'done' }],
+        }),
+      ],
+      activityStreamingId: null,
+      turnActive: true,
+      submitting: false,
+      contentInFlight: false,
+    })
+    expect(chrome.turnBusy).toBe(true)
+    expect(chrome.isStreaming).toBe(false)
+    expect(chrome.streamingMessageId).toBeNull()
+    expect(
+      (chrome.messages[1] as { __streamingStatus?: string }).__streamingStatus,
+    ).toBe('complete')
+  })
+
+  it('keeps Stop while Activity still has in-flight work after a terminal text host', () => {
+    const chrome = applyOpenAssistantStreamingChrome({
+      messages: [
+        msg('user:c1', 'user'),
+        msg('assistant:run-1', 'assistant', {
+          __streamingStatus: 'complete',
+          content: [{ type: 'text', text: 'working on it' }],
+        }),
+      ],
+      activityStreamingId: null,
+      turnActive: true,
+      submitting: false,
+      contentInFlight: true,
+    })
+    expect(chrome.turnBusy).toBe(true)
+    expect(chrome.isStreaming).toBe(true)
+    expect(chrome.streamingMessageId).toBeNull()
+  })
 })
 
 function textFrom(message: ChatMessage): string {

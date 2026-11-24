@@ -13,6 +13,7 @@ import type {
 } from '@agorax/agent-activity-core'
 import { assistantMessageIdForRun, readDurableMessageId } from './chat-turn-identity'
 import { stripWorkspaceDirective } from './workspace-message-scope'
+import { stripAgentPreferences } from './agent-preferences-text'
 import type { ChatMessage } from '@/screens/chat/types'
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -625,11 +626,13 @@ export function hermesHistoryMessagesToActivity(input: {
       // leave the prefix on history rows, one send becomes two user identities
       // (plain live vs prefixed msg-*) and the list shows both. Strip at the
       // history→activity boundary — transport metadata is not the user turn.
-      const text = stripWorkspaceDirective(
-        parts
-          .map((part) => (part.type === 'text' ? readString(part.text) : ''))
-          .join('')
-          .trim() || readString(message.text).trim(),
+      const text = stripAgentPreferences(
+        stripWorkspaceDirective(
+          parts
+            .map((part) => (part.type === 'text' ? readString(part.text) : ''))
+            .join('')
+            .trim() || readString(message.text).trim(),
+        ),
       ).trim()
       const clientSubmitId = readClientSubmitId(message)
       const isWeakUserId =

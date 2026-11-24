@@ -53,7 +53,15 @@ function clientSubmitIdFromUser(message: ChatMessage): string {
   const fromTop =
     typeof raw.clientSubmitId === 'string' ? raw.clientSubmitId.trim() : ''
   if (fromTop) return fromTop
+  const fromPayload =
+    typeof raw.payload?.clientSubmitId === 'string'
+      ? raw.payload.clientSubmitId.trim()
+      : ''
+  if (fromPayload) return fromPayload
   const id = durableId(message)
+  if (id.startsWith('client-submit:user:')) {
+    return id.slice('client-submit:user:'.length).trim()
+  }
   return id.startsWith('user:') && !id.startsWith('user:history:')
     ? id.slice('user:'.length).trim()
     : ''

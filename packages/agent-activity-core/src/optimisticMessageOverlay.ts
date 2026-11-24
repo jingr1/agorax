@@ -30,6 +30,12 @@ export interface AgentActivityOptimisticMessageScope {
 
 export interface AgentActivityOptimisticMessageOverlay {
   apply(event: AgentActivityLiveEvent): AgentActivityOptimisticApplyResult;
+  /**
+   * Host send-time seed (Tutti contract): optimistic user lives only here, never
+   * in the Engine durable bucket. Authoritative reconcile drops it by
+   * clientSubmitId / turn once Host/daemon truth arrives.
+   */
+  seed(message: AgentActivityMessage): void;
   /** Returns one already-applied optimistic message without projecting its Session history. */
   getOptimisticMessage(
     scope: AgentActivityOptimisticMessageScope,
@@ -117,6 +123,29 @@ export function createAgentActivityOptimisticMessageOverlay(): AgentActivityOpti
         markScopeChanged(event);
       }
       return result;
+    },
+
+    seed(message) {
+      const scope: AgentActivityOptimisticMessageScope = {
+        workspaceId: message.workspaceId.trim(),
+        agentSessionId: message.agentSessionId.trim()
+      };
+      const messageId = message.messageId.trim();
+      if (!scope.workspaceId || !scope.agentSessionId || !messageId) {
+        return;
+      }
+      const seeded = cloneMessage({
+        ...message,
+        workspaceId: scope.workspaceId,
+        agentSessionId: scope.agentSessionId,
+        messageId
+      });
+      optimistic.set(messageKey(seeded), {
+        message: seeded,
+        payloadUnset: new Set(),
+        explicitlyTerminal: isTerminalMessage(seeded)
+      });
+      markScopeChanged(scope);
     },
 
     getOptimisticMessage(scope, messageId) {

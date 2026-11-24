@@ -131,6 +131,7 @@ API 要点：
 
 ## 四、操作规则
 
+- **Agent preferences（全员沟通/行为偏好）：** 写一次、注入所有 agent turn（1:1 Hermes/managed、群聊、Swarm dispatch、managed mission）。真相源优先级：`AGORAX_AGENT_PREFERENCES_TEXT` → `AGORAX_AGENT_PREFERENCES_PATH` 或仓库根 `agent-preferences.md` → 内置 `src/server/agent-preferences/default.md`。空文件/空 env 关闭注入。模板见 `agent-preferences.md.example`（本地 `agent-preferences.md` gitignore）。实现：`applyAgentPreferences`；raw Swarm smoke（`direct+raw`）不注入。
 - **UI 优先标准组件：** 弹层 / 菜单 / 分段选择 / 表单控件优先用 `src/components/ui/`（`Dialog`、`AlertDialog`、`Menu`、`Tabs`、`Button`、`Input` 等），不要手写 absolute 浮层或自定义选中态 class；破坏性确认用 `AlertDialog`，互斥选项用 `Tabs`。
 - 改 agent 时保持 `agents.yaml`（tools / skills / mission）与 profile toolset、skills、SOUL、wrapper 对齐。模型默认值由 profile `config.yaml` 管理；只有需要显式覆盖时才在 `agents.yaml` 使用可选 `model`。
 - **GBrain ≡ llm-wiki**：本仓库未部署本地 `gbrain` skill/MCP。Brain-first 查询用 Hermes 内置 `llm-wiki`（`WIKI_PATH`，默认 `~/wiki`），外加 `memory/swarm/` 下的 mission 记忆。

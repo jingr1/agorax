@@ -68,6 +68,11 @@ export type AgentRunInput = {
   /** Canonical structured prompt content for runtimes that support it. */
   content?: Array<AgoraxManagedPromptContentBlock>
   /**
+   * Composer nonce. Daemon stamps `client-submit:user:<id>` — must match the
+   * optimistic Engine row. Falls back to runId when omitted (legacy).
+   */
+  clientSubmitId?: string
+  /**
    * UI-only user text when `task`/`content` carry injected platform skills.
    * Forwarded to the daemon as `displayPrompt` so the chat bubble stays short.
    */

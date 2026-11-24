@@ -1,7 +1,10 @@
 /**
- * Shared send-time optimistic user (Hermes + managed).
+ * Shared send-time optimistic user (Hermes + managed) — Tutti contract.
  *
- * Seeds only `user:<clientSubmitId>` into the Engine message bucket.
+ * Seeds the user into the **overlay only** via `seedOptimisticMessage`.
+ * Engine durable bucket stays empty until Host/daemon truth arrives; authoritative
+ * reconcile drops the overlay row by clientSubmitId / turn.
+ *
  * Open-turn UI uses transcript `processing:<clientSubmitId>` (not a message
  * row) until daemon/SSE writes the first durable assistant messageId.
  *
@@ -14,7 +17,7 @@
 import {
   selectEngineActiveTurn,
   selectEngineSession,
-  type AgentActivityDurableMessage,
+  type AgentActivityMessage,
   type AgentSessionEngine,
 } from '@agorax/agent-activity-core'
 
@@ -58,11 +61,22 @@ export function __resetRememberedOpenTurnForTests(): void {
 
 export function ingestEngineUserPromptMessage(input: {
   engine: AgentSessionEngine
+  /**
+   * Tutti overlay seed — required. Product paths pass
+   * `coordinator.seedOptimisticMessage`; tests may use a real coordinator or
+   * a stub that records the message for projection.
+   */
+  seedOptimisticMessage: (message: AgentActivityMessage) => boolean
   workspaceId: string
   agentSessionId: string
   clientSubmitId: string
   text: string
   occurredAtUnixMs?: number
+  /**
+   * Durable user messageId. Hermes: `user:<submitId>`.
+   * Managed/Tutti Host: `client-submit:user:<submitId>` (must match daemon).
+   */
+  userMessageId?: string
   /** When the Engine has no session row yet (first paint / new chat). */
   ensureSession?: (args: {
     workspaceId: string
@@ -97,10 +111,13 @@ export function ingestEngineUserPromptMessage(input: {
 
   const occurredAtUnixMs = input.occurredAtUnixMs ?? Date.now()
   const turnId = `turn-${clientSubmitId}`
-  const userMessage: AgentActivityDurableMessage = {
+  const userMessageId =
+    (typeof input.userMessageId === 'string' && input.userMessageId.trim()) ||
+    `user:${clientSubmitId}`
+  const userMessage: AgentActivityMessage = {
     workspaceId,
     agentSessionId,
-    messageId: `user:${clientSubmitId}`,
+    messageId: userMessageId,
     version: occurredAtUnixMs,
     sequence: occurredAtUnixMs,
     turnId,
@@ -111,9 +128,12 @@ export function ingestEngineUserPromptMessage(input: {
     occurredAtUnixMs,
   }
   rememberOpenTurn({ agentSessionId, clientSubmitId, turnId })
-  input.engine.dispatch({
-    type: 'message/snapshotReceived',
-    messages: [userMessage],
-  })
-  return true
+  return input.seedOptimisticMessage(userMessage)
+}
+
+/** Tutti/Managed Host durable user id — must match daemon prompt_content.go. */
+export function managedClientSubmitUserMessageId(
+  clientSubmitId: string,
+): string {
+  return `client-submit:user:${clientSubmitId.trim()}`
 }

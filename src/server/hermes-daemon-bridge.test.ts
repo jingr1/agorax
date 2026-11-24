@@ -1,10 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   daemonActivityToChatHistory,
+  findHermesDaemonMessages,
   hermesDaemonWorkspaceId,
+  listHermesDaemonProfileCandidates,
   persistHermesTurnToDaemon,
 } from './hermes-daemon-bridge'
 import type { AgentActivityDurableMessage } from '@agorax/agent-activity-core'
+
+vi.mock('./profiles-browser', () => ({
+  listProfilesLight: () => [
+    { name: 'default' },
+    { name: 'architect' },
+    { name: 'developer' },
+  ],
+}))
 
 describe('hermes daemon bridge', () => {
   afterEach(() => {
@@ -369,5 +379,116 @@ describe('hermes daemon bridge', () => {
       },
       { type: 'text', text: 'done' },
     ])
+  })
+
+  it('orders profile candidates with preferred first', () => {
+    expect(listHermesDaemonProfileCandidates('architect')[0]).toBe('architect')
+    expect(listHermesDaemonProfileCandidates('architect')).toContain('default')
+    expect(listHermesDaemonProfileCandidates('architect')).toContain(
+      'developer',
+    )
+  })
+
+  it('finds daemon messages under another profile after preferred 404', async () => {
+    vi.stubEnv('AGORAX_MANAGED_AGENT_URL', 'http://127.0.0.1:8788')
+    const fetchImpl = vi.fn().mockImplementation(async (url: string) => {
+      const path = String(url)
+      if (path.includes('hermes%3Adefault')) {
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ error: 'not found' }),
+          text: async () => 'not found',
+        }
+      }
+      if (path.includes('hermes%3Aarchitect')) {
+        return {
+          ok: true,
+          json: async () => ({
+            messages: [
+              {
+                messageId: 'user:s1',
+                role: 'user',
+                kind: 'text',
+                turnId: 'turn-s1',
+                status: 'completed',
+                sequence: 1,
+                version: 1,
+                payload: { text: 'hi' },
+                occurredAtUnixMs: 1,
+              },
+            ],
+            messageVersion: 1,
+            hasMoreMessages: false,
+          }),
+          text: async () => '',
+        }
+      }
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({ error: 'not found' }),
+        text: async () => 'not found',
+      }
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    const hit = await findHermesDaemonMessages({
+      candidateSessionIds: ['2380d15b-797e-4ed3-8a22-a5ada6127dff'],
+      preferredProfile: 'default',
+      limit: 40,
+    })
+    expect(hit?.profileName).toBe('architect')
+    expect(hit?.messages).toHaveLength(1)
+    expect(hit?.daemonSessionId).toBe(
+      '2380d15b-797e-4ed3-8a22-a5ada6127dff',
+    )
+  })
+
+  it('does not steal another profile when preferred workspace is empty', async () => {
+    vi.stubEnv('AGORAX_MANAGED_AGENT_URL', 'http://127.0.0.1:8788')
+    const fetchImpl = vi.fn().mockImplementation(async (url: string) => {
+      const path = String(url)
+      if (path.includes('hermes%3Adefault')) {
+        return {
+          ok: true,
+          json: async () => ({
+            messages: [],
+            messageVersion: 0,
+            hasMoreMessages: false,
+          }),
+          text: async () => '',
+        }
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          messages: [
+            {
+              messageId: 'user:other',
+              role: 'user',
+              kind: 'text',
+              turnId: 'turn-x',
+              status: 'completed',
+              sequence: 1,
+              version: 1,
+              payload: { text: 'other' },
+              occurredAtUnixMs: 1,
+            },
+          ],
+          messageVersion: 1,
+          hasMoreMessages: false,
+        }),
+        text: async () => '',
+      }
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+
+    const hit = await findHermesDaemonMessages({
+      candidateSessionIds: ['sess-empty'],
+      preferredProfile: 'default',
+    })
+    expect(hit?.profileName).toBe('default')
+    expect(hit?.messages).toEqual([])
   })
 })

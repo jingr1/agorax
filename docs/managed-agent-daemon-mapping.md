@@ -18,6 +18,38 @@ It constructs the canonical SQLite store, Agent Host, runtime controller and
 durable activity reporter. Claude Code uses the daemon CLI adapter; it is not
 a Workspace-owned fallback process or an Anthropic SDK sidecar.
 
+### Provider turn complete（统一对齐 Tutti）
+
+Settle 必须以**协议侧 turn complete** 为准，不得绑进程寿命（除非协议从未给出
+完成信号）。
+
+| Runtime | Adapter | Settle 信号（Tutti 同源） | 进程 EOF？ |
+| --- | --- | --- | --- |
+| Claude Code | Claude CLI (`stream-json`) | stdout `result` 行 | 仅无 `result` 时 fallback |
+| Codex | App Server | `turn/completed` 通知 | 否（长驻 app-server） |
+| Cursor / OpenCode / Kimi / Nexight / OpenClaw / generic ACP | Standard ACP（及 strategy 变体） | `session/prompt` RPC 返回 + `stopReason` | 否（会话级长驻进程） |
+
+Claude CLI 曾在进程 EOF 后才 settle；已改为 `result` 即时 settle。
+
+### UI chrome vs Host settle（Managed 通病）
+
+Managed 各 runtime 都可能在**最后可见 delta / 消息 completed 之后**仍把 Host
+turn 留在 `running`（协议收尾、prompt RPC、进程清理）。这不是再提前 settle
+能消掉的。
+
+| 信号 | 跟谁走 | 用途 |
+| --- | --- | --- |
+| `turnBusy` | Host turn `phase !== settled`（或 submitting） | 队列门 / 勿把新 user 写进 list |
+| `isStreaming` / `streamingMessageId` / Stop（composer `isLoading`） | Activity 仍有非终态 assistant/tool | 正文 caret、Stop；内容完成后立即清掉 |
+
+禁止在 Host turn 仍 open 时把已 `complete` 的 assistant 强行刷回
+`__streamingStatus: streaming`。
+
+Claude CLI：组装后的 `assistant` 行（通常早于 `result`）会
+`assistant_segment_complete` → normalizer `Finish(completed)`，只关正文段、
+不 settle Host turn。ACP tool_call 路径本来就会在 tool 前 `Finish` 正文段。
+改 daemon 后需重建并重启 `agorax-agentd` 才生效。
+
 ## Coverage
 
 | Product path | Activity/Engine contract | Execution semantics |

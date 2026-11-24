@@ -6,6 +6,7 @@ import {
   getAgoraxRunMappingByAgentSessionId,
   getAgoraxRunMappingByGatewaySessionId,
   patchAgoraxRunMapping,
+  resolveHermesDaemonSessionLookup,
   upsertAgoraxRunMapping,
 } from './agorax-run-mapping'
 
@@ -68,5 +69,33 @@ describe('agorax_run_mapping', () => {
     expect(
       getAgoraxRunMappingByGatewaySessionId('gw-2', { dbPath })?.hermesRunId,
     ).toBe('run-99')
+  })
+
+  it('resolves daemon lookup to gateway id when Engine UUID diverged', () => {
+    upsertAgoraxRunMapping(
+      {
+        agentSessionId: 'engine-uuid',
+        turnId: null,
+        gatewaySessionId: 'gateway-uuid',
+        assignmentId: null,
+        hermesRunId: null,
+        bridgeKind: 'hermes-native',
+        updatedAtUnixMs: 1000,
+      },
+      { dbPath },
+    )
+    const byEngine = resolveHermesDaemonSessionLookup('engine-uuid', {
+      dbPath,
+    })
+    expect(byEngine.primarySessionId).toBe('gateway-uuid')
+    expect(byEngine.candidateSessionIds).toEqual([
+      'gateway-uuid',
+      'engine-uuid',
+    ])
+    const byGateway = resolveHermesDaemonSessionLookup('gateway-uuid', {
+      dbPath,
+    })
+    expect(byGateway.primarySessionId).toBe('gateway-uuid')
+    expect(byGateway.candidateSessionIds[0]).toBe('gateway-uuid')
   })
 })

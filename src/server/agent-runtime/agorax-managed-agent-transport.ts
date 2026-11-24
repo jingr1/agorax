@@ -133,9 +133,17 @@ export function createAgoraxManagedAgentTransport(
         ? await runStore.getByDisplaySession(displaySessionId)
         : null
       const displayPrompt = run.displayPrompt?.trim() ?? ''
+      // Chat UI seeds overlay with client-submit:user:<submitId> before startRun.
+      // Falling back to runId (session id) mints a second Host user identity;
+      // reconcileAuthoritativeHistory must drop the overlay orphan by submit/turn.
+      // Prefer the explicit submit id; runId fallback is for mission paths with
+      // no UI optimistic seed.
+      const clientSubmitId =
+        (typeof run.clientSubmitId === 'string' && run.clientSubmitId.trim()) ||
+        run.runId
       if (existing && existing.backend === backend) {
         const response = await client.sendInput(existing.agentSessionId, {
-          clientSubmitId: run.runId,
+          clientSubmitId,
           content: run.task,
           ...(run.content ? { promptContent: run.content } : {}),
           ...(displayPrompt ? { displayPrompt } : {}),
@@ -156,7 +164,7 @@ export function createAgoraxManagedAgentTransport(
         session: {
           backend,
           agentSessionId: run.runId,
-          clientSubmitId: run.runId,
+          clientSubmitId,
           content: run.task,
           ...(run.content ? { promptContent: run.content } : {}),
           ...(displayPrompt ? { displayPrompt } : {}),

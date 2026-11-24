@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	activityshared "agorax.local/agent-daemon/packages/agent/daemon/activity/events"
 )
@@ -388,6 +389,64 @@ func TestClaudeCLIAdapterNonZeroExitWithoutResultFailsTurn(t *testing.T) {
 	}
 }
 
+func TestClaudeCLIAdapterSettlesOnResultBeforeProcessExit(t *testing.T) {
+	t.Parallel()
+
+	// Result arrives, then the process hangs (no exit). Tutti-aligned settle
+	// must publish provider-turn completed on the protocol `result` line.
+	conn := newClaudeFakeConnection(ProcessFrame{Stdout: []byte(
+		`{"type":"system","subtype":"init","session_id":"sess-early"}` + "\n" +
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"OK"}]}}` + "\n" +
+			`{"type":"result","subtype":"success","result":"OK"}` + "\n",
+	)})
+	conn.block = true
+	transport := &claudeFakeTransport{conn: conn}
+	adapter := newClaudeTestAdapter(transport, nil)
+	session := claudeTestSession()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	settled := make(chan struct{})
+	execDone := make(chan []activityshared.Event, 1)
+	go func() {
+		events, err := adapter.Exec(ctx, session, []PromptContentBlock{
+			{Type: "text", Text: "hi"},
+		}, "", "turn-early-settle", func(next []activityshared.Event) {
+			for _, event := range next {
+				if event.Type == activityshared.EventRootProviderTurnCompleted {
+					select {
+					case <-settled:
+					default:
+						close(settled)
+					}
+				}
+			}
+		}, nil)
+		if err != nil {
+			execDone <- nil
+			return
+		}
+		execDone <- events
+	}()
+
+	select {
+	case <-settled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("turn did not settle on stream-json result before process exit")
+	}
+	cancel()
+	events := <-execDone
+	if events == nil {
+		t.Fatal("Exec failed after early settle")
+	}
+	completed := eventsOfType(events, activityshared.EventRootProviderTurnCompleted)
+	if len(completed) != 1 ||
+		completed[0].Payload.TurnOutcome != string(activityshared.TurnOutcomeCompleted) ||
+		completed[0].Payload.ProviderTurnID != "sess-early" {
+		t.Fatalf("provider turn completed = %#v, want one completed with sess-early (not canceled)", completed)
+	}
+}
+
 func TestClaudeCLIAdapterCancelKillsProcessAndSettlesCanceled(t *testing.T) {
 	t.Parallel()
 
@@ -508,6 +567,9 @@ func TestClaudeCLIAdapterArgvContract(t *testing.T) {
 	transport := &claudeFakeTransport{conn: conn}
 	adapter := newClaudeTestAdapter(transport, nil)
 	session := claudeTestSession()
+	// First turn has no durable Claude session yet — fixture defaults must not
+	// leak a fake ProviderSessionID into --resume.
+	session.ProviderSessionID = ""
 	session.Settings = &SessionSettings{Model: "claude-opus-4-1", ReasoningEffort: "high"}
 
 	if _, err := adapter.Exec(context.Background(), session, []PromptContentBlock{
@@ -537,6 +599,12 @@ func TestClaudeCLIAdapterArgvContract(t *testing.T) {
 		"--effort", "high",
 		"--", "say OK",
 	)
+	// Fresh sessions must not send --resume before Claude assigns a session id.
+	for i, arg := range argv {
+		if arg == "--resume" || arg == "--session-id" {
+			t.Fatalf("fresh argv unexpectedly contains %q at %d: %v", arg, i, argv)
+		}
+	}
 	// The prompt is exactly one argv element: no quoting or escaping is
 	// spliced into the array by the adapter.
 	if argv[len(argv)-2] != "--" || argv[len(argv)-1] != "say OK" {
@@ -544,6 +612,73 @@ func TestClaudeCLIAdapterArgvContract(t *testing.T) {
 	}
 	if strings.Contains(argv[len(argv)-1], "\"") || strings.Contains(argv[len(argv)-1], "'") {
 		t.Fatalf("prompt argv element carries quote characters: %q", argv[len(argv)-1])
+	}
+}
+
+func TestClaudeCLIAdapterInitPersistsProviderSessionID(t *testing.T) {
+	t.Parallel()
+
+	conn := newClaudeFakeConnection(claudeStdoutFrames(
+		`{"type":"system","subtype":"init","session_id":"claude-sess-persist","model":"claude-sonnet-4-5"}`+"\n",
+		`{"type":"result","subtype":"success","result":"OK"}`+"\n",
+	)...)
+	transport := &claudeFakeTransport{conn: conn}
+	adapter := newClaudeTestAdapter(transport, nil)
+	session := claudeTestSession()
+	session.ProviderSessionID = ""
+	events, err := adapter.Exec(context.Background(), session, []PromptContentBlock{
+		{Type: "text", Text: "hi"},
+	}, "", "turn-persist", nil, nil)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	updated := eventsOfType(events, activityshared.EventSessionUpdated)
+	if len(updated) == 0 {
+		t.Fatal("expected session.updated carrying Claude session id")
+	}
+	found := false
+	for _, event := range updated {
+		if event.ProviderSessionID == "claude-sess-persist" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("session.updated events = %#v, want ProviderSessionID=claude-sess-persist", updated)
+	}
+	started := eventsOfType(events, activityshared.EventRootProviderTurnStarted)
+	if len(started) != 1 || started[0].Payload.ProviderTurnID != "claude-sess-persist" {
+		t.Fatalf("provider turn started = %#v", started)
+	}
+}
+
+func TestClaudeCLIAdapterArgvResumesProviderSessionID(t *testing.T) {
+	t.Parallel()
+
+	conn := newClaudeFakeConnection(claudeStdoutFrames(
+		`{"type":"system","subtype":"init","session_id":"claude-sess-resume"}`+"\n",
+		`{"type":"result","subtype":"success","result":"OK"}`+"\n",
+	)...)
+	transport := &claudeFakeTransport{conn: conn}
+	adapter := newClaudeTestAdapter(transport, nil)
+	session := claudeTestSession()
+	session.ProviderSessionID = "claude-sess-resume"
+
+	events, err := adapter.Exec(context.Background(), session, []PromptContentBlock{
+		{Type: "text", Text: "continue"},
+	}, "", "turn-resume", nil, nil)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	assertArgvContainsInOrder(t, transport.lastSpec().Command,
+		"--resume", "claude-sess-resume",
+		"--", "continue",
+	)
+	// Resumed turns must keep a unique RPT (canonical turn id), not reuse the
+	// stable Claude session cursor that already bound an earlier turn.
+	started := eventsOfType(events, activityshared.EventRootProviderTurnStarted)
+	if len(started) != 1 || started[0].Payload.ProviderTurnID != "turn-resume" {
+		t.Fatalf("resumed provider turn id = %#v, want turn-resume", started)
 	}
 }
 

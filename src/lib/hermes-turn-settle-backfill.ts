@@ -7,6 +7,7 @@
 
 import type { AgentActivityUpdatedEvent } from '@agorax/agent-activity-core'
 import { stripWorkspaceDirective } from './workspace-message-scope'
+import { stripAgentPreferences } from './agent-preferences-text'
 
 export type HistoryLikeMessage = {
   role?: string
@@ -131,8 +132,8 @@ function historyUserPlainText(message: HistoryLikeMessage): string {
     }
     raw = parts.join('\n').trim()
   }
-  // Gateway persists Workspace::v1 envelope; open turn holds bare prompt.
-  return stripWorkspaceDirective(raw).trim()
+  // Gateway persists Workspace::v1 + preferences envelopes; open turn holds bare prompt.
+  return stripAgentPreferences(stripWorkspaceDirective(raw)).trim()
 }
 
 function historyUserClientSubmitId(message: HistoryLikeMessage): string {
@@ -163,7 +164,9 @@ export function baselineAfterOpenTurnUser(
   open: { clientSubmitId?: string; userText?: string },
 ): number | null {
   const submit = open.clientSubmitId?.trim() ?? ''
-  const userText = stripWorkspaceDirective(open.userText?.trim() ?? '').trim()
+  const userText = stripAgentPreferences(
+    stripWorkspaceDirective(open.userText?.trim() ?? ''),
+  ).trim()
   if (!submit && !userText) return null
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const row = messages[i]

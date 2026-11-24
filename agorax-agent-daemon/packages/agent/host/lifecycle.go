@@ -465,10 +465,17 @@ func (h *Host) ensureRuntimeSessionLocked(ctx context.Context, ref SessionRef) (
 	if err != nil {
 		return ProviderRuntimeSession{}, h.cleanupFailedRuntimeResume(ctx, ref, canonicalSession.Provider, err)
 	}
+	// Claude CLI historically stored the native session id only on
+	// root_provider_turn_id. Adopt the latest value so Controller.Resume can
+	// pass its provider-session-id gate and Exec can pass `--resume`.
+	providerSessionID := strings.TrimSpace(canonicalSession.ProviderSessionID)
+	if providerSessionID == "" {
+		providerSessionID = strings.TrimSpace(evidence.LatestRootProviderTurnID)
+	}
 	result, err := h.runtime.Resume(ctx, RuntimeResumeInput{
 		WorkspaceID: ref.WorkspaceID, AgentSessionID: ref.AgentSessionID,
 		AgentTargetID: strings.TrimSpace(canonicalSession.AgentTargetID), Provider: strings.TrimSpace(canonicalSession.Provider),
-		ProviderSessionID: strings.TrimSpace(canonicalSession.ProviderSessionID), Resumable: evidence.Established, Cwd: prepared.Cwd,
+		ProviderSessionID: providerSessionID, Resumable: evidence.Established, Cwd: prepared.Cwd,
 		Env: append([]string(nil), prepared.Env...), MCPServers: cloneHostMCPServerBindings(prepared.MCPServers), Title: strings.TrimSpace(canonicalSession.Title),
 		Status: persistedRuntimeStatus(canonicalSession.ActiveTurnID), Settings: settings,
 		CreatedAtUnixMS: canonicalSession.CreatedAtUnixMS, UpdatedAtUnixMS: canonicalSession.UpdatedAtUnixMS,

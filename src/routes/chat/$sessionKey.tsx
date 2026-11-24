@@ -9,8 +9,13 @@ import {
 } from '../../screens/chat/chat-queries'
 import { writeLastSession } from '../../screens/chat/last-session'
 import { ChatRouteLoading } from '../../screens/chat/chat-route-loading'
-import { useProfiles } from '../../screens/chat/hooks/use-profiles'
+import {
+  activateProfile,
+  setActiveProfileOptimistic,
+  useProfiles,
+} from '../../screens/chat/hooks/use-profiles'
 import { prefetchProfileWorkspace } from '@/lib/workspace-client'
+import { preloadWorkspaceFolders } from '@/components/workspace-folder-picker'
 import { useAgentStore } from '@/stores/agent-store'
 import { fetchAgents } from '@/lib/agent-api'
 import { ErrorBoundary } from '@/components/error-boundary'
@@ -132,19 +137,57 @@ function ChatRoute() {
 
   // Prefetch history while the chat chunk is still downloading so the first
   // ChatScreen paint often already has messages (no second skeleton wait).
+  // When daemon rows live under another Hermes profile (deep link while
+  // activeAgentId is still default), switch agent/profile before hydrate so
+  // empty reconcile hits the owning hermes:<profile> workspace once.
   useEffect(() => {
     if (isNewChat || !activeFriendlyId || activeFriendlyId === 'main') return
+    let cancelled = false
     const historyKey = chatQueryKeys.history(activeFriendlyId, activeFriendlyId)
-    void queryClient.prefetchQuery({
-      queryKey: historyKey,
-      queryFn: () =>
-        fetchHistory({
-          sessionKey: activeFriendlyId,
-          friendlyId: activeFriendlyId,
-          profile: activeProfileName,
-        }),
-      staleTime: 10_000,
-    })
+    void queryClient
+      .prefetchQuery({
+        queryKey: historyKey,
+        queryFn: () =>
+          fetchHistory({
+            sessionKey: activeFriendlyId,
+            friendlyId: activeFriendlyId,
+            profile: activeProfileName,
+          }),
+        staleTime: 10_000,
+      })
+      .then(() => {
+        if (cancelled) return
+        const data = queryClient.getQueryData<{
+          resolvedProfile?: string
+        }>(historyKey)
+        const resolved = data?.resolvedProfile?.trim()
+        if (!resolved || resolved === activeProfileName) return
+
+        const state = useAgentStore.getState()
+        const matchingHermesAgent = state.agents.find(
+          (agent) =>
+            agent.runtime === 'hermes' &&
+            (agent.runtimeConfig.profile ?? agent.agentId) === resolved,
+        )
+        if (
+          matchingHermesAgent &&
+          state.activeAgentId !== matchingHermesAgent.agentId
+        ) {
+          state.setActiveAgentId(matchingHermesAgent.agentId, {
+            sessionId: activeFriendlyId,
+          })
+        }
+
+        setActiveProfileOptimistic(queryClient, resolved)
+        preloadWorkspaceFolders(resolved)
+        void activateProfile(resolved).catch(() => {
+          // Gateway activate is best-effort; history/reconcile already
+          // cross-profile fall back if this fails.
+        })
+      })
+    return () => {
+      cancelled = true
+    }
   }, [activeFriendlyId, activeProfileName, isNewChat, queryClient])
 
   // Prefetch workspace + shallow files tree at route level — explorer mounts

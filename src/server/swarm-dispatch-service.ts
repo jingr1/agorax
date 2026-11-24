@@ -47,6 +47,7 @@ import {
   hasMissionSpecFreshnessHint,
   missionDetailUrl,
 } from './task-pipeline/mission-spec-freshness'
+import { applyAgentPreferences } from './agent-preferences'
 import {
   buildHermesTmuxShellCommand,
   buildHermesTmuxTuiCommand,
@@ -649,6 +650,7 @@ export function buildWorkerPrompt(input: {
   missionId?: string | null
   taskTitle?: string | null
 }): string {
+  // Raw smoke probes stay unwrapped (including preferences) for minimal ping.
   if (input.direct && input.raw) return input.task
   const roster = input.roster
   const displayName = roster?.name?.trim() || input.workerId
@@ -731,7 +733,7 @@ export function buildWorkerPrompt(input: {
     'BLOCKER: blocker or none',
     'NEXT_ACTION: exact recommended next action',
   )
-  return lines.filter(Boolean).join('\n')
+  return applyAgentPreferences(lines.filter(Boolean).join('\n'))
 }
 
 function markDispatchStarted(

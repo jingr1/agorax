@@ -10,6 +10,7 @@ import { isHermesDurableRunId } from '../../lib/hermes-durable-run-id'
 import { hermesChatModelFields } from '../../lib/chat-model-ref'
 import { buildResolvedSessionHeaders } from '../../lib/send-stream-session-headers'
 import { buildWorkspaceScopedTextMessage } from '../../lib/workspace-message-scope'
+import { applyAgentPreferences } from '../../server/agent-preferences'
 import { resolveSessionKey } from '../../server/session-utils'
 import { isAuthenticated } from '../../server/auth-middleware'
 import { requireJsonContentType } from '../../server/rate-limit'
@@ -189,8 +190,9 @@ export const Route = createFileRoute('/api/send-stream')({
         }
 
         const workspaceScope = await loadWorkspaceCatalog().catch(() => null)
+        // Preferences before Workspace::v1 so the WebUI prefix stays leading.
         const scopedMessage = buildWorkspaceScopedTextMessage(
-          getChatMessage(message, attachments),
+          applyAgentPreferences(getChatMessage(message, attachments)),
           workspaceScope,
         )
 

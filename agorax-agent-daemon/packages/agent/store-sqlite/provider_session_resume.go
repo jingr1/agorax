@@ -13,6 +13,10 @@ type ProviderSessionResumeEvidence struct {
 	HasTurns       bool
 	HasSettledTurn bool
 	Established    bool
+	// LatestRootProviderTurnID is the most recent non-empty root provider turn
+	// id for the session. Claude CLI historically stored its native session id
+	// only here; Host cold Resume may adopt it when ProviderSessionID is blank.
+	LatestRootProviderTurnID string
 }
 
 // GetProviderSessionResumeEvidence distinguishes an empty live session from a
@@ -33,6 +37,7 @@ func (s *Store) GetProviderSessionResumeEvidence(
 		return ProviderSessionResumeEvidence{}, nil
 	}
 	var hasTurns, hasSettledTurn, established int
+	var latestRootProviderTurnID string
 	if err := s.db.QueryRowContext(ctx, `
 SELECT EXISTS(
          SELECT 1
@@ -61,16 +66,29 @@ SELECT EXISTS(
                OR provider_phase IN (?, ?)
              )
          )
-       )
+       ),
+       COALESCE((
+         SELECT TRIM(root_provider_turn_id)
+         FROM workspace_agent_turns
+         WHERE workspace_id = ? AND agent_session_id = ?
+           AND TRIM(COALESCE(root_provider_turn_id, '')) <> ''
+         ORDER BY COALESCE(settled_at_unix_ms, 0) DESC,
+                  COALESCE(updated_at_unix_ms, 0) DESC,
+                  COALESCE(created_at_unix_ms, 0) DESC,
+                  turn_id DESC
+         LIMIT 1
+       ), '')
 `, workspaceID, agentSessionID, workspaceID, agentSessionID,
 		workspaceID, agentSessionID, workspaceID, agentSessionID,
-		GoalProviderPhaseAccepted, GoalProviderPhaseApplied).
-		Scan(&hasTurns, &hasSettledTurn, &established); err != nil {
+		GoalProviderPhaseAccepted, GoalProviderPhaseApplied,
+		workspaceID, agentSessionID).
+		Scan(&hasTurns, &hasSettledTurn, &established, &latestRootProviderTurnID); err != nil {
 		return ProviderSessionResumeEvidence{}, fmt.Errorf("get provider session resume evidence: %w", err)
 	}
 	return ProviderSessionResumeEvidence{
-		HasTurns:       hasTurns != 0,
-		HasSettledTurn: hasSettledTurn != 0,
-		Established:    established != 0,
+		HasTurns:                 hasTurns != 0,
+		HasSettledTurn:           hasSettledTurn != 0,
+		Established:              established != 0,
+		LatestRootProviderTurnID: strings.TrimSpace(latestRootProviderTurnID),
 	}, nil
 }

@@ -14,6 +14,13 @@ export AGORAX_AGENT_DB_PATH="$DB_PATH"
 
 mkdir -p "$ROOT/.agorax"
 
+# shellcheck disable=SC1091
+source "$ROOT/scripts/load-dotenv-file.sh"
+# Prebuilt-binary path used to skip dotenv entirely — Codex then failed with
+# Missing environment variable: TOKENX_API_KEY_VPEL (key lives in ~/.hermes/.env).
+agorax_load_dotenv_file "$ROOT/.env"
+agorax_load_dotenv_file "${HERMES_HOME:-$HOME/.hermes}/.env"
+
 # If something already answers /health, leave it alone unless --force.
 FORCE=0
 for arg in "$@"; do

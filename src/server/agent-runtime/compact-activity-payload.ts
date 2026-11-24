@@ -5,6 +5,7 @@
  * a short `displayPrompt` for the chat bubble. Without compaction, GET detail
  * can be multi-MB for a single user turn and freezes sidebar attach.
  */
+import { stripAgentPreferences } from '../../lib/agent-preferences-text'
 
 const SKILL_BLOCK_RE =
   /<!--\s*agorax-platform-skills\s*-->[\s\S]*?<!--\s*\/agorax-platform-skills\s*-->/gi
@@ -18,7 +19,7 @@ export function stripAgoraxPlatformSkillBlocks(text: string): string {
 }
 
 function compactText(text: string, limit = MANAGED_ACTIVITY_TEXT_SOFT_LIMIT): string {
-  const stripped = stripAgoraxPlatformSkillBlocks(text)
+  const stripped = stripAgentPreferences(stripAgoraxPlatformSkillBlocks(text))
   if (stripped.length <= limit) return stripped
   return `${stripped.slice(0, limit)}\n\n…[truncated ${stripped.length - limit} chars for wire transfer]`
 }

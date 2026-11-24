@@ -52,6 +52,9 @@ WHERE workspace_id = 'ws-1' AND agent_session_id = 'session-1' AND turn_id = 'tu
 	if !evidence.HasTurns || !evidence.HasSettledTurn || !evidence.Established {
 		t.Fatalf("established evidence = %#v", evidence)
 	}
+	if evidence.LatestRootProviderTurnID != "provider-turn-1" {
+		t.Fatalf("latest root provider turn id = %q, want provider-turn-1", evidence.LatestRootProviderTurnID)
+	}
 }
 
 func TestGetProviderSessionResumeEvidenceRetainsHistoricalAcceptedGoal(t *testing.T) {

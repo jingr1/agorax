@@ -119,10 +119,14 @@ func (h *Host) reprepareRuntimeSession(
 		return ProviderRuntimeSession{}, h.cleanupFailedReprepare(ctx, ref, canonicalSession.Provider, err)
 	}
 	defer releaseStartup()
+	providerSessionID := strings.TrimSpace(canonicalSession.ProviderSessionID)
+	if providerSessionID == "" {
+		providerSessionID = strings.TrimSpace(evidence.LatestRootProviderTurnID)
+	}
 	resumeInput := RuntimeResumeInput{
 		WorkspaceID: ref.WorkspaceID, AgentSessionID: ref.AgentSessionID,
 		AgentTargetID: strings.TrimSpace(canonicalSession.AgentTargetID), Provider: strings.TrimSpace(canonicalSession.Provider),
-		ProviderSessionID: strings.TrimSpace(canonicalSession.ProviderSessionID), Resumable: true, Cwd: prepared.Cwd,
+		ProviderSessionID: providerSessionID, Resumable: true, Cwd: prepared.Cwd,
 		Env: append([]string(nil), prepared.Env...), MCPServers: cloneHostMCPServerBindings(prepared.MCPServers), Title: strings.TrimSpace(canonicalSession.Title),
 		Status: persistedRuntimeStatus(""), Settings: settings,
 		CreatedAtUnixMS: canonicalSession.CreatedAtUnixMS, UpdatedAtUnixMS: canonicalSession.UpdatedAtUnixMS,

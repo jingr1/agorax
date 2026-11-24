@@ -47,6 +47,10 @@ import {
   subscribeManagedAgentEngine,
   syncPendingApprovalsIntoEngine,
 } from '../lib/managed-agent-engine'
+import {
+  clearRememberedOpenTurn,
+  getRememberedOpenTurn,
+} from '../lib/engine-user-prompt-ingest'
 import { managedPromptContentFromAttachments } from '@/lib/managed-agent-runtime/prompt-content'
 import { managedAgentTargetIdForRuntime } from '@/lib/managed-agent-runtime/agent-targets'
 import {
@@ -243,7 +247,9 @@ export function useManagedAgentChat({
         const runtime = runtimeRef.current
         if (!runtime) return
         canonicalSessionIdRef.current = detail.session.agentSessionId
-        hydrateManagedAgentEngine(runtime.engine, detail)
+        hydrateManagedAgentEngine(runtime.engine, detail, {
+          coordinator: runtime.coordinator,
+        })
         const pendingDisplaySessionId = pendingDisplaySessionIdRef.current
         if (pendingDisplaySessionId) {
           pendingDisplaySessionIdRef.current = null
@@ -536,6 +542,52 @@ export function useManagedAgentChat({
     })
   }, [engineSnapshot, overlayEpoch])
 
+  // Homologous with Hermes: drop open-turn nonce when this submit's durable
+  // user is present and the Engine turn settled. Host turnIds are UUIDs, so
+  // we match by `client-submit:user:<submitId>` rather than turn-<submitId>.
+  useEffect(() => {
+    const sid = canonicalSessionIdRef.current
+    if (!sid) return
+    const remembered = getRememberedOpenTurn(sid)
+    if (!remembered) return
+    const active = chatState.activeTurn
+    if (active && active.phase !== 'settled') return
+    const durableUserId = `client-submit:user:${remembered.clientSubmitId}`
+    const hasDurableUser = chatState.messages.some((message) => {
+      const id =
+        (typeof message.messageId === 'string' && message.messageId.trim()) ||
+        (typeof message.id === 'string' && message.id.trim()) ||
+        ''
+      if (id === durableUserId) return true
+      // Host may stamp a different client-submit:user:* (e.g. runId fallback).
+      // Once the turn settled and any user row remains, drop the open-turn nonce.
+      const payload = (message as { payload?: { clientSubmitId?: unknown } })
+        .payload
+      const payloadSubmit =
+        typeof payload?.clientSubmitId === 'string'
+          ? payload.clientSubmitId.trim()
+          : ''
+      return (
+        payloadSubmit === remembered.clientSubmitId ||
+        id.startsWith('client-submit:user:')
+      )
+    })
+    // activeTurn may remain non-null with phase settled until session clears
+    // activeTurnId — still drop the nonce once the turn is terminal.
+    if (
+      hasDurableUser &&
+      chatState.latestTurn?.phase === 'settled' &&
+      (!active || active.phase === 'settled')
+    ) {
+      clearRememberedOpenTurn(sid)
+    }
+  }, [
+    chatState.activeTurn,
+    chatState.latestTurn?.phase,
+    chatState.latestTurn?.turnId,
+    chatState.messages,
+  ])
+
   // Keep engine interactions aligned with waiting_approval tool rows so
   // submitInteractionResponse can admit clicks (Tutti derives prompts from
   // those rows; Agorax also needs the Interaction entity for respond).
@@ -648,9 +700,10 @@ export function useManagedAgentChat({
           throw new Error('Managed Agent session changed before activation')
         }
         const clientSubmitId = crypto.randomUUID()
-        // Homologous with Hermes: seed user + empty pending host before runtime.
+        // Tutti: optimistic user → overlay only; Engine waits for Host durable.
         ingestManagedUserPromptMessage({
           engine: chatRuntime.engine,
+          coordinator: chatRuntime.coordinator,
           workspaceId: chatRuntime.workspaceId,
           agentSessionId: sessionId,
           clientSubmitId,
@@ -702,13 +755,16 @@ export function useManagedAgentChat({
           })
         }
         const clientSubmitId = crypto.randomUUID()
-        if (!session?.activeTurnId) ingestManagedUserPromptMessage({
-          engine: chatRuntime.engine,
-          workspaceId: chatRuntime.workspaceId,
-          agentSessionId,
-          clientSubmitId,
-          text,
-        })
+        if (!session?.activeTurnId) {
+          ingestManagedUserPromptMessage({
+            engine: chatRuntime.engine,
+            coordinator: chatRuntime.coordinator,
+            workspaceId: chatRuntime.workspaceId,
+            agentSessionId,
+            clientSubmitId,
+            text,
+          })
+        }
         const admission = chatRuntime.engine.submitPrompt({
           agentSessionId,
           clientSubmitId,

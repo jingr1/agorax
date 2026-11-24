@@ -451,7 +451,7 @@ export const ChatSessionSidebar = memo(function ChatSessionSidebar({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="size-6 text-primary-500 hover:bg-primary-200 dark:hover:bg-primary-800"
+            className="size-6 text-primary-500"
             onClick={onNewChat}
             title="New session"
           >

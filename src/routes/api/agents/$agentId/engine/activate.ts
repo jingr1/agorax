@@ -8,6 +8,7 @@ import { startManagedChatRun } from '../../../../../server/agent-runtime/run-man
 import { getAgentRuntimeRouter } from '../../../../../server/agent-runtime/router'
 import { resolveManagedChatWorkspaceCwd } from '../../../../../server/agent-runtime/managed-chat-workspace'
 import { buildWorkspaceScopedTextMessage } from '../../../../../lib/workspace-message-scope'
+import { applyAgentPreferences } from '../../../../../server/agent-preferences'
 import { loadWorkspaceCatalog } from '../../../workspace'
 import type { ManagedAgentActivateResponseDto } from '@/lib/managed-agent-runtime/command-dtos'
 import type { AgoraxManagedPromptContentBlock } from '@/lib/managed-agent-runtime/prompt-content'
@@ -61,6 +62,10 @@ export const Route = createFileRoute('/api/agents/$agentId/engine/activate')({
             : typeof body?.effort === 'string'
               ? body.effort.trim()
               : ''
+        const clientSubmitId =
+          typeof body?.clientSubmitId === 'string'
+            ? body.clientSubmitId.trim()
+            : ''
         let promptContent: Array<AgoraxManagedPromptContentBlock>
         try {
           promptContent = managedPromptContentBlocksFromUnknown(
@@ -80,8 +85,9 @@ export const Route = createFileRoute('/api/agents/$agentId/engine/activate')({
         )
         // Mirror Hermes / chat.ts: stamp the composer workspace into the first
         // turn so the agent sees the selected path even before tool cwd binds.
+        // Preferences before Workspace::v1 so the WebUI prefix stays leading.
         const scopedRuntimeText = buildWorkspaceScopedTextMessage(
-          runtimeText,
+          applyAgentPreferences(runtimeText),
           workspace,
         )
         // Rewrite text blocks in promptContent when present so attachments stay.
@@ -100,6 +106,7 @@ export const Route = createFileRoute('/api/agents/$agentId/engine/activate')({
           ...(scopedRuntimeText !== displayPrompt
             ? { displayPrompt }
             : {}),
+          ...(clientSubmitId ? { clientSubmitId } : {}),
           ...(model ? { model } : {}),
           ...(reasoningEffort ? { effort: reasoningEffort } : {}),
           ...(cwd ? { cwd } : {}),

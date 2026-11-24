@@ -290,6 +290,11 @@ type claudeCLITurnExecutor struct {
 
 	stderrTail string
 
+	// settled is set once FinishCompleted/Failed/Interrupted + provider-turn
+	// completed have been emitted. Tutti-aligned: the protocol `result` line
+	// settles the turn; process EOF is only a fallback when result never came.
+	settled bool
+
 	// killProcess is set when a fatal stream event (HTTP 429 api_retry) asks
 	// the executor to stop waiting on Claude Code's internal retry loop.
 	killProcess bool
@@ -399,6 +404,10 @@ func (a *claudeCLIAdapter) Exec(
 // turn lifecycle is opened and closed with the canonical turn id fallback so
 // resume evidence and turn state stay consistent.
 func (exec *claudeCLITurnExecutor) failEarly(metadata map[string]any) {
+	if exec.settled {
+		return
+	}
+	exec.settled = true
 	exec.emit(exec.normalizer.FinishFailed(exec.session, exec.turnID))
 	exec.ensureProviderTurnStarted()
 	exec.emit([]activityshared.Event{claudeRootProviderTurnCompletedEvent(
@@ -418,8 +427,9 @@ func (exec *claudeCLITurnExecutor) failEarlySnapshot(metadata map[string]any) []
 	return exec.snapshotEvents()
 }
 
-// run consumes process frames until EOF, ctx cancellation, or the exit frame,
-// then settles the turn with the outcome the stream reported.
+// run consumes process frames until EOF, ctx cancellation, or the exit frame.
+// Provider turn complete is the stream-json `result` line (Tutti-aligned);
+// process exit is only the settle fallback when no result arrived.
 func (exec *claudeCLITurnExecutor) run(ctx context.Context, conn ProcessConnection) {
 	var exitCode *int
 	recv := conn.Recv
@@ -466,6 +476,8 @@ func (exec *claudeCLITurnExecutor) run(ctx context.Context, conn ProcessConnecti
 		exec.handleCanceled(conn)
 		return
 	}
+	// Fallback: no protocol `result` (crash / truncated stream). No-op when
+	// result already settled the turn before process exit.
 	exec.settle(exitCode)
 }
 
@@ -478,8 +490,20 @@ func (exec *claudeCLITurnExecutor) handleStreamEvents(streamEvents []claudeStrea
 func (exec *claudeCLITurnExecutor) handleStreamEvent(event claudeStreamEvent) {
 	switch event.kind {
 	case "init":
-		if event.sessionID != "" {
-			exec.providerTurnID = event.sessionID
+		if sid := strings.TrimSpace(event.sessionID); sid != "" {
+			// Persist Claude's native session id onto the durable Session so
+			// cold Resume can satisfy Controller's provider-session-id gate
+			// and later Exec launches can pass `--resume`.
+			priorProviderSessionID := strings.TrimSpace(exec.session.ProviderSessionID)
+			exec.adoptProviderSessionID(sid)
+			// system.init.session_id is a session cursor, not a per-turn id.
+			// First oneshot (or any turn that newly learns the cursor) may use
+			// it as root_provider_turn_id. Once ProviderSessionID already equals
+			// this session_id we are resuming — keep the canonical turn id as
+			// RPT so bindings stay unique across turns.
+			if priorProviderSessionID != sid {
+				exec.providerTurnID = sid
+			}
 		}
 		exec.model = event.model
 		exec.ensureProviderTurnStarted()
@@ -494,6 +518,10 @@ func (exec *claudeCLITurnExecutor) handleStreamEvent(event claudeStreamEvent) {
 			return
 		}
 		exec.emit(exec.normalizer.AppendThinkingChunk(exec.session, exec.turnID, event.text))
+	case "assistant_segment_complete":
+		// Content-complete only — does not settle the Host turn. `result` still
+		// owns provider-turn complete; this clears Managed Stop/caret early.
+		exec.emit(exec.normalizer.Finish(exec.session, exec.turnID, messageStreamStateCompleted))
 	case "tool_start":
 		update := map[string]any{
 			"toolCallId": strings.TrimSpace(event.toolID),
@@ -529,13 +557,44 @@ func (exec *claudeCLITurnExecutor) handleStreamEvent(event claudeStreamEvent) {
 	case "result":
 		result := event.result
 		exec.result = &result
+		// Protocol complete ≡ Tutti provider turn complete. Do not wait for
+		// CLI process EOF — that lag kept Managed chat Stop busy after text.
+		exec.settle(nil)
 	case "error":
 		exec.sawError = true
 		exec.errorText = event.message
 		if event.killProcess {
 			exec.killProcess = true
+			// Fatal stream error (e.g. 429 api_retry): settle failed now so
+			// busy clears without waiting on a hung retry loop / exit.
+			exec.settle(nil)
 		}
 	}
+}
+
+// adoptProviderSessionID folds Claude's system.init session_id into the live
+// Session via session.updated. Controller applySessionEventsBase copies
+// event.ProviderSessionID onto the durable session record.
+func (exec *claudeCLITurnExecutor) adoptProviderSessionID(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	if strings.TrimSpace(exec.session.ProviderSessionID) == sessionID {
+		return
+	}
+	exec.session.ProviderSessionID = sessionID
+	ctx, ok := activityEventContext(
+		exec.session,
+		"claude-cli:provider-session:"+exec.turnID+":"+sessionID,
+		"",
+	)
+	if !ok {
+		return
+	}
+	exec.emit([]activityshared.Event{
+		activityshared.NewSessionUpdated(ctx, activityshared.SessionStatusWorking),
+	})
 }
 
 // ensureProviderTurnStarted publishes root_provider_turn.started exactly once,
@@ -554,6 +613,10 @@ func (exec *claudeCLITurnExecutor) ensureProviderTurnStarted() {
 }
 
 func (exec *claudeCLITurnExecutor) settle(exitCode *int) {
+	if exec.settled {
+		return
+	}
+	exec.settled = true
 	exec.ensureProviderTurnStarted()
 	metadata := exec.resultMetadata()
 	switch {
@@ -628,6 +691,11 @@ func (exec *claudeCLITurnExecutor) handleCanceled(conn ProcessConnection) {
 	} else {
 		_ = conn.Close()
 	}
+	if exec.settled {
+		// Protocol already completed; cancel only reaps the process.
+		return
+	}
+	exec.settled = true
 	exec.ensureProviderTurnStarted()
 	exec.emit(exec.normalizer.FinishInterrupted(exec.session, exec.turnID, "canceled"))
 	exec.emit([]activityshared.Event{claudeRootProviderTurnCompletedEvent(
@@ -843,6 +911,12 @@ func claudeCLIArgv(session Session, executable string, permissionArgv []string, 
 		"--verbose",
 		"--include-partial-messages",
 	)
+	// Cold / follow-up turns: reuse the Claude native session captured from
+	// system.init (ProviderSessionID). First turn leaves this empty so Claude
+	// allocates a fresh session id.
+	if providerSessionID := strings.TrimSpace(session.ProviderSessionID); providerSessionID != "" {
+		argv = append(argv, "--resume", providerSessionID)
+	}
 	if model := strings.TrimSpace(session.SettingsValue().Model); model != "" {
 		argv = append(argv, "--model", model)
 	}

@@ -683,9 +683,48 @@ function isProcessingHostMessage(message: AgentActivityMessage): boolean {
   )
 }
 
+/** Terminal Activity statuses — content-stream chrome must not bind these. */
+export function isTerminalActivityStatus(
+  status: string | null | undefined,
+): boolean {
+  const value = typeof status === 'string' ? status.trim().toLowerCase() : ''
+  return (
+    value === 'completed' ||
+    value === 'failed' ||
+    value === 'canceled' ||
+    value === 'cancelled' ||
+    value === 'error'
+  )
+}
+
+/**
+ * True while the open turn still has non-terminal assistant/tool Activity.
+ * Used so Stop / caret clear when content is done even if Host turn is still
+ * open (Managed providers often keep the turn alive after the last delta).
+ */
+export function turnHasInFlightActivityWork(
+  sessionMessages: readonly AgentActivityMessage[],
+  activeTurnId: string,
+): boolean {
+  const turnId = activeTurnId.trim()
+  if (!turnId) return false
+  for (const message of sessionMessages) {
+    if (!message || message.turnId !== turnId) continue
+    if (isTerminalActivityStatus(message.status)) continue
+    if (
+      isAssistantLaneRole(message.role) ||
+      isToolCallKind(message.kind)
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 /**
  * Live streaming chrome key — prefer the text host id (not :thinking).
- * Includes managed orphan-turn trailing fallback when turnId is missing on rows.
+ * Only binds non-terminal Activity rows. Includes managed orphan-turn trailing
+ * fallback when turnId is missing on rows.
  */
 export function selectAssistantStreamingMessageId(
   sessionMessages: readonly AgentActivityMessage[],
@@ -694,6 +733,7 @@ export function selectAssistantStreamingMessageId(
   for (let index = sessionMessages.length - 1; index >= 0; index -= 1) {
     const message = sessionMessages[index]
     if (!message || message.turnId !== activeTurnId) continue
+    if (isTerminalActivityStatus(message.status)) continue
     if (message.role === 'assistant' && message.kind === 'text') {
       return message.messageId
     }
@@ -701,15 +741,17 @@ export function selectAssistantStreamingMessageId(
   for (let index = sessionMessages.length - 1; index >= 0; index -= 1) {
     const message = sessionMessages[index]
     if (!message || message.turnId !== activeTurnId) continue
+    if (isTerminalActivityStatus(message.status)) continue
     if (!isAssistantLaneRole(message.role)) continue
     if (!isProcessingHostMessage(message)) continue
     return normalizeStreamingHostId(message.messageId)
   }
-  // Orphan turnId: fall back to the latest trailing host message.
+  // Orphan turnId: fall back to the latest trailing non-terminal host message.
   for (let index = sessionMessages.length - 1; index >= 0; index -= 1) {
     const message = sessionMessages[index]
     if (!message) continue
     if (message.role === 'user') break
+    if (isTerminalActivityStatus(message.status)) continue
     if (isProcessingHostMessage(message)) {
       return normalizeStreamingHostId(message.messageId)
     }

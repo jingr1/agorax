@@ -70,6 +70,58 @@ function effectiveTurn(
   };
 }
 
+test("seed places optimistic user without Engine durable peer", () => {
+  const overlay = createAgentActivityOptimisticMessageOverlay();
+  overlay.seed({
+    workspaceId: "workspace-1",
+    agentSessionId: "session-1",
+    messageId: "client-submit:user:submit-1",
+    version: 1,
+    turnId: "turn-submit-1",
+    role: "user",
+    kind: "text",
+    payload: { text: "你好", clientSubmitId: "submit-1" },
+    occurredAtUnixMs: 1
+  });
+  const [message] = overlay.project(scope, []);
+  assert.equal(message?.messageId, "client-submit:user:submit-1");
+  assert.equal(message?.payload.text, "你好");
+  overlay.reconcileAuthoritativeHistory(
+    scope,
+    [
+      canonical({
+        messageId: "client-submit:user:session-1",
+        role: "user",
+        turnId: "host-turn",
+        payload: { text: "你好", clientSubmitId: "session-1" },
+        occurredAtUnixMs: 2
+      })
+    ],
+    [effectiveTurn({ turnId: "host-turn" })]
+  );
+  assert.equal(overlay.project(scope, [
+    canonical({
+      messageId: "client-submit:user:session-1",
+      role: "user",
+      turnId: "host-turn",
+      payload: { text: "你好", clientSubmitId: "session-1" },
+      occurredAtUnixMs: 2
+    })
+  ]).length, 1);
+  assert.equal(
+    overlay.project(scope, [
+      canonical({
+        messageId: "client-submit:user:session-1",
+        role: "user",
+        turnId: "host-turn",
+        payload: { text: "你好", clientSubmitId: "session-1" },
+        occurredAtUnixMs: 2
+      })
+    ])[0]?.messageId,
+    "client-submit:user:session-1"
+  );
+});
+
 test("materializes set plus append without exposing transport sequencing", () => {
   const overlay = createAgentActivityOptimisticMessageOverlay();
   assert.deepEqual(overlay.apply(delta({ operation: "set", value: "Hel" })), {

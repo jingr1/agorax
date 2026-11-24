@@ -103,6 +103,11 @@ export type HistoryResponse = {
   sessionKey: string
   sessionId?: string
   messages: Array<ChatMessage>
+  source?: string
+  latestVersion?: number
+  daemonSessionId?: string
+  /** Hermes profile that actually owned daemon rows (may differ from request). */
+  resolvedProfile?: string
 }
 
 export type SessionMeta = {

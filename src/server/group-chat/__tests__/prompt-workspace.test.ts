@@ -1,5 +1,5 @@
 /** @vitest-environment node */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   buildGroupChatTurnPrompt,
   buildTurnContext,
@@ -7,6 +7,13 @@ import {
   MISSION_SPEC_INLINE_MAX,
 } from '../prompt-builder'
 import type { GroupMember, RoomMessage } from '../types'
+import { resetAgentPreferencesCacheForTests } from '../../agent-preferences'
+
+afterEach(() => {
+  delete process.env.AGORAX_AGENT_PREFERENCES_TEXT
+  delete process.env.AGORAX_AGENT_PREFERENCES_PATH
+  resetAgentPreferencesCacheForTests()
+})
 
 function member(id: string): GroupMember {
   return {
@@ -43,6 +50,21 @@ describe('prompt-builder workspace injection', () => {
       workspacePath: null,
     })
     expect(prompt).not.toContain('Room workspace:')
+  })
+
+  it('buildTurnContext injects workspace agent preferences', () => {
+    process.env.AGORAX_AGENT_PREFERENCES_TEXT = 'Prefer tables.'
+    resetAgentPreferencesCacheForTests()
+    const prompt = buildTurnContext(
+      'Room',
+      [member('a')],
+      member('a'),
+      [],
+      null,
+      null,
+    )
+    expect(prompt).toContain('<!-- agorax-agent-preferences -->')
+    expect(prompt).toContain('Prefer tables.')
   })
 
   it('buildTurnContext forwards workspacePath', () => {

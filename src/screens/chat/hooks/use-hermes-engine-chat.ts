@@ -29,6 +29,46 @@ import {
 import type { AgentInteractionResponseInput } from '../components/agent-interaction-panel'
 import type { ChatMessage } from '../types'
 
+/**
+ * Whether to fire Tutti `session/reconcileRequested` for a still-empty session.
+ * Must be once-per-empty-session: the dispatch itself updates Engine snapshot
+ * and would otherwise re-enter the cold-hydrate effect forever.
+ *
+ * Gate key includes workspaceId: deep-link profile correction remounts the
+ * Hermes runtime under `architect` (etc.) while the session id stays the same
+ * — without the workspace in the key, the first empty request under `default`
+ * permanently suppresses hydrate on the owning workspace.
+ */
+export function emptySessionReconcileGateKey(
+  workspaceId: string,
+  agentSessionId: string,
+): string {
+  return `${workspaceId.trim() || 'default'}\0${agentSessionId.trim()}`
+}
+
+export function shouldRequestEmptySessionReconcile(input: {
+  workspaceId?: string | null
+  agentSessionId: string | null
+  liveMessageCount: number
+  alreadyRequestedFor: string | null
+}): { request: boolean; nextAlreadyRequestedFor: string | null } {
+  const sid = input.agentSessionId?.trim() || ''
+  if (!sid) {
+    return { request: false, nextAlreadyRequestedFor: null }
+  }
+  if (input.liveMessageCount > 0) {
+    return { request: false, nextAlreadyRequestedFor: null }
+  }
+  const gateKey = emptySessionReconcileGateKey(
+    input.workspaceId ?? 'default',
+    sid,
+  )
+  if (input.alreadyRequestedFor === gateKey) {
+    return { request: false, nextAlreadyRequestedFor: gateKey }
+  }
+  return { request: true, nextAlreadyRequestedFor: gateKey }
+}
+
 export function useHermesEngineChatState(input: {
   workspaceId: string
   agentSessionId: string | null
@@ -141,17 +181,32 @@ export function useHermesEngineChatState(input: {
 
   // Cold / reconnect: Tutti session reconcile (executor), not RQ whole-page
   // replace on turnBusy=false.
+  //
+  // Gate: request once per empty session. `requestSessionReconcile` always
+  // dispatches → new engineSnapshot → this effect would otherwise loop and
+  // trip React "Maximum update depth exceeded" (empty mapped Hermes history).
+  const emptyReconcileRequestedForRef = useRef<string | null>(null)
   useEffect(() => {
     const sid = agentSessionId
-    if (!sid || input.historyReady === false) return
+    if (!sid || input.historyReady === false) {
+      if (!sid) emptyReconcileRequestedForRef.current = null
+      return
+    }
     runtime.ensureSessionHydrated(sid)
     const live = selectSessionMessages(engineSnapshot, sid)
-    if (live.length > 0) return
+    const gate = shouldRequestEmptySessionReconcile({
+      workspaceId,
+      agentSessionId: sid,
+      liveMessageCount: live.length,
+      alreadyRequestedFor: emptyReconcileRequestedForRef.current,
+    })
+    emptyReconcileRequestedForRef.current = gate.nextAlreadyRequestedFor
+    if (!gate.request) return
     runtime.requestSessionReconcile(sid, {
       needsMessages: true,
       needsState: true,
     })
-  }, [agentSessionId, engineSnapshot, input.historyReady, runtime])
+  }, [agentSessionId, engineSnapshot, input.historyReady, runtime, workspaceId])
 
   // External weak-id RQ only — daemon-canonical history no-ops inside runtime.
   useEffect(() => {

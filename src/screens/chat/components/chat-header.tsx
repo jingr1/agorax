@@ -523,7 +523,7 @@ function ChatHeaderComponent({
                   <Button
                     size="icon-sm"
                     variant="ghost"
-                    className="text-primary-500 hover:bg-primary-100 dark:hover:bg-primary-800"
+                    className="text-primary-500"
                     aria-label="Undo last message"
                   >
                     <span className="text-sm">↩️</span>
@@ -551,10 +551,9 @@ function ChatHeaderComponent({
                   <Button
                     size="icon-sm"
                     variant="ghost"
-                    className={cn(
-                      'hover:bg-primary-100 dark:hover:bg-primary-800',
-                      clearConfirm ? 'text-red-500' : 'text-primary-500',
-                    )}
+                    className={
+                      clearConfirm ? 'text-red-500' : 'text-primary-500'
+                    }
                     aria-label={
                       clearConfirm ? 'Confirm clear' : 'Clear session'
                     }
@@ -580,10 +579,9 @@ function ChatHeaderComponent({
                   <Button
                     size="icon-sm"
                     variant="ghost"
-                    className={cn(
-                      'hover:bg-primary-100 dark:hover:bg-primary-800',
-                      !fileExplorerCollapsed && 'text-accent-500',
-                    )}
+                    className={
+                      !fileExplorerCollapsed ? 'text-accent-500' : undefined
+                    }
                     aria-label={
                       fileExplorerCollapsed
                         ? 'Show workspace panel'
