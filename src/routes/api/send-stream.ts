@@ -6,6 +6,7 @@ import { THINKING_TAG_NAMES, THINKING_OPEN_TAG, extractStreamingThinking, mergeL
 export { extractStreamingThinking, mergeLiveThinking, consumeInlineThinking, takeAssistantCompletedContent } from '../../server/chat/stream-text'
 import { createFileRoute } from '@tanstack/react-router'
 import { assistantMessageIdForRun } from '../../lib/chat-turn-identity'
+import { isHermesDurableRunId } from '../../lib/hermes-durable-run-id'
 import { hermesChatModelFields } from '../../lib/chat-model-ref'
 import { buildResolvedSessionHeaders } from '../../lib/send-stream-session-headers'
 import { buildWorkspaceScopedTextMessage } from '../../lib/workspace-message-scope'
@@ -888,9 +889,10 @@ export const Route = createFileRoute('/api/send-stream')({
               // useRealtimeChatHistory from creating duplicate message bubbles.
               const skipPublish = true
 
-              // Bind a Workspace run id immediately so Stop works before the
-              // gateway emits its own run_id (and after the browser remounts).
+              // Workspace UUID is Stop/Abort only — never assistant host identity.
+              // Durable Activity hosts wait for gateway run_* (see isHermesDurableRunId).
               const workspaceRunId = crypto.randomUUID()
+              let gatewayRunId: string | null = null
               activeRunId = workspaceRunId
               bindLiveSendRun(workspaceRunId, sessionKey)
               persistRunStarted(
@@ -900,18 +902,53 @@ export const Route = createFileRoute('/api/send-stream')({
               )
               startedSent = true
               sendEvent('started', {
-                runId: workspaceRunId,
-                messageId: assistantMessageIdForRun(workspaceRunId, sessionKey),
+                // Omit runId so the adapter does not mint assistant:<uuid>.
+                // Stop still uses workspaceRunId via bindLiveSendRun / active runs.
+                stopRunId: workspaceRunId,
                 sessionKey,
                 friendlyId: resolvedFriendlyId || sessionKey,
               })
               lastActivity = 'Processing your message...'
+
+              const messageRunId = (): string | undefined =>
+                gatewayRunId ?? undefined
 
               // Mid-run tool polling: vanilla Hermes Agent often does not emit
               // tool.* SSE live. Poll the session for tool_calls that were not
               // already on an event payload. `calling` goes out as soon as the
               // call is persisted; the tracker dedupes against live events.
               const syntheticLiveToolTracker = createSyntheticLiveToolTracker()
+              const liveToolsById = new Map<
+                string,
+                {
+                  id: string
+                  name: string
+                  phase: string
+                  args?: unknown
+                  result?: string
+                }
+              >()
+              const rememberLiveTool = (tool: {
+                toolCallId: string
+                name: string
+                phase: string
+                args?: unknown
+                result?: string
+              }) => {
+                const id = tool.toolCallId.trim()
+                if (!id) return
+                const prev = liveToolsById.get(id)
+                liveToolsById.set(id, {
+                  id,
+                  name: tool.name || prev?.name || 'tool',
+                  phase: tool.phase || prev?.phase || 'calling',
+                  args: tool.args ?? prev?.args,
+                  result:
+                    typeof tool.result === 'string'
+                      ? tool.result
+                      : prev?.result,
+                })
+              }
               let lastSyntheticThinkingEmitted = ''
               let liveRunActive = true
               const livePollIntervalMs = 800
@@ -1000,7 +1037,7 @@ export const Route = createFileRoute('/api/send-stream')({
                       sendEvent('thinking', {
                         text: syntheticThinking,
                         sessionKey,
-                        runId: activeRunId ?? undefined,
+                        runId: messageRunId(),
                       })
                     }
 
@@ -1008,9 +1045,10 @@ export const Route = createFileRoute('/api/send-stream')({
                       messages: msgs,
                       tracker: syntheticLiveToolTracker,
                       sessionKey,
-                      runId: activeRunId ?? undefined,
+                      runId: messageRunId(),
                     })
                     for (const synthetic of syntheticEvents) {
+                      rememberLiveTool(synthetic)
                       sendEvent('tool', synthetic)
                     }
                   } catch {
@@ -1100,19 +1138,22 @@ export const Route = createFileRoute('/api/send-stream')({
                         data.session_id.trim()
                           ? data.session_id
                           : sessionKey
-                      const runId =
+                      const eventRunId =
                         typeof data.run_id === 'string' && data.run_id.trim()
-                          ? data.run_id
+                          ? data.run_id.trim()
                           : typeof data.runId === 'string' && data.runId.trim()
-                            ? data.runId
-                            : (activeRunId ?? undefined)
-
-                      if (runId) {
+                            ? data.runId.trim()
+                            : ''
+                      if (eventRunId && isHermesDurableRunId(eventRunId)) {
+                        gatewayRunId = eventRunId
                         // Alias gateway run ids to the same AbortController so
                         // either Workspace or Hermes run id can Stop the turn.
-                        bindLiveSendRun(runId, sessionKeyFromEvent)
-                        if (!activeRunId) activeRunId = runId
+                        bindLiveSendRun(eventRunId, sessionKeyFromEvent)
                       }
+                      // Message identity = gateway run_* only. Never fall back
+                      // to the Workspace Stop UUID (that minted empty
+                      // assistant:<uuid> shells and deferred Activity to settle).
+                      const runId = messageRunId()
 
                       // Dangerous-command / MCP trust-gate approvals (hermes-webui
                       // parity). Forward as a first-class SSE event so the Hermes
@@ -1172,6 +1213,7 @@ export const Route = createFileRoute('/api/send-stream')({
                               result: synthetic.result,
                             }),
                           )
+                          rememberLiveTool(synthetic)
                           sendEvent('tool', synthetic)
                           skipPublish || publishChatEvent('tool', synthetic)
                           lastActivity = `Running: ${synthetic.name.replace(/_/g, ' ')}`
@@ -1409,6 +1451,13 @@ export const Route = createFileRoute('/api/send-stream')({
                             preview,
                           }),
                         )
+                        rememberLiveTool({
+                          toolCallId: translated.toolCallId,
+                          name: translated.name,
+                          phase: translated.phase,
+                          args: (translated as { args?: unknown }).args,
+                          result: (translated as { result?: string }).result,
+                        })
                         sendEvent('tool', translated)
                         skipPublish || publishChatEvent('tool', translated)
                         lastActivity = `Running: ${toolName.replace(/_/g, ' ')}`
@@ -1464,6 +1513,13 @@ export const Route = createFileRoute('/api/send-stream')({
                             result: translated.result,
                           }),
                         )
+                        rememberLiveTool({
+                          toolCallId: translated.toolCallId,
+                          name: translated.name,
+                          phase: translated.phase,
+                          args: (translated as { args?: unknown }).args,
+                          result: (translated as { result?: string }).result,
+                        })
                         sendEvent('tool', translated)
                         skipPublish || publishChatEvent('tool', translated)
                         return
@@ -1490,6 +1546,13 @@ export const Route = createFileRoute('/api/send-stream')({
                             result: translated.result,
                           }),
                         )
+                        rememberLiveTool({
+                          toolCallId: translated.toolCallId,
+                          name: translated.name,
+                          phase: translated.phase,
+                          args: (translated as { args?: unknown }).args,
+                          result: (translated as { result?: string }).result,
+                        })
                         sendEvent('tool', translated)
                         skipPublish || publishChatEvent('tool', translated)
                         lastActivity = `Completed: ${toolName.replace(/_/g, ' ')}`
@@ -1545,6 +1608,13 @@ export const Route = createFileRoute('/api/send-stream')({
                             result: translated.result,
                           }),
                         )
+                        rememberLiveTool({
+                          toolCallId: translated.toolCallId,
+                          name: translated.name,
+                          phase: translated.phase,
+                          args: (translated as { args?: unknown }).args,
+                          result: (translated as { result?: string }).result,
+                        })
                         sendEvent('tool', translated)
                         skipPublish || publishChatEvent('tool', translated)
                         return
@@ -1577,6 +1647,13 @@ export const Route = createFileRoute('/api/send-stream')({
                             result: translated.result,
                           }),
                         )
+                        rememberLiveTool({
+                          toolCallId: translated.toolCallId,
+                          name: translated.name,
+                          phase: translated.phase,
+                          args: (translated as { args?: unknown }).args,
+                          result: (translated as { result?: string }).result,
+                        })
                         sendEvent('tool', translated)
                         skipPublish || publishChatEvent('tool', translated)
                         return
@@ -1605,6 +1682,13 @@ export const Route = createFileRoute('/api/send-stream')({
                             result: translated.result,
                           }),
                         )
+                        rememberLiveTool({
+                          toolCallId: translated.toolCallId,
+                          name: translated.name,
+                          phase: translated.phase,
+                          args: (translated as { args?: unknown }).args,
+                          result: (translated as { result?: string }).result,
+                        })
                         sendEvent('tool', translated)
                         skipPublish || publishChatEvent('tool', translated)
                         return
@@ -1710,6 +1794,7 @@ export const Route = createFileRoute('/api/send-stream')({
                                     result: synthetic.result,
                                   }),
                                 )
+                                rememberLiveTool(synthetic)
                                 sendEvent('tool', synthetic)
                                 skipPublish ||
                                   publishChatEvent('tool', synthetic)
@@ -1754,9 +1839,11 @@ export const Route = createFileRoute('/api/send-stream')({
                           // Await daemon persist so done carries historyRevision
                           // for Tutti-style authoritative fence on the client.
                           const durableRunId =
-                            (typeof runId === 'string' && runId.trim()) ||
-                            (typeof activeRunId === 'string' &&
-                              activeRunId.trim()) ||
+                            gatewayRunId ||
+                            (typeof runId === 'string' &&
+                            isHermesDurableRunId(runId)
+                              ? runId.trim()
+                              : '') ||
                             ''
                           try {
                             const persisted = await persistHermesTurnToDaemon({
@@ -1771,6 +1858,10 @@ export const Route = createFileRoute('/api/send-stream')({
                               assistantText: finalDisplayText.trim(),
                               thinkingText:
                                 thinkingAccumulated.trim() || null,
+                              toolCalls:
+                                liveToolsById.size > 0
+                                  ? Array.from(liveToolsById.values())
+                                  : undefined,
                               status: 'completed',
                               settled: true,
                             })

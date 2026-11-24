@@ -65,9 +65,11 @@ AgentSessionEngine
 
 | 状态 | 谁写列表 | 禁止 |
 | --- | --- | --- |
-| 开 turn / busy / settling | Gateway SSE → adapter → Engine overlay | `mergeHermesHistoryWhileBusy` / RQ history 并入桶（曾导致跨 turn length-win） |
+| 开 turn / busy / settling | Gateway SSE → adapter → Engine overlay；thinking/tool **必须在 busy 期写入 live host**（Activity 不得等 settle 才首秀） | `mergeHermesHistoryWhileBusy` / RQ history 并入桶（曾导致跨 turn length-win）；用 Workspace Stop UUID 当 `assistant:<uuid>` host |
 | Idle（已 settled） | Tutti `session/reconcile`：`authoritativeMessages` + `requiredHistoryRevision` fence → `historyAuthoritativeSnapshotReceived` | 用过期 RQ cache 在 `turnBusy=false` 时整页灌桶；history↔live length-win；gateway `msg-*` 当 Agorax 展示 |
-| Settle | SSE `done.message`；daemon persist 后 `done.historyRevision` 触发权威 reconcile（revision 不稳 retry） | settle 后再拉 `/api/history` 补洞 stamp；无 fence 的 RQ replace |
+| Settle | SSE `done.message`；daemon persist（含 toolcall 行）后 `done.historyRevision` 触发权威 reconcile（revision 不稳 retry）；replace **静默对齐**，不负责 Activity 首帧 | settle 后再拉 `/api/history` 补洞 stamp；无 fence 的 RQ replace |
+
+**Run id 合同：** `send-stream` 的 Workspace UUID 仅绑定 Stop/Abort；SSE `started` **不**把它当作 `runId`。Durable host 只在 gateway `run_*`（`isHermesDurableRunId`）出现后分配；此前 thinking/text 在 adapter 内缓冲，拿到 `run_*` 后一次性 flush 到 `assistant:<runId>` / `:thinking`，busy 期即可画 Activity。
 
 `send-stream` 经 daemon `POST …/hermes-bridge/sessions/:id/activity` 把强 id 写入 `workspace_agent_messages`（需 `AGORAX_MANAGED_AGENT_URL`）。已有 `agorax_run_mapping` 的会话：**即使 daemon 空页也不回退** gateway/`state.db` 展示。纯 CLI/`state.db`（无 mapping）标 `external`，弱 id 只读。`collab.db` `hermes_canonical_*` 仅为迁移期只读回退，不再写入。Gateway compaction 只影响执行上下文。
 

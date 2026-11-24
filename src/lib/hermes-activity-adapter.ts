@@ -10,6 +10,7 @@
 
 import type { AgentActivityUpdatedEvent } from '@agorax/agent-activity-core'
 import { assistantMessageIdForRun } from './chat-turn-identity'
+import { isHermesDurableRunId } from './hermes-durable-run-id'
 import {
   hermesApprovalToInteraction,
   isHermesApprovalRequestEvent,
@@ -17,6 +18,8 @@ import {
   normalizeHermesApprovalPayload,
   resolveHermesApprovalChoice,
 } from './hermes-approval'
+
+export { isHermesDurableRunId } from './hermes-durable-run-id'
 
 export type HermesSseEventName =
   | 'started'
@@ -62,31 +65,80 @@ function nowMs(ctx: HermesActivityAdapterContext): number {
   return ctx.nowUnixMs?.() ?? Date.now()
 }
 
+type EnsureIdsResult = {
+  state: HermesActivityAdapterState
+  /** First durable assistant host allocated this frame. */
+  allocated: boolean
+  /** Host reminted from a non-durable Stop token onto gateway run_*. */
+  reminted: boolean
+}
+
+/**
+ * Allocate / upgrade durable assistant ids.
+ * Workspace Stop UUIDs are ignored for host identity; only Hermes durable
+ * run ids mint `assistant:<runId>`. If a UUID shell was already locked (legacy
+ * started frames), remint onto the first durable run_* and flush buffers.
+ */
 function ensureIds(
   ctx: HermesActivityAdapterContext,
   state: HermesActivityAdapterState,
   runId: string | null,
-): HermesActivityAdapterState {
-  const resolvedRun = (runId ?? state.runId ?? '').trim() || null
-  if (state.assistantMessageId) {
-    return {
-      ...state,
-      runId: resolvedRun ?? state.runId,
-    }
-  }
-  // No durable host until SSE/daemon supplies runId — processing pulse owns face.
+): EnsureIdsResult {
+  const incoming = (runId ?? '').trim() || null
+  const durableIncoming = isHermesDurableRunId(incoming) ? incoming : null
+  const durableExisting = isHermesDurableRunId(state.runId) ? state.runId : null
+  const resolvedRun = durableIncoming ?? durableExisting
+
   if (!resolvedRun) {
-    return { ...state, runId: state.runId }
+    // Keep buffering; processing pulse owns the face until gateway run_*.
+    return { state, allocated: false, reminted: false }
   }
+
   const assistantMessageId = assistantMessageIdForRun(
     resolvedRun,
     ctx.agentSessionId,
   )
+  const thinkingMessageId = `${assistantMessageId}:thinking`
+
+  if (!state.assistantMessageId) {
+    return {
+      state: {
+        ...state,
+        runId: resolvedRun,
+        assistantMessageId,
+        thinkingMessageId,
+      },
+      allocated: true,
+      reminted: false,
+    }
+  }
+
+  if (state.assistantMessageId === assistantMessageId) {
+    return {
+      state: { ...state, runId: resolvedRun },
+      allocated: false,
+      reminted: false,
+    }
+  }
+
+  // Legacy: started locked a Workspace UUID shell; upgrade to run_*.
+  if (!isHermesDurableRunId(state.runId) && durableIncoming) {
+    return {
+      state: {
+        ...state,
+        runId: resolvedRun,
+        assistantMessageId,
+        thinkingMessageId,
+      },
+      allocated: false,
+      reminted: true,
+    }
+  }
+
   return {
-    ...state,
-    runId: resolvedRun,
-    assistantMessageId,
-    thinkingMessageId: `${assistantMessageId}:thinking`,
+    state: { ...state, runId: durableExisting ?? state.runId },
+    allocated: false,
+    reminted: false,
   }
 }
 
@@ -110,13 +162,57 @@ export function hermesSseToActivityEvents(
   const occurredAtUnixMs = nowMs(ctx)
   const payloadRunId =
     readString(data.runId).trim() || readString(data.run_id).trim() || null
-  let next = ensureIds(ctx, state, payloadRunId)
+  let next = state
   const events: Array<AgentActivityUpdatedEvent> = []
 
   const base = {
     workspaceId: ctx.workspaceId,
     agentSessionId: ctx.agentSessionId,
   }
+
+  /**
+   * Mint/upgrade durable host; on first allocate or remint, seed the text
+   * anchor and flush any thinking/text buffered before run_* arrived so
+   * Activity paints during busy — not only after settle replace.
+   */
+  const adoptRunId = (runId: string | null): void => {
+    const result = ensureIds(ctx, next, runId)
+    next = result.state
+    if (!result.allocated && !result.reminted) return
+    if (!next.assistantMessageId) return
+    events.push({
+      ...base,
+      eventType: 'message_delta',
+      data: {
+        ...base,
+        messageId: next.assistantMessageId,
+        turnId: ctx.turnId,
+        role: 'assistant',
+        kind: 'text',
+        occurredAtUnixMs,
+        content: { operation: 'set', value: next.lastText || '' },
+        status: 'streaming',
+      },
+    })
+    if (next.thinkingMessageId && next.lastThinking.trim()) {
+      events.push({
+        ...base,
+        eventType: 'message_delta',
+        data: {
+          ...base,
+          messageId: next.thinkingMessageId,
+          turnId: ctx.turnId,
+          role: 'assistant_thinking',
+          kind: 'reasoning',
+          occurredAtUnixMs,
+          content: { operation: 'set', value: next.lastThinking },
+          status: 'streaming',
+        },
+      })
+    }
+  }
+
+  adoptRunId(payloadRunId)
 
   const turnUpdate = (
     phase: 'running' | 'settling' | 'settled',
@@ -223,32 +319,14 @@ export function hermesSseToActivityEvents(
 
   switch (event) {
     case 'started': {
-      next = ensureIds(ctx, next, payloadRunId)
+      // adoptRunId already seeded when started carries a durable run_*.
+      // Workspace Stop UUIDs must not mint assistant:<uuid> shells.
       events.push(turnUpdate('running', null))
-      // Seed overlay anchor so first chunk append is not rejected
-      // (append_without_anchor). Empty set creates the durable assistant row.
-      if (next.assistantMessageId) {
-        events.push({
-          ...base,
-          eventType: 'message_delta',
-          data: {
-            ...base,
-            messageId: next.assistantMessageId,
-            turnId: ctx.turnId,
-            role: 'assistant',
-            kind: 'text',
-            occurredAtUnixMs,
-            content: { operation: 'set', value: '' },
-            status: 'streaming',
-          },
-        })
-      }
       break
     }
 
     case 'chunk':
     case 'assistant': {
-      next = ensureIds(ctx, next, payloadRunId)
       const fullReplace = data.fullReplace === true
       const incoming =
         readString(data.text) ||
@@ -275,6 +353,7 @@ export function hermesSseToActivityEvents(
         next = { ...next, lastText: next.lastText + incoming }
       }
 
+      // Buffer until durable run_* — flush via adoptRunId on a later frame.
       if ((!appendText && !useSet) || !next.assistantMessageId) break
       if (!appendText && useSet && !next.lastText) break
 
@@ -300,10 +379,9 @@ export function hermesSseToActivityEvents(
     }
 
     case 'thinking': {
-      next = ensureIds(ctx, next, payloadRunId)
       const thinking =
         readString(data.text) || readString(data.thinking)
-      if (!thinking.trim() || !next.thinkingMessageId) break
+      if (!thinking.trim()) break
 
       const prev = next.lastThinking
       const hadThinking = prev.length > 0
@@ -317,6 +395,8 @@ export function hermesSseToActivityEvents(
       }
       next = { ...next, lastThinking: thinking }
       if (!appendText) break
+      // Buffer until durable run_* so mid-turn Activity is not lost.
+      if (!next.thinkingMessageId) break
 
       events.push({
         ...base,
@@ -338,7 +418,6 @@ export function hermesSseToActivityEvents(
     }
 
     case 'tool': {
-      next = ensureIds(ctx, next, payloadRunId)
       const name = readString(data.name).trim() || 'tool'
       const toolCallId =
         readString(data.toolCallId).trim() ||
@@ -388,7 +467,6 @@ export function hermesSseToActivityEvents(
     }
 
     case 'done': {
-      next = ensureIds(ctx, next, payloadRunId)
       const stateName = readString(data.state).trim() || 'complete'
       const failed =
         stateName === 'error' ||
@@ -465,7 +543,6 @@ export function hermesSseToActivityEvents(
     }
 
     case 'error': {
-      next = ensureIds(ctx, next, payloadRunId)
       const message =
         readString(data.message) ||
         readString(data.errorMessage) ||
@@ -477,12 +554,11 @@ export function hermesSseToActivityEvents(
     case 'approval':
     case 'approval.request':
     case 'hermes.approval.request': {
-      next = ensureIds(ctx, next, payloadRunId)
       if (!isHermesApprovalRequestEvent(event, data)) break
       const normalized = normalizeHermesApprovalPayload(data, next.runId)
       if (!normalized) break
       if (normalized.runId) {
-        next = ensureIds(ctx, next, normalized.runId)
+        adoptRunId(normalized.runId)
       }
       const interaction = hermesApprovalToInteraction({
         workspaceId: ctx.workspaceId,
@@ -507,7 +583,6 @@ export function hermesSseToActivityEvents(
 
     case 'approval.responded':
     case 'hermes.approval.responded': {
-      next = ensureIds(ctx, next, payloadRunId)
       if (!isHermesApprovalRespondedEvent(event, data)) break
       const normalized = normalizeHermesApprovalPayload(data, next.runId)
       if (!normalized) break

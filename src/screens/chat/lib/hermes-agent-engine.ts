@@ -1135,16 +1135,35 @@ export function selectHermesChatState(
      * Live tools for the open MessageItem (Hermes 1:1). Same shape as managed —
      * ChatMessageList overlays them onto the streaming host row.
      */
+    /**
+     * Busy turn: include completed tools so Activity stays mounted after a
+     * fast tool finishes (filtering them out made tools flash only at settle).
+     * Idle: no overlay — tools live on the folded host row.
+     */
     activeToolCalls: agentSessionId
       ? sessionMessages
-          .filter(
-            (message) =>
-              (message.kind === 'tool_call' || message.kind === 'tool') &&
+          .filter((message) => {
+            if (message.kind !== 'tool_call' && message.kind !== 'tool') {
+              return false
+            }
+            if (turnActive) {
+              const turnId = activeTurn?.turnId?.trim()
+              if (
+                turnId &&
+                message.turnId?.trim() &&
+                message.turnId.trim() !== turnId
+              ) {
+                return false
+              }
+              return true
+            }
+            return (
               message.status !== 'completed' &&
               message.status !== 'failed' &&
               message.status !== 'canceled' &&
-              message.status !== 'error',
-          )
+              message.status !== 'error'
+            )
+          })
           .map((message) => ({
             id: message.messageId.replace(/^toolcall:/, ''),
             name:
@@ -1154,9 +1173,15 @@ export function selectHermesChatState(
                 message.payload.name.trim()) ||
               'tool',
             phase:
-              message.status === 'running' || message.status === 'streaming'
-                ? ('running' as const)
-                : ('calling' as const),
+              message.status === 'failed' || message.status === 'error'
+                ? ('error' as const)
+                : message.status === 'completed' ||
+                    message.status === 'canceled'
+                  ? ('done' as const)
+                  : message.status === 'running' ||
+                      message.status === 'streaming'
+                    ? ('running' as const)
+                    : ('calling' as const),
             args:
               message.payload.input &&
               typeof message.payload.input === 'object' &&
@@ -1166,6 +1191,12 @@ export function selectHermesChatState(
                     typeof message.payload.arguments === 'object' &&
                     !Array.isArray(message.payload.arguments)
                   ? message.payload.arguments
+                  : undefined,
+            result:
+              typeof message.payload.output === 'string'
+                ? message.payload.output
+                : typeof message.payload.result === 'string'
+                  ? message.payload.result
                   : undefined,
           }))
       : [],

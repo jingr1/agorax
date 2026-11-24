@@ -22,6 +22,14 @@ export function getHermesDaemonBridgeClient(input?: {
   return new AgoraxManagedAgentHttpClient({ baseUrl, workspaceId })
 }
 
+export type HermesBridgeToolCall = {
+  id: string
+  name: string
+  phase?: string
+  args?: unknown
+  result?: string
+}
+
 export type HermesBridgePersistInput = {
   agentSessionId: string
   profileName?: string
@@ -30,6 +38,8 @@ export type HermesBridgePersistInput = {
   hermesRunId?: string | null
   assistantText?: string | null
   thinkingText?: string | null
+  /** Live/tool-backfill rows — kept across authoritative settle replace. */
+  toolCalls?: readonly HermesBridgeToolCall[]
   status?: 'streaming' | 'completed' | 'failed' | 'canceled'
   settled?: boolean
   occurredAtUnixMs?: number
@@ -113,6 +123,42 @@ export async function persistHermesTurnToDaemon(
         payload: { text: assistantText, runId, clientSubmitId },
         occurredAtUnixMs: now + (thinkingText ? 1 : 0),
       })
+    }
+    if (Array.isArray(input.toolCalls)) {
+      let toolOffset = 0
+      for (const tool of input.toolCalls) {
+        const id = typeof tool.id === 'string' ? tool.id.trim() : ''
+        if (!id) continue
+        const name =
+          (typeof tool.name === 'string' && tool.name.trim()) || 'tool'
+        const phase =
+          (typeof tool.phase === 'string' && tool.phase.trim()) || 'complete'
+        const failed = phase === 'error' || phase === 'failed'
+        const terminal =
+          failed ||
+          phase === 'complete' ||
+          phase === 'completed' ||
+          phase === 'done' ||
+          phase === 'result'
+        toolOffset += 1
+        messages.push({
+          messageId: id.startsWith('toolcall:') ? id : `toolcall:${id}`,
+          turnId,
+          role: 'assistant',
+          kind: 'tool_call',
+          status: failed ? 'failed' : terminal ? 'completed' : 'running',
+          payload: {
+            name,
+            toolName: name,
+            phase,
+            input: tool.args,
+            output: typeof tool.result === 'string' ? tool.result : undefined,
+            runId,
+            clientSubmitId,
+          },
+          occurredAtUnixMs: now + (thinkingText ? 1 : 0) + toolOffset,
+        })
+      }
     }
   }
 
@@ -220,12 +266,15 @@ export function daemonActivityToChatHistory(
     if (
       kind !== 'text' &&
       kind !== 'reasoning' &&
-      kind !== 'message'
+      kind !== 'message' &&
+      kind !== 'tool_call' &&
+      kind !== 'tool'
     ) {
       continue
     }
 
     const text = payloadText(row.payload as Record<string, unknown> | undefined)
+    const isTool = kind === 'tool_call' || kind === 'tool'
     const clientSubmitId =
       typeof row.payload?.clientSubmitId === 'string'
         ? row.payload.clientSubmitId
@@ -275,10 +324,30 @@ export function daemonActivityToChatHistory(
     // merges can paint the next turn's body onto the prior reply.
     if (
       !isReasoning &&
+      !isTool &&
       !text.trim() &&
       (row.status === 'streaming' || row.status === 'running')
     ) {
       continue
+    }
+
+    const toolContentPart = (): Record<string, unknown> | null => {
+      if (!isTool) return null
+      const payload = (row.payload ?? {}) as Record<string, unknown>
+      const name =
+        (typeof payload.toolName === 'string' && payload.toolName.trim()) ||
+        (typeof payload.name === 'string' && payload.name.trim()) ||
+        'tool'
+      const id = row.messageId.replace(/^toolcall:/, '')
+      return {
+        type: 'toolCall',
+        id,
+        name,
+        arguments: payload.input ?? payload.arguments,
+        ...(typeof payload.output === 'string'
+          ? { result: payload.output }
+          : {}),
+      }
     }
 
     if (existingIndex >= 0) {
@@ -295,6 +364,21 @@ export function daemonActivityToChatHistory(
         )
         if (!hasThinking) {
           content.unshift({ type: 'thinking', thinking: text })
+        }
+      } else if (isTool) {
+        const part = toolContentPart()
+        if (!part) continue
+        const toolId = String(part.id)
+        const already = content.some(
+          (entry) =>
+            (entry.type === 'toolCall' || entry.type === 'tool_call') &&
+            String(entry.id) === toolId,
+        )
+        if (!already) {
+          // Keep tools between thinking and text.
+          const textIndex = content.findIndex((entry) => entry?.type === 'text')
+          if (textIndex >= 0) content.splice(textIndex, 0, part)
+          else content.push(part)
         }
       } else {
         if (!text.trim()) continue
@@ -318,6 +402,41 @@ export function daemonActivityToChatHistory(
         typeof host.timestamp === 'number' ? host.timestamp : 0,
         row.occurredAtUnixMs,
       )
+      continue
+    }
+
+    if (isTool) {
+      const part = toolContentPart()
+      if (!part) continue
+      const runFromPayload =
+        typeof row.payload?.runId === 'string' ? row.payload.runId.trim() : ''
+      const hostId = runFromPayload
+        ? `assistant:${runFromPayload}`
+        : turnId.startsWith('turn-')
+          ? `assistant:${turnId.slice('turn-'.length)}`
+          : `assistant:${turnId || String(part.id)}`
+      const index = out.length
+      if (turnId) assistantIndexByTurn.set(turnId, index)
+      out.push({
+        id: hostId,
+        messageId: hostId,
+        role: 'assistant',
+        content: [part],
+        timestamp: row.occurredAtUnixMs,
+        turnId: row.turnId,
+        sequence: row.sequence,
+        version: row.version,
+        __historyIndex: index,
+        __canonical: true,
+        __daemon: true,
+        ...(clientSubmitId
+          ? {
+              clientSubmitId,
+              clientId: clientSubmitId,
+              client_id: clientSubmitId,
+            }
+          : {}),
+      })
       continue
     }
 

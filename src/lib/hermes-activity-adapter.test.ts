@@ -74,12 +74,103 @@ describe('hermesSseToActivityEvents', () => {
       fullReplace: true,
     })
     expect(chunk.state.assistantMessageId).toBe('assistant:run-late')
-    expect(chunk.events[0]).toMatchObject({
-      data: {
-        messageId: 'assistant:run-late',
-        content: { operation: 'set', value: 'Answer' },
-      },
+    // First allocate seeds an empty anchor; body follows on the same frame.
+    expect(chunk.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            messageId: 'assistant:run-late',
+            content: { operation: 'set', value: 'Answer' },
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('ignores Workspace Stop UUID as assistant host identity', () => {
+    let state = createHermesActivityAdapterState()
+    const stopOnly = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const started = hermesSseToActivityEvents(ctx, state, 'started', {
+      runId: stopOnly,
     })
+    state = started.state
+    expect(state.assistantMessageId).toBeNull()
+    expect(
+      started.events.some((event) => event.eventType === 'message_delta'),
+    ).toBe(false)
+
+    const thinking = hermesSseToActivityEvents(ctx, state, 'thinking', {
+      runId: stopOnly,
+      text: 'plan first',
+    })
+    state = thinking.state
+    expect(state.lastThinking).toBe('plan first')
+    expect(state.assistantMessageId).toBeNull()
+    expect(
+      thinking.events.some((event) => event.eventType === 'message_delta'),
+    ).toBe(false)
+
+    const flush = hermesSseToActivityEvents(ctx, state, 'thinking', {
+      runId: 'run_gateway_1',
+      text: 'plan first then act',
+    })
+    expect(flush.state.assistantMessageId).toBe('assistant:run_gateway_1')
+    expect(flush.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'message_delta',
+          data: expect.objectContaining({
+            messageId: 'assistant:run_gateway_1:thinking',
+            content: { operation: 'set', value: 'plan first' },
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'message_delta',
+          data: expect.objectContaining({
+            messageId: 'assistant:run_gateway_1:thinking',
+            content: {
+              operation: 'append_text',
+              text: ' then act',
+            },
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('remints UUID shell onto durable run_* and flushes thinking', () => {
+    let state = createHermesActivityAdapterState()
+    // Simulate a legacy in-memory lock on a Stop UUID (pre-fix clients).
+    state = {
+      ...state,
+      runId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      assistantMessageId: 'assistant:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      thinkingMessageId:
+        'assistant:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee:thinking',
+      lastThinking: 'buffered plan',
+    }
+    const out = hermesSseToActivityEvents(ctx, state, 'chunk', {
+      runId: 'run_real',
+      text: 'hello',
+      fullReplace: true,
+    })
+    expect(out.state.assistantMessageId).toBe('assistant:run_real')
+    expect(out.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            messageId: 'assistant:run_real:thinking',
+            content: { operation: 'set', value: 'buffered plan' },
+          }),
+        }),
+        expect.objectContaining({
+          data: expect.objectContaining({
+            messageId: 'assistant:run_real',
+            content: { operation: 'set', value: 'hello' },
+          }),
+        }),
+      ]),
+    )
   })
 
   it('maps thinking to assistant_thinking / reasoning deltas', () => {

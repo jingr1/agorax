@@ -277,4 +277,97 @@ describe('hermes daemon bridge', () => {
       ['assistant:run-1:thinking', 'assistant:run-1'],
     )
   })
+
+  it('persists toolcall rows and folds them into daemon history hosts', async () => {
+    vi.stubEnv('AGORAX_MANAGED_AGENT_URL', 'http://127.0.0.1:8788')
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ latestVersion: 4 }),
+      text: async () => '',
+    })
+    vi.stubGlobal('fetch', fetchImpl)
+    await persistHermesTurnToDaemon({
+      agentSessionId: 'sess-1',
+      clientSubmitId: 'submit-1',
+      hermesRunId: 'run-tools',
+      assistantText: 'done',
+      thinkingText: 'use web',
+      toolCalls: [
+        {
+          id: 'tc-1',
+          name: 'web_search',
+          phase: 'complete',
+          args: { q: 'x' },
+          result: 'hits',
+        },
+      ],
+      settled: true,
+      status: 'completed',
+    })
+    const body = JSON.parse(
+      String((fetchImpl.mock.calls[0]![1] as RequestInit).body),
+    )
+    expect(body.messages.map((m: { messageId: string }) => m.messageId)).toEqual(
+      [
+        'assistant:run-tools:thinking',
+        'assistant:run-tools',
+        'toolcall:tc-1',
+      ],
+    )
+
+    const chat = daemonActivityToChatHistory([
+      {
+        messageId: 'assistant:run-tools:thinking',
+        role: 'assistant',
+        kind: 'reasoning',
+        turnId: 'turn-submit-1',
+        status: 'completed',
+        sequence: 1,
+        version: 1,
+        payload: { text: 'use web', runId: 'run-tools' },
+        occurredAtUnixMs: 1,
+      },
+      {
+        messageId: 'toolcall:tc-1',
+        role: 'assistant',
+        kind: 'tool_call',
+        turnId: 'turn-submit-1',
+        status: 'completed',
+        sequence: 2,
+        version: 2,
+        payload: {
+          name: 'web_search',
+          toolName: 'web_search',
+          phase: 'complete',
+          input: { q: 'x' },
+          output: 'hits',
+          runId: 'run-tools',
+        },
+        occurredAtUnixMs: 2,
+      },
+      {
+        messageId: 'assistant:run-tools',
+        role: 'assistant',
+        kind: 'text',
+        turnId: 'turn-submit-1',
+        status: 'completed',
+        sequence: 3,
+        version: 3,
+        payload: { text: 'done', runId: 'run-tools' },
+        occurredAtUnixMs: 3,
+      },
+    ] as AgentActivityDurableMessage[])
+    expect(chat).toHaveLength(1)
+    expect(chat[0]?.content).toEqual([
+      { type: 'thinking', thinking: 'use web' },
+      {
+        type: 'toolCall',
+        id: 'tc-1',
+        name: 'web_search',
+        arguments: { q: 'x' },
+        result: 'hits',
+      },
+      { type: 'text', text: 'done' },
+    ])
+  })
 })
