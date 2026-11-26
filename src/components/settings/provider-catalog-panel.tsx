@@ -157,7 +157,7 @@ export function ProviderCatalogPanel({
           <input
             value={addName}
             onChange={(event) => setAddName(event.target.value)}
-            placeholder="e.g. TokenX"
+            placeholder="e.g. Acme Gateway"
             className={SETTINGS_CONTROL_CLASS}
           />
         </SettingsRow>
@@ -165,7 +165,7 @@ export function ProviderCatalogPanel({
           <input
             value={addId}
             onChange={(event) => setAddId(event.target.value)}
-            placeholder="e.g. tokenx"
+            placeholder="e.g. acme"
             className={cn(SETTINGS_CONTROL_CLASS, 'font-mono')}
           />
         </SettingsRow>

@@ -25,7 +25,7 @@ function makeMockClient(profile: string) {
     baseUrl: `http://127.0.0.1:8643`,
     profileName: profile,
     defaultModel: profile === 'architect' ? 'Kimi-K2.7-Code' : null,
-    defaultProvider: profile === 'architect' ? 'tokenx' : null,
+    defaultProvider: profile === 'architect' ? 'acme' : null,
     createSession: vi.fn(async ({ title }: { title: string }) => {
       let id = `${profile}:${title}`
       // Real gateways assign fresh ids; simulate that by never reusing a

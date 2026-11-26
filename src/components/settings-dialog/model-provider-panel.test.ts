@@ -10,12 +10,12 @@ import {
 describe('mergeProviderCards', () => {
   it('appends catalog providers after built-in cards', () => {
     const cards = mergeProviderCards([
-      { id: 'tokenx', name: 'TokenX', base_url: 'https://model.example/v1' },
+      { id: 'acme', name: 'Acme Gateway', base_url: 'https://model.example/v1' },
       { id: 'ollama', name: 'Ollama duplicate' },
     ])
     const ids = cards.map((card) => card.id)
-    expect(ids.indexOf('tokenx')).toBeGreaterThan(ids.indexOf('xiaomi'))
-    expect(ids).toContain('tokenx')
+    expect(ids.indexOf('acme')).toBeGreaterThan(ids.indexOf('xiaomi'))
+    expect(ids).toContain('acme')
     expect(ids).not.toContain('custom')
     expect(ids.filter((id) => id === 'ollama')).toHaveLength(1)
   })
@@ -102,14 +102,14 @@ describe('getProviderCardStatus', () => {
     expect(
       getProviderCardStatus(
         {
-          id: 'tokenx',
+          id: 'acme',
           source: 'catalog',
           authType: 'api_key',
-          envKey: 'TOKENX_API_KEY',
+          envKey: 'ACME_API_KEY',
           keyConfigured: true,
           baseUrl: 'https://model.example/v1',
         },
-        { TOKENX_API_KEY: '••••' },
+        { ACME_API_KEY: '••••' },
       ),
     ).toMatchObject({ label: 'Key set', verified: true, hasKey: true })
   })

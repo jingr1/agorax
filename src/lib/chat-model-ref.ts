@@ -1,7 +1,7 @@
 /**
  * Split a composer / session-store model key into Hermes chat fields.
  *
- * Agorax persists Hermes picks as `provider/model` (e.g. `tokenx/DeepSeek-V4-Flash`).
+ * Agorax persists Hermes picks as `provider/model` (e.g. `acme/DeepSeek-V4-Flash`).
  * Gateway session-chat expects separate `model` + `provider` — sending the
  * combined string as `model` alone often fails resolution and falls back to
  * the profile default (so the picker label changes but the turn still runs

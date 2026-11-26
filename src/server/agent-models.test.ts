@@ -26,9 +26,9 @@ describe('agent-models', () => {
       [
         'model:',
         '  default: Kimi-K2.7-Code',
-        '  provider: tokenx',
+        '  provider: acme',
         'providers:',
-        '  tokenx:',
+        '  acme:',
         '    models:',
         '      - Kimi-K2.7-Code',
         '      - GLM-5.2',
@@ -44,7 +44,7 @@ describe('agent-models', () => {
         '  default: gpt-5.6-terra',
         '  provider: openai-codex',
         'providers:',
-        '  tokenx:',
+        '  acme:',
         '    models:',
         '      - Kimi-K2.7-Code',
         '  openai-codex:',
@@ -69,7 +69,7 @@ describe('agent-models', () => {
     const dev = buildHermesProfileModels('developer')
 
     expect(orch.currentModel).toBe('Kimi-K2.7-Code')
-    expect(orch.currentProvider).toBe('tokenx')
+    expect(orch.currentProvider).toBe('acme')
     expect(orch.models.map((m) => m.id)).toEqual(
       expect.arrayContaining(['Kimi-K2.7-Code', 'GLM-5.2']),
     )

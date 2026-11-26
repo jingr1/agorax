@@ -20,7 +20,7 @@ source "$ROOT/scripts/load-dotenv-file.sh"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/managed-agent-daemon-lib.sh"
 # Prebuilt-binary path used to skip dotenv entirely — Codex then failed with
-# Missing environment variable: TOKENX_API_KEY_VPEL (key lives in ~/.hermes/.env).
+# Missing environment variable: ACME_API_KEY_PRIMARY (key lives in ~/.hermes/.env).
 agorax_load_dotenv_file "$ROOT/.env"
 agorax_load_dotenv_file "${HERMES_HOME:-$HOME/.hermes}/.env"
 

@@ -52,17 +52,17 @@ describe('provider catalog', () => {
       [
         'model:',
         '  default: Kimi-K2.7-Code',
-        '  provider: tokenx',
+        '  provider: acme',
         'providers:',
-        '  tokenx:',
+        '  acme:',
         '    base_url: https://model.example/v1',
-        '    key_env: TOKENX_API_KEY_VPEL',
+        '    key_env: ACME_API_KEY_PRIMARY',
         'fallback_providers:',
-        '  - provider: tokenx',
+        '  - provider: acme',
         '    model: GLM-5.2',
         '    base_url: https://model.example/v1',
-        '    key_env: TOKENX_API_KEY_VPEL',
-        'provider: tokenx',
+        '    key_env: ACME_API_KEY_PRIMARY',
+        'provider: acme',
         '',
       ].join('\n'),
       'utf-8',
@@ -72,35 +72,35 @@ describe('provider catalog', () => {
       [
         'model:',
         '  default: Kimi-K2.7-Code',
-        '  provider: tokenx',
+        '  provider: acme',
         'providers:',
-        '  tokenx:',
+        '  acme:',
         '    base_url: https://model.example/v1',
-        '    key_env: TOKENX_API_KEY',
+        '    key_env: ACME_API_KEY',
         'fallback_providers:',
-        '  - provider: tokenx',
+        '  - provider: acme',
         '    model: GLM-4.7',
         '    base_url: https://model.example/v1',
-        '    key_env: TOKENX_API_KEY',
-        'provider: tokenx',
+        '    key_env: ACME_API_KEY',
+        'provider: acme',
         '',
       ].join('\n'),
       'utf-8',
     )
     fs.writeFileSync(
       path.join(hermesRoot, '.env'),
-      'TOKENX_API_KEY_VPEL=vpel-secret-value\nAPI_SERVER_PORT=8642\n',
+      'ACME_API_KEY_PRIMARY=vpel-secret-value\nAPI_SERVER_PORT=8642\n',
       'utf-8',
     )
     fs.writeFileSync(
       path.join(developerRoot, '.env'),
-      'TOKENX_API_KEY=dev-secret-value\n',
+      'ACME_API_KEY=dev-secret-value\n',
       'utf-8',
     )
     fs.symlinkSync(path.join(hermesRoot, '.env'), path.join(writerRoot, '.env'))
     fs.writeFileSync(
       path.join(writerRoot, 'config.yaml'),
-      'model: writer-model\nprovider: tokenx\n',
+      'model: writer-model\nprovider: acme\n',
       'utf-8',
     )
   }
@@ -108,9 +108,9 @@ describe('provider catalog', () => {
   it('discovers providers and models from the default profile only', () => {
     seedProfiles()
     const catalog = getProviderCatalog()
-    const tokenx = catalog.providers.find((entry) => entry.id === 'tokenx')
-    expect(tokenx?.base_url).toBe('https://model.example/v1')
-    expect(tokenx?.models.sort()).toEqual(['GLM-5.2'])
+    const acme = catalog.providers.find((entry) => entry.id === 'acme')
+    expect(acme?.base_url).toBe('https://model.example/v1')
+    expect(acme?.models.sort()).toEqual(['GLM-5.2'])
   })
 
   it('discovers custom_providers key_env from yaml rows', () => {
@@ -119,13 +119,13 @@ describe('provider catalog', () => {
       path.join(tempHome, '.hermes', 'config.yaml'),
       [
         'providers:',
-        '  tokenx:',
+        '  acme:',
         '    base_url: https://model.example/v1',
-        '    key_env: TOKENX_API_KEY_VPEL',
+        '    key_env: ACME_API_KEY_PRIMARY',
         'custom_providers:',
-        '  - name: tokenx',
+        '  - name: acme',
         '    base_url: https://model.example/v1',
-        '    key_env: TOKENX_API_KEY_VPEL',
+        '    key_env: ACME_API_KEY_PRIMARY',
         '  - name: nvidia',
         '    base_url: https://integrate.api.nvidia.com/v1',
         '    key_env: NVIDIA_API_KEY',
@@ -135,23 +135,23 @@ describe('provider catalog', () => {
     )
     const catalog = getProviderCatalog()
     expect(catalog.providers.map((entry) => entry.id).sort()).toEqual([
+      'acme',
       'nvidia',
-      'tokenx',
     ])
     expect(
-      catalog.providers.find((entry) => entry.id === 'tokenx')?.key_env,
-    ).toBe('TOKENX_API_KEY_VPEL')
+      catalog.providers.find((entry) => entry.id === 'acme')?.key_env,
+    ).toBe('ACME_API_KEY_PRIMARY')
     expect(
       catalog.providers.find((entry) => entry.id === 'nvidia')?.key_env,
     ).toBe('NVIDIA_API_KEY')
     expect(
-      catalog.providers.find((entry) => entry.id === 'tokenx')?.keyConfigured,
+      catalog.providers.find((entry) => entry.id === 'acme')?.keyConfigured,
     ).toBe(true)
   })
 
   it('writes a catalog key to every unique .env without duplicating symlinks', () => {
     seedProfiles()
-    upsertCatalogKey('TOKENX_API_KEY', 'shared-tokenx')
+    upsertCatalogKey('ACME_API_KEY', 'shared-acme')
     const rootEnv = fs.readFileSync(
       path.join(tempHome, '.hermes', '.env'),
       'utf-8',
@@ -160,9 +160,9 @@ describe('provider catalog', () => {
       path.join(tempHome, '.hermes', 'profiles', 'developer', '.env'),
       'utf-8',
     )
-    expect(rootEnv).toContain('TOKENX_API_KEY=shared-tokenx')
-    expect(developerEnv).toContain('TOKENX_API_KEY=shared-tokenx')
-    expect(rootEnv).toContain('TOKENX_API_KEY_VPEL=vpel-secret-value')
+    expect(rootEnv).toContain('ACME_API_KEY=shared-acme')
+    expect(developerEnv).toContain('ACME_API_KEY=shared-acme')
+    expect(rootEnv).toContain('ACME_API_KEY_PRIMARY=vpel-secret-value')
   })
 
   it('saves builtin API keys to env only and does not seed providers.<id>', () => {
@@ -192,24 +192,24 @@ describe('provider catalog', () => {
   it('removes custom providers entirely and clears unused keys', () => {
     seedProfiles()
     upsertCatalogProvider({
-      id: 'nioint',
-      name: 'nioint',
-      base_url: 'https://modelgateway.nioint.com/v1',
+      id: 'corp-gw',
+      name: 'corp-gw',
+      base_url: 'https://gateway.example/v1',
       key_env: 'DEEPSEEK_API_KEY',
       key_value: 'ds-secret',
     })
     expect(
-      getProviderCatalog().providers.some((entry) => entry.id === 'nioint'),
+      getProviderCatalog().providers.some((entry) => entry.id === 'corp-gw'),
     ).toBe(true)
 
-    removeCatalogProvider('nioint')
+    removeCatalogProvider('corp-gw')
 
     expect(
-      getProviderCatalog().providers.some((entry) => entry.id === 'nioint'),
+      getProviderCatalog().providers.some((entry) => entry.id === 'corp-gw'),
     ).toBe(false)
-    expect(readProfile('default').config.providers).not.toHaveProperty('nioint')
+    expect(readProfile('default').config.providers).not.toHaveProperty('corp-gw')
     expect(readProfile('developer').config.custom_providers || []).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: 'nioint' })]),
+      expect.arrayContaining([expect.objectContaining({ name: 'corp-gw' })]),
     )
     const rootEnv = fs.readFileSync(
       path.join(tempHome, '.hermes', '.env'),
@@ -275,16 +275,16 @@ describe('provider catalog', () => {
     // Use a NON-builtin id: builtins are (by design) pruned from profiles
     // instead of being redundantly written (syncProviderToAllProfiles).
     upsertCatalogProvider({
-      id: 'tokenx',
-      name: 'TokenX',
+      id: 'acme',
+      name: 'Acme Gateway',
       base_url: 'https://model.example/v1',
-      key_env: 'TOKENX_API_KEY',
+      key_env: 'ACME_API_KEY',
     })
     expect(readProfile('default').config).toMatchObject({
-      providers: { tokenx: { base_url: 'https://model.example/v1' } },
+      providers: { acme: { base_url: 'https://model.example/v1' } },
     })
     expect(readProfile('developer').config).toMatchObject({
-      providers: { tokenx: { base_url: 'https://model.example/v1' } },
+      providers: { acme: { base_url: 'https://model.example/v1' } },
     })
     expect(readProfileProviderSelection('developer').fallbackModel).toBe(
       'GLM-4.7',
@@ -294,27 +294,27 @@ describe('provider catalog', () => {
   it('writes and updates provider models on every profile', () => {
     seedProfiles()
     upsertCatalogProvider({
-      id: 'tokenx',
-      name: 'TokenX',
+      id: 'acme',
+      name: 'Acme Gateway',
       base_url: 'https://model.example/v1',
-      key_env: 'TOKENX_API_KEY',
+      key_env: 'ACME_API_KEY',
       models: ['Kimi-K2.7-Code', 'GLM-4.7'],
     })
     expect(readProfile('default').config).toMatchObject({
       providers: {
-        tokenx: {
+        acme: {
           models: ['Kimi-K2.7-Code', 'GLM-4.7'],
         },
       },
     })
 
     upsertCatalogProvider({
-      id: 'tokenx',
+      id: 'acme',
       models: ['Kimi-K2.7-Code'],
     })
     expect(readProfile('default').config).toMatchObject({
       providers: {
-        tokenx: {
+        acme: {
           models: ['Kimi-K2.7-Code'],
         },
       },
@@ -323,9 +323,9 @@ describe('provider catalog', () => {
 
   it('writes the selected fallback into one profile only', () => {
     seedProfiles()
-    updateProfileFallback('developer', 'tokenx', 'GLM-5.2')
+    updateProfileFallback('developer', 'acme', 'GLM-5.2')
     expect(readProfileProviderSelection('developer')).toMatchObject({
-      fallbackProvider: 'tokenx',
+      fallbackProvider: 'acme',
       fallbackModel: 'GLM-5.2',
     })
     expect(readProfileProviderSelection('default').fallbackModel).toBe(
@@ -368,7 +368,7 @@ describe('provider catalog', () => {
       const listed = listCatalogProvidersForClaudeCode()
       const ids = listed.map((p) => p.id)
       expect(ids).toContain('anthropic')
-      expect(ids).toContain('tokenx')
+      expect(ids).toContain('acme')
       const anthropicEntry = listed.find((p) => p.id === 'anthropic')
       expect(anthropicEntry).toMatchObject({
         keyConfigured: true,

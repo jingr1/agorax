@@ -432,6 +432,30 @@ function commentedKeyName(line: string): string | null {
   return withoutHash.slice(0, eq).trim()
 }
 
+/** `# env_key = "…"  # disabled on switch to openai` (may be nested `# # …`). */
+function isDisabledSwitchAuthLine(line: string): boolean {
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('#')) return false
+  if (!/\bdisabled on switch to\b/.test(trimmed)) return false
+  const key = commentedKeyName(trimmed.replace(/^#\s*/, ''))
+  return key === 'api_key' || key === 'env_key'
+}
+
+function disabledSwitchAuthKey(line: string): 'api_key' | 'env_key' | null {
+  if (!isDisabledSwitchAuthLine(line)) return null
+  const key = commentedKeyName(line.trim().replace(/^#\s*/, ''))
+  return key === 'api_key' || key === 'env_key' ? key : null
+}
+
+/** Strip leading `#` wrappers and trailing `disabled on switch` markers. */
+function unwrapDisabledSwitchAssignment(line: string): string {
+  let text = line.trim()
+  while (text.startsWith('#')) {
+    text = text.replace(/^#\s*/, '')
+  }
+  return text.replace(/\s*#\s*disabled on switch to\b.*$/i, '').trim()
+}
+
 function flushTopLevelKeys(
   updated: string[],
   seen: Set<string>,
@@ -514,8 +538,49 @@ export function patchCodexConfig(
     const raw = lines[i]
     const trimmed = raw.trim()
 
-    // Preserve comments and blanks.
-    if (!trimmed || trimmed.startsWith('#')) {
+    // Preserve blanks.
+    if (!trimmed) {
+      updated.push(raw)
+      continue
+    }
+
+    // Preserve ordinary comments. Managed "disabled on switch" auth lines are
+    // handled below so openai↔catalog switches do not accumulate duplicates.
+    if (trimmed.startsWith('#') && !isDisabledSwitchAuthLine(trimmed)) {
+      updated.push(raw)
+      continue
+    }
+
+    if (trimmed.startsWith('#') && isDisabledSwitchAuthLine(trimmed)) {
+      const disabledKey = disabledSwitchAuthKey(trimmed)
+      if (
+        disabledKey &&
+        currentTable?.startsWith('model_providers.') &&
+        patch.provider !== undefined &&
+        !patch.copyFromCatalogProvider &&
+        currentTable !== `model_providers.${catalogForBlock?.id}`
+      ) {
+        // Staying on / switching to a non-catalog provider: keep one marker.
+        const seenKey = `${currentTable}.${disabledKey}.disabled`
+        if (!seen.has(seenKey)) {
+          const assignment = unwrapDisabledSwitchAssignment(trimmed)
+          updated.push(
+            `# ${assignment}  # disabled on switch to ${patch.provider}`,
+          )
+          seen.add(seenKey)
+        }
+        continue
+      }
+      if (
+        disabledKey &&
+        catalogForBlock &&
+        currentTable === `model_providers.${catalogForBlock.id}`
+      ) {
+        // Switching back to this catalog provider: drop disabled markers;
+        // the managed-key path / block injection writes the active key once.
+        continue
+      }
+      // Outside a relevant provider table — keep as a normal comment.
       updated.push(raw)
       continue
     }
@@ -593,63 +658,71 @@ export function patchCodexConfig(
       currentTable !== `model_providers.${catalogForBlock?.id}`
     ) {
       if (key === 'api_key' || key === 'env_key') {
-        updated.push(`# ${raw}  # disabled on switch to ${patch.provider}`)
+        const seenKey = `${currentTable}.${key}.disabled`
+        if (!seen.has(seenKey)) {
+          updated.push(`# ${raw}  # disabled on switch to ${patch.provider}`)
+          seen.add(seenKey)
+        }
         continue
       }
     }
 
-    // [model_providers.<id>] block: overwrite or restore the target provider
-    // block, leave other providers untouched. Commented-out managed keys are
-    // restored so switching back from openai does not leave stale disabled
-    // entries and duplicate active ones.
+    // [model_providers.<id>] block: overwrite the target provider block, leave
+    // other providers untouched. Disabled-switch comments for this block were
+    // dropped above so we do not restore them as duplicate active keys.
     if (
       currentTable === `model_providers.${catalogForBlock?.id}` &&
       catalogForBlock
     ) {
       seen.add(`__table__.model_providers.${catalogForBlock.id}`)
-      const isCommented = trimmed.startsWith('#')
-      const effectiveKey = isCommented ? commentedKeyName(raw) : key
-
-      if (isCommented && effectiveKey === null) {
-        updated.push(raw)
-        continue
-      }
-
-      const managedKey = effectiveKey ?? key
+      const managedKey = key
+      const seenManaged = `mp.${catalogForBlock.id}.${managedKey}`
       if (managedKey === 'name') {
-        updated.push(`name = ${JSON.stringify(catalogForBlock.block.name)}`)
-        seen.add(`mp.${catalogForBlock.id}.name`)
+        if (!seen.has(seenManaged)) {
+          updated.push(`name = ${JSON.stringify(catalogForBlock.block.name)}`)
+          seen.add(seenManaged)
+        }
         continue
       } else if (managedKey === 'base_url') {
-        updated.push(
-          `base_url = ${JSON.stringify(catalogForBlock.block.base_url)}`,
-        )
-        seen.add(`mp.${catalogForBlock.id}.base_url`)
+        if (!seen.has(seenManaged)) {
+          updated.push(
+            `base_url = ${JSON.stringify(catalogForBlock.block.base_url)}`,
+          )
+          seen.add(seenManaged)
+        }
         continue
       } else if (managedKey === 'wire_api') {
-        updated.push(
-          `wire_api = ${JSON.stringify(catalogForBlock.block.wire_api)}`,
-        )
-        seen.add(`mp.${catalogForBlock.id}.wire_api`)
+        if (!seen.has(seenManaged)) {
+          updated.push(
+            `wire_api = ${JSON.stringify(catalogForBlock.block.wire_api)}`,
+          )
+          seen.add(seenManaged)
+        }
         continue
       } else if (managedKey === 'env_key') {
-        updated.push(
-          `env_key = ${JSON.stringify(catalogForBlock.block.env_key)}`,
-        )
-        seen.add(`mp.${catalogForBlock.id}.env_key`)
+        if (!seen.has(seenManaged)) {
+          updated.push(
+            `env_key = ${JSON.stringify(catalogForBlock.block.env_key)}`,
+          )
+          seen.add(seenManaged)
+        }
         continue
       } else if (managedKey === 'requires_openai_auth') {
-        updated.push(
-          `requires_openai_auth = ${JSON.stringify(catalogForBlock.block.requires_openai_auth ?? false)}`,
-        )
-        seen.add(`mp.${catalogForBlock.id}.requires_openai_auth`)
+        if (!seen.has(seenManaged)) {
+          updated.push(
+            `requires_openai_auth = ${JSON.stringify(catalogForBlock.block.requires_openai_auth ?? false)}`,
+          )
+          seen.add(seenManaged)
+        }
         continue
       } else if (managedKey === 'api_key') {
         // Drop hard-coded api_key so env_key is honored; real key stays in .env.
-        updated.push(
-          `# api_key removed; using env_key ${catalogForBlock.block.env_key}`,
-        )
-        seen.add(`mp.${catalogForBlock.id}.api_key`)
+        if (!seen.has(seenManaged)) {
+          updated.push(
+            `# api_key removed; using env_key ${catalogForBlock.block.env_key}`,
+          )
+          seen.add(seenManaged)
+        }
         continue
       }
 

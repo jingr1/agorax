@@ -14,10 +14,10 @@ describe('readModelProviderFromConfig', () => {
   it('reads nested model.default and model.provider', () => {
     expect(
       readModelProviderFromConfig({
-        model: { default: 'Kimi-K2.7-Code', provider: 'custom:tokenx' },
+        model: { default: 'Kimi-K2.7-Code', provider: 'custom:acme' },
         provider: 'ignored-when-nested',
       }),
-    ).toEqual({ model: 'Kimi-K2.7-Code', provider: 'custom:tokenx' })
+    ).toEqual({ model: 'Kimi-K2.7-Code', provider: 'custom:acme' })
   })
 
   it('falls back to top-level provider when nested provider is missing', () => {

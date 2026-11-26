@@ -35,8 +35,8 @@ mkdir -p "$ROOT/.agorax"
 source "$ROOT/scripts/load-dotenv-file.sh"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/managed-agent-daemon-lib.sh"
-# Repo .env first, then ~/.hermes/.env for provider keys (Codex tokenx
-# env_key=TOKENX_API_KEY_VPEL, etc.). Existing process env wins.
+# Repo .env first, then ~/.hermes/.env for provider keys (Codex acme
+# env_key=ACME_API_KEY_PRIMARY, etc.). Existing process env wins.
 agorax_load_dotenv_file "$ROOT/.env"
 agorax_load_dotenv_file "${HERMES_HOME:-$HOME/.hermes}/.env"
 

@@ -349,15 +349,15 @@ describe('profile model/provider updates', () => {
     fs.mkdirSync(profileRoot, { recursive: true })
     fs.writeFileSync(
       path.join(profileRoot, 'config.yaml'),
-      'model:\n  default: old-model\n  provider: tokenx\n  temperature: 0.2\nprovider: tokenx\n',
+      'model:\n  default: old-model\n  provider: acme\n  temperature: 0.2\nprovider: acme\n',
       'utf-8',
     )
 
-    updateProfileModelProvider('developer', 'custom:tokenx', 'Kimi-K2.7-Code')
+    updateProfileModelProvider('developer', 'custom:acme', 'Kimi-K2.7-Code')
     const profile = readProfile('developer')
     expect(readModelProviderFromConfig(profile.config)).toEqual({
       model: 'Kimi-K2.7-Code',
-      provider: 'custom:tokenx',
+      provider: 'custom:acme',
     })
     const nested = profile.config.model as Record<string, unknown>
     expect(nested.temperature).toBe(0.2)
@@ -376,7 +376,7 @@ describe('profile model/provider updates', () => {
     )
     fs.writeFileSync(
       path.join(developerRoot, 'config.yaml'),
-      'model:\n  default: old-dev\n  provider: tokenx\n',
+      'model:\n  default: old-dev\n  provider: acme\n',
       'utf-8',
     )
     fs.writeFileSync(
@@ -385,7 +385,7 @@ describe('profile model/provider updates', () => {
       'utf-8',
     )
 
-    const result = updateAllProfilesModelProvider('tokenx', 'Kimi-K2.7-Code')
+    const result = updateAllProfilesModelProvider('acme', 'Kimi-K2.7-Code')
     expect(result.updated.every((entry) => entry.ok)).toBe(true)
     expect(result.updated.map((entry) => entry.name).sort()).toEqual([
       'default',
@@ -394,26 +394,26 @@ describe('profile model/provider updates', () => {
     ])
     expect(readModelProviderFromConfig(readProfile('default').config)).toEqual({
       model: 'Kimi-K2.7-Code',
-      provider: 'tokenx',
+      provider: 'acme',
     })
     expect(
       readModelProviderFromConfig(readProfile('developer').config),
     ).toEqual({
       model: 'Kimi-K2.7-Code',
-      provider: 'tokenx',
+      provider: 'acme',
     })
     expect(readModelProviderFromConfig(readProfile('writer').config)).toEqual({
       model: 'Kimi-K2.7-Code',
-      provider: 'tokenx',
+      provider: 'acme',
     })
     // Hermes runtime only reads nested model.provider — never leave a bare string.
     expect(readProfile('default').config.model).toEqual({
       default: 'Kimi-K2.7-Code',
-      provider: 'tokenx',
+      provider: 'acme',
     })
     expect(readProfile('writer').config.model).toEqual({
       default: 'Kimi-K2.7-Code',
-      provider: 'tokenx',
+      provider: 'acme',
     })
   })
 
@@ -422,21 +422,21 @@ describe('profile model/provider updates', () => {
     fs.mkdirSync(hermesRoot, { recursive: true })
     fs.writeFileSync(
       path.join(hermesRoot, 'config.yaml'),
-      'model: DeepSeek-V4-Pro\nprovider: tokenx\n',
+      'model: DeepSeek-V4-Pro\nprovider: acme\n',
       'utf-8',
     )
 
-    updateProfileModelProvider('default', 'tokenx', 'DeepSeek-V4-Pro')
+    updateProfileModelProvider('default', 'acme', 'DeepSeek-V4-Pro')
     const written = fs.readFileSync(
       path.join(hermesRoot, 'config.yaml'),
       'utf-8',
     )
     expect(written).toContain('default: DeepSeek-V4-Pro')
-    expect(written).toContain('provider: tokenx')
+    expect(written).toContain('provider: acme')
     expect(written).not.toMatch(/^model:\s*DeepSeek-V4-Pro\s*$/m)
     expect(readProfile('default').config.model).toEqual({
       default: 'DeepSeek-V4-Pro',
-      provider: 'tokenx',
+      provider: 'acme',
     })
   })
 
@@ -451,7 +451,7 @@ describe('profile model/provider updates', () => {
     )
     fs.writeFileSync(
       path.join(developerRoot, 'config.yaml'),
-      'model:\n  default: Kimi-K2.7-Code\n  provider: custom:tokenx\n',
+      'model:\n  default: Kimi-K2.7-Code\n  provider: custom:acme\n',
       'utf-8',
     )
 
@@ -464,7 +464,7 @@ describe('profile model/provider updates', () => {
     })
     expect(listed.developer).toMatchObject({
       model: 'Kimi-K2.7-Code',
-      provider: 'custom:tokenx',
+      provider: 'custom:acme',
     })
   })
 })

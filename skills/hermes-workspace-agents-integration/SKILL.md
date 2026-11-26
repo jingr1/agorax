@@ -59,13 +59,13 @@ Claude Code CLI 通过 `~/.claude/settings.json` 配置 provider 和 model，而
 }
 ```
 
-### 2.2 走代理/网关（如 tokenx）
+### 2.2 走代理/网关（如 acme）
 
 走代理时必须用 `ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_BASE_URL`，并且显式清空 `ANTHROPIC_API_KEY`：
 
 ```json
 {
-  "ANTHROPIC_BASE_URL": "https://model.nioint.com/token-x",
+  "ANTHROPIC_BASE_URL": "https://model.example",
   "ANTHROPIC_AUTH_TOKEN": "...",
   "ANTHROPIC_API_KEY": "",
   "ANTHROPIC_DEFAULT_SONNET_MODEL": "Claude-Sonnet-5",
@@ -123,7 +123,7 @@ Codex 使用 `~/.codex/config.toml`，通过 `src/server/codex-settings.ts` 管�
 - `readCodexConfig()` / `patchCodexConfig()` / `listCodexModels()` / `resolveCodexProviderDisplay()`。
 - 复用 Hermes Provider Catalog：`[model_providers.<id>]` 块的 `name`、`base_url`、`env_key` 从 catalog 同步。
 - `wire_api = "responses"`，因为 Codex 0.146+ 默认使用 OpenAI Responses API。
-- **不写硬编码 api_key 到 TOML**：用 `env_key = "TOKENX_API_KEY_VPEL"`（或 provider 对应 key_env），启动时再根据该 env_key 注入真实值。
+- **不写硬编码 api_key 到 TOML**：用 `env_key = "ACME_API_KEY_PRIMARY"`（或 provider 对应 key_env），启动时再根据该 env_key 注入真实值。
 - 保留 config.toml 中其他 block（如 `[mcp_servers]`、`[projects]`），只改写目标 provider block。
 - 切换回 `openai` 等非 catalog provider 时，把旧的 catalog block key 注释掉，避免仍用 gateway key。
 
@@ -144,7 +144,7 @@ Codex 使用 `~/.codex/config.toml`，通过 `src/server/codex-settings.ts` 管�
 
 Codex 0.146+ 认证由 daemon runtime + `~/.codex/config.toml` 负责：
 
-- 不在 TOML 中写死 `api_key`，使用 `env_key`（如 catalog 的 `TOKENX_API_KEY_VPEL`）。
+- 不在 TOML 中写死 `api_key`，使用 `env_key`（如 catalog 的 `ACME_API_KEY_PRIMARY`）。
 - Host/daemon 启动 Codex 时按 config 的 `env_key` 注入真实凭证（Workspace 侧不再维护本地 spawn env）。
 - MCP 须在 `~/.codex/config.toml` 中预配（无 `--mcp-config` 参数）。
 
@@ -253,7 +253,7 @@ Agents 列表继续用 `GET /api/agents`；详情用 `GET /api/agents/:id/capabi
 - **Mask 不写回文件：** UI 使用 `keyDirty` 状态，只有用户真实编辑的 key 才会被写入。
 - **Provider 显示：** 优先从 Hermes catalog 反查 provider 名称，而不是用 URL host。
 - **Subagent model 不进入 picker：** `CLAUDE_CODE_SUBAGENT_MODEL` 用于 workflow/subagent，不应在 chat picker 中与 alias 模型重复显示。
-- **Codex 不写硬编码 `api_key`：** 因为 Codex 0.146+ 对 `[model_providers.<id>].api_key` 解析/优先级有问题，导致 401。应在 TOML 中写 `env_key = "TOKENX_API_KEY_VPEL"`（对应 Hermes catalog 的 `key_env`），由 adapter 启动时注入真实 key。
+- **Codex 不写硬编码 `api_key`：** 因为 Codex 0.146+ 对 `[model_providers.<id>].api_key` 解析/优先级有问题，导致 401。应在 TOML 中写 `env_key = "ACME_API_KEY_PRIMARY"`（对应 Hermes catalog 的 `key_env`），由 adapter 启动时注入真实 key。
 - **Codex 认证 env：** daemon 启动 Codex 时按 `~/.codex/config.toml` 的 `env_key` 注入凭证；Settings / `codex-settings.ts` 只维护 TOML，不在 Workspace 进程内 spawn Codex。
 - **Codex 配置 patch 要避免 duplicate key：** 原文件 block 缺失 `env_key`/`requires_openai_auth` 时，不能往文件末尾追加，必须紧跟对应 table header 插入到 block 内部。
 - **Codex 切换 provider 时清理旧 block：** 从 catalog provider 切回 `openai` 时，要把旧 catalog block 的 `env_key` 注释掉，否则 Codex 仍可能用旧 gateway 认证。
@@ -288,4 +288,4 @@ Claude Code / Codex / Cursor / OpenCode / Kimi 均经 `AgoraxManagedAgentBridge`
   - 手动验证：`GET /api/agents/<agentId>/env-check` 返回版本信息；`POST /api/agents/<agentId>/env-action` 执行 `npm i -g <pkg>@latest`。
 - 真实呼叫检查：
   - Claude Code 使用 `claude -p "hi"` 确保认证、base URL、model alias 生效。
-  - Codex 使用 `codex exec --skip-git-repo-check "hi"` 确保 `env_key` 模式下 tokenx `/v1/responses` 返回 200。
+  - Codex 使用 `codex exec --skip-git-repo-check "hi"` 确保 `env_key` 模式下 acme `/v1/responses` 返回 200。

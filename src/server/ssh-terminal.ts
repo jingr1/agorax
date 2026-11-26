@@ -230,8 +230,8 @@ function rejectUnsafeRemotePath(value: string): void {
 
 /**
  * Corporate SSH gateways print an informational banner to stderr before every
- * command (NIO, large enterprises…). Strip those banner lines (typically
- * `#`-prefixed comments) so a real SSH error is visible instead of the banner.
+ * command. Strip those banner lines (typically `#`-prefixed comments) so a
+ * real SSH error is visible instead of the banner.
  */
 export function cleanSshStderr(raw: string): string {
   return (raw || '')

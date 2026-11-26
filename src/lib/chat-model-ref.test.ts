@@ -3,10 +3,10 @@ import { hermesChatModelFields, parseChatModelRef } from './chat-model-ref'
 
 describe('parseChatModelRef', () => {
   it('splits provider-prefixed Hermes picks', () => {
-    expect(parseChatModelRef('tokenx/DeepSeek-V4-Flash')).toEqual({
-      provider: 'tokenx',
+    expect(parseChatModelRef('acme/DeepSeek-V4-Flash')).toEqual({
+      provider: 'acme',
       model: 'DeepSeek-V4-Flash',
-      raw: 'tokenx/DeepSeek-V4-Flash',
+      raw: 'acme/DeepSeek-V4-Flash',
     })
   })
 
@@ -26,9 +26,9 @@ describe('parseChatModelRef', () => {
 
 describe('hermesChatModelFields', () => {
   it('emits model + provider for prefixed keys', () => {
-    expect(hermesChatModelFields('tokenx/DeepSeek-V4-Flash')).toEqual({
+    expect(hermesChatModelFields('acme/DeepSeek-V4-Flash')).toEqual({
       model: 'DeepSeek-V4-Flash',
-      provider: 'tokenx',
+      provider: 'acme',
     })
   })
 

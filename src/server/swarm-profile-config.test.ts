@@ -31,7 +31,7 @@ describe('ensureSwarmProfileConfig', () => {
     )
     writeFileSync(
       join(hermes, '.env'),
-      'API_SERVER_ENABLED=true\nAPI_SERVER_KEY=abcdefghijklmnopqrstuvwxyz12\nAPI_SERVER_PORT=8642\nTOKENX_API_KEY=secret\n',
+      'API_SERVER_ENABLED=true\nAPI_SERVER_KEY=abcdefghijklmnopqrstuvwxyz12\nAPI_SERVER_PORT=8642\nACME_API_KEY=secret\n',
       'utf8',
     )
     return hermes
@@ -49,7 +49,7 @@ describe('ensureSwarmProfileConfig', () => {
     expect(lstatSync(envPath).isSymbolicLink()).toBe(false)
     const raw = readFileSync(envPath, 'utf8')
     expect(raw).toContain('API_SERVER_KEY=abcdefghijklmnopqrstuvwxyz12')
-    expect(raw).toContain('TOKENX_API_KEY=secret')
+    expect(raw).toContain('ACME_API_KEY=secret')
     expect(raw).not.toContain('API_SERVER_PORT=')
   })
 
