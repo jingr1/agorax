@@ -75,17 +75,17 @@ import {
 import type { GroupMember, RoomMessage } from '../types'
 
 describe('auto-handoff', () => {
-  let prevCollab: string | undefined
+  let prevHermesHome: string | undefined
 
   beforeEach(() => {
+    prevHermesHome = process.env.HERMES_HOME
     const dbPath = resetCollabDbForTests()
-    prevCollab = process.env.HERMES_COLLAB_DB
-    process.env.HERMES_COLLAB_DB = dbPath
   })
 
   afterEach(() => {
-    if (prevCollab === undefined) delete process.env.HERMES_COLLAB_DB
-    else process.env.HERMES_COLLAB_DB = prevCollab
+    if (prevHermesHome === undefined) delete process.env.HERMES_HOME
+    else process.env.HERMES_HOME = prevHermesHome
+    delete process.env.HERMES_COLLAB_DB
   })
 
   it('posts autoHandoff system messages for each next worker', async () => {

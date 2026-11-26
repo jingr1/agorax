@@ -75,7 +75,7 @@ function makeMember(pid: string, profile: string): GroupMember {
 
 describe('group-chat clean baseline', () => {
   let dbPath: string
-  let prevCollabDb: string | undefined
+  let prevHermesHome: string | undefined
   let room: ReturnType<typeof createRoom>
   let memberA: GroupMember
   let memberB: GroupMember
@@ -86,9 +86,8 @@ describe('group-chat clean baseline', () => {
     mockMaybeSummarizeRoom.mockReset()
     mockGetContextForMember.mockReturnValue({ summary: null, messages: [] })
 
+    prevHermesHome = process.env.HERMES_HOME
     dbPath = resetCollabDbForTests()
-    prevCollabDb = process.env.HERMES_COLLAB_DB
-    process.env.HERMES_COLLAB_DB = dbPath
     clearAllRunnerState()
 
     room = createRoom({ title: 'Baseline room', dbPath })
@@ -126,8 +125,9 @@ describe('group-chat clean baseline', () => {
   })
 
   afterEach(() => {
-    if (prevCollabDb === undefined) delete process.env.HERMES_COLLAB_DB
-    else process.env.HERMES_COLLAB_DB = prevCollabDb
+    if (prevHermesHome === undefined) delete process.env.HERMES_HOME
+    else process.env.HERMES_HOME = prevHermesHome
+    delete process.env.HERMES_COLLAB_DB
   })
 
   describe('invariant 1: message count consistency across member gateways', () => {

@@ -6,8 +6,8 @@ import {
   readFileSync,
   writeFileSync,
 } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { getHermesRoot } from './hermes-paths'
 
 /**
  * Persistent session token store.
@@ -17,24 +17,23 @@ import { dirname, join } from 'node:path'
  * deployments.  For multi-worker setups the file becomes a race-condition
  * window — in that case replace with Redis or a database.
  *
- * File location: ~/.hermes/workspace-sessions.json
+ * File location: $HERMES_HOME/workspace-sessions.json (live getHermesRoot).
  */
 interface SessionStore {
   tokens: Record<string, number> // token -> expiry unix-ms
 }
 
-const STORE_FILE = join(
-  process.env.HERMES_HOME ??
-    process.env.HERMES_HOME ??
-    join(homedir(), '.hermes'),
-  'workspace-sessions.json',
-)
+function storeFilePath(): string {
+  return join(getHermesRoot(), 'workspace-sessions.json')
+}
+
 const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
 
 function loadStore(): SessionStore {
+  const storeFile = storeFilePath()
   try {
-    if (existsSync(STORE_FILE)) {
-      const raw = readFileSync(STORE_FILE, 'utf8')
+    if (existsSync(storeFile)) {
+      const raw = readFileSync(storeFile, 'utf8')
       const parsed = JSON.parse(raw) as SessionStore
       // Expire any stale tokens on load
       const now = Date.now()
@@ -51,25 +50,26 @@ function loadStore(): SessionStore {
 }
 
 function saveStore(store: SessionStore): void {
+  const storeFile = storeFilePath()
   try {
-    const dir = dirname(STORE_FILE)
+    const dir = dirname(storeFile)
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true, mode: 0o700 })
     }
     // Write with restrictive permissions — tokens are sensitive.
-    writeFileSync(STORE_FILE, JSON.stringify(store), {
+    writeFileSync(storeFile, JSON.stringify(store), {
       encoding: 'utf8',
       mode: 0o600,
     })
     // Enforce 0600 even if the file already existed with looser perms.
     try {
-      chmodSync(STORE_FILE, 0o600)
+      chmodSync(storeFile, 0o600)
     } catch {
       // chmod is best-effort (e.g. Windows) — ignore failures.
     }
   } catch {
     // Non-fatal — tokens are still in memory.
-    console.warn(`[auth] Failed to persist session store to ${STORE_FILE}`)
+    console.warn(`[auth] Failed to persist session store to ${storeFile}`)
   }
 }
 

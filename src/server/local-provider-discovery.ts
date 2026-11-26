@@ -11,8 +11,8 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import os from 'node:os'
 import YAML from 'yaml'
+import { getHermesRoot } from './hermes-paths'
 
 // -------------------------------------------------------------------
 // Well-known local providers
@@ -244,18 +244,15 @@ void ensureDiscovery()
 // Config auto-writer
 // -------------------------------------------------------------------
 
-const CONFIG_PATH = path.join(
-  process.env.HERMES_HOME ??
-    process.env.HERMES_HOME ??
-    path.join(os.homedir(), '.hermes'),
-  'config.yaml',
-)
+function configPath(): string {
+  return path.join(getHermesRoot(), 'config.yaml')
+}
 
 const loggedWarnings = new Set<string>()
 
 function readYamlConfig(): Record<string, unknown> {
   try {
-    const raw = fs.readFileSync(CONFIG_PATH, 'utf-8')
+    const raw = fs.readFileSync(configPath(), 'utf-8')
     const parsed = YAML.parse(raw)
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>

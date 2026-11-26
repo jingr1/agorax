@@ -59,20 +59,20 @@ import {
 
 describe('ensureRoomForMission', () => {
   let dbPath: string
-  let prevCollab: string | undefined
+  let prevHermesHome: string | undefined
 
   beforeEach(() => {
+    prevHermesHome = process.env.HERMES_HOME
     dbPath = resetCollabDbForTests()
-    prevCollab = process.env.HERMES_COLLAB_DB
-    process.env.HERMES_COLLAB_DB = dbPath
     vi.mocked(getSwarmMission).mockReset()
     vi.mocked(getProject).mockReset()
     vi.mocked(ensureMissionWorktree).mockClear()
   })
 
   afterEach(() => {
-    if (prevCollab === undefined) delete process.env.HERMES_COLLAB_DB
-    else process.env.HERMES_COLLAB_DB = prevCollab
+    if (prevHermesHome === undefined) delete process.env.HERMES_HOME
+    else process.env.HERMES_HOME = prevHermesHome
+    delete process.env.HERMES_COLLAB_DB
   })
 
   function stubMission() {

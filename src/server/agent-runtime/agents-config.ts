@@ -6,10 +6,10 @@
  */
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { homedir } from 'node:os'
 import * as YAML from 'yaml'
 import type { AgentRuntimeKind } from './types'
 import { AGORAX_MANAGED_AGENT_BACKENDS } from '@/lib/managed-agent-runtime/agent-targets'
+import { getHermesRoot } from '../hermes-paths'
 import { ensureAgentsYamlFromExample } from '../swarm-roster'
 
 export type AgentExecution = 'local' | 'ssh'
@@ -75,8 +75,7 @@ export function getAgentsYamlExamplePath(repoRoot?: string): string {
 /** Read a hermes profile's terminal.ssh_host (P2b ssh locality). */
 export function getProfileSshHost(profileId: string): string | null {
   const configPath = path.join(
-    homedir(),
-    '.hermes',
+    getHermesRoot(),
     'profiles',
     profileId,
     'config.yaml',
@@ -97,8 +96,7 @@ export function detectExecutionFromProfile(
   profileId: string,
 ): AgentExecution | null {
   const configPath = path.join(
-    homedir(),
-    '.hermes',
+    getHermesRoot(),
     'profiles',
     profileId,
     'config.yaml',
@@ -117,7 +115,7 @@ export function detectExecutionFromProfile(
 }
 
 function listHermesProfiles(): Array<string> {
-  const dir = path.join(homedir(), '.hermes', 'profiles')
+  const dir = path.join(getHermesRoot(), 'profiles')
   const deletedDir = path.join(dir, '.deleted')
   let tombstoned = new Set<string>()
   try {

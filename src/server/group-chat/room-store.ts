@@ -5,7 +5,9 @@
  * The schema is defined in src/server/collab-db.ts. This module adds typed
  * helpers and JSON parsing/serialization for the group-chat runner.
  */
+import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { ensureCollabDb, getCollabDbPath, createCollabId } from '../collab-db'
 import { openSqliteDatabase } from '../sqlite-helper'
@@ -40,11 +42,18 @@ function dbPath(input?: { dbPath?: string }): string {
   return input?.dbPath ?? defaultDbPath()
 }
 
-/** Create a fresh collab.db for tests and return its path. */
+/**
+ * Create an isolated Hermes home + collab.db for tests.
+ * Matches deploy: collab.db lives under HERMES_HOME (no HERMES_COLLAB_DB pin).
+ */
 export function resetCollabDbForTests(): string {
-  const path = `${tmpdir()}/collab-test-${randomUUID()}.db`
-  ensureCollabDb(path)
-  return path
+  const hermesHome = join(tmpdir(), `hermes-test-${randomUUID()}`)
+  mkdirSync(hermesHome, { recursive: true })
+  process.env.HERMES_HOME = hermesHome
+  delete process.env.HERMES_COLLAB_DB
+  const db = join(hermesHome, 'collab.db')
+  ensureCollabDb(db)
+  return db
 }
 
 function ensureDb(input?: { dbPath?: string }): void {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,7 +10,9 @@ import { ControlPlaneStateStore } from '../src/server/control-plane-state.ts'
 const root = mkdtempSync(join(tmpdir(), 'agorax-control-smoke-'))
 const envFile = join(root, '.env')
 writeFileSync(envFile, '# Isolated control-plane smoke environment\n')
-const dbPath = join(root, 'collab.db')
+const hermesHome = join(root, 'hermes')
+mkdirSync(hermesHome, { recursive: true })
+const dbPath = join(hermesHome, 'collab.db')
 const store = new ControlPlaneStateStore(dbPath)
 const intent = { epoch: 7, holds: { developer: { at: 123, byMessageId: 'human-stop' } } }
 store.write('room-runner', 'fixture-room', intent)
@@ -27,7 +29,7 @@ async function start() {
   child = spawn(process.execPath, ['server-entry.js'], {
     cwd: process.cwd(),
     env: { ...process.env, AGORAX_ENV_FILE: envFile, HOST: '127.0.0.1', PORT: String(port),
-      HERMES_HOME: join(root, 'hermes'), HERMES_COLLAB_DB: dbPath,
+      HERMES_HOME: hermesHome,
       AGORAX_MISSION_SQLITE_SOT: '1', HERMES_PASSWORD: '', CLAUDE_PASSWORD: '',
       HERMES_API_URL: 'http://127.0.0.1:9', HERMES_GATEWAY_POOL: 'off',
       AGORAX_MANAGED_AGENT_URL: 'http://127.0.0.1:9', AGORAX_AUTO_START_AGENT: 'false' },

@@ -42,11 +42,8 @@ async function makeRoomIdHandlers() {
 
 beforeEach(() => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'rooms-route-test-'))
-  const collabDb = path.join(tmpHome, 'collab.db')
+  // Deploy contract: collab.db lives under HERMES_HOME (no HERMES_COLLAB_DB pin).
   vi.stubEnv('HERMES_HOME', tmpHome)
-  // Keep collab.db off the live ~/.hermes path (readonly under the
-  // running gateway / sandbox).
-  vi.stubEnv('HERMES_COLLAB_DB', collabDb)
   vi.resetModules()
 })
 

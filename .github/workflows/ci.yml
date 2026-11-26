@@ -48,10 +48,11 @@ jobs:
       - name: Create isolated runtime directories
         run: |
           hermes_home="${RUNNER_TEMP}/agorax/${{ matrix.command }}/hermes"
-          collab_db="${RUNNER_TEMP}/agorax/${{ matrix.command }}/collab.db"
           echo "HERMES_HOME=${hermes_home}" >> "$GITHUB_ENV"
-          echo "HERMES_COLLAB_DB=${collab_db}" >> "$GITHUB_ENV"
           mkdir -p "$hermes_home"
+      # agents.yaml is gitignored; mirror install.sh (collab.db stays under HERMES_HOME).
+      - name: Seed agents.yaml from example
+        run: cp agents.yaml.example agents.yaml
       - run: pnpm run ${{ matrix.command }}
       - name: Production startup and restart smoke
         if: matrix.command == 'build'
