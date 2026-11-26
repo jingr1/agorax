@@ -5,7 +5,8 @@
 #   scripts/start-stack.sh prod   # production UI (node server-entry.js) — used by `pnpm start`
 #   scripts/start-stack.sh dev    # Vite UI — used by `pnpm dev`
 #
-# Gateway is skipped when already running. Daemon is idempotent (:8788 /health).
+# Gateway is skipped when already running. Daemon is idempotent when :8788
+# /health is ok and the on-disk .agorax/agorax-agentd is not newer.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

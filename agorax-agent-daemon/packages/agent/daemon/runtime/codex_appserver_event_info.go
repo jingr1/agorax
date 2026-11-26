@@ -275,6 +275,10 @@ func codexAppServerCapabilities(planMode bool) []string {
 		CapabilityPlanImplementation,
 		CapabilityPermissionModeChangeDuringTurn,
 		CapabilityPermissionModeChangeDeferred,
+		// Composer profile declares ModelSwitch; keep the canonical id so
+		// Agorax UI does not treat a live Codex session as model-locked.
+		// perTurnModelOverride is a Codex-local alias retained for older probes.
+		CapabilityModelSwitch,
 		"rollback",
 		"fork",
 		"perTurnModelOverride",

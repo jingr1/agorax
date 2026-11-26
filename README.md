@@ -335,7 +335,7 @@ pnpm dev:ui            # terminal 3 · :6734 · the UI
 
 On localhost, if you only run `pnpm dev:ui`, the **gateway pool** can lazy-start one API gateway per active profile (`AGORAX_AUTO_START_AGENT=false` disables that). Set `HERMES_API_URL` to a remote host to keep single-gateway pairing. Swarm workers still use per-profile `HERMES_HOME` + tmux and do not go through this pool.
 
-Managed Agent Chat needs `AGORAX_MANAGED_AGENT_URL=http://127.0.0.1:8788` and `AGORAX_WORKSPACE_ID=default` in `.env` (both are in `.env.example`). `dev:managed-agent` is idempotent: if `:8788` already answers `/health`, it skips instead of failing with `bind: address already in use`.
+Managed Agent Chat needs `AGORAX_MANAGED_AGENT_URL=http://127.0.0.1:8788` and `AGORAX_WORKSPACE_ID=default` in `.env` (both are in `.env.example`). `dev:managed-agent` is idempotent: if `:8788` already answers `/health` **and** matches the on-disk `.agorax/agorax-agentd`, it skips instead of failing with `bind: address already in use`. A newer install (or a listener from another checkout) is replaced automatically.
 
 ### Windows (PowerShell + WSL) one-command startup
 

@@ -24,6 +24,7 @@ func TestCodexAppServerCapabilitiesUseSharedVocabulary(t *testing.T) {
 		CapabilityRateLimits,
 		CapabilityInterrupt,
 		CapabilityActiveTurnGuidance,
+		CapabilityModelSwitch,
 	} {
 		if !containsString(capabilities, want) {
 			t.Fatalf("codex capabilities = %v, missing %q", capabilities, want)

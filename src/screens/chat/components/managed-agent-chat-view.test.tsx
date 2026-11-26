@@ -65,12 +65,26 @@ describe('managed composer wiring', () => {
     expect(composer.onQueue).toBeTypeOf('function')
     expect(composer.onSteer).toBeUndefined()
     expect(composer.onInterruptSend).toBeUndefined()
+    // null = capabilities unknown; ChatComposer must treat this like Hermes
+    // (undefined) and keep the model picker enabled — not grey it out.
     expect(composer.runtimeCapabilities).toBeNull()
     expect(composer.clearDraftOnSubmit).toBe(false)
     expect(composer.queuedCount).toBe(2)
     composer.onClearQueue?.()
     expect(mocks.clearQueue).toHaveBeenCalledOnce()
   })
+
+  it.each([
+    { capabilities: null, label: 'unknown' },
+    { capabilities: { modelSwitch: true }, label: 'explicit true' },
+    { capabilities: { modelSwitch: false }, label: 'explicit false' },
+  ] as const)(
+    'forwards runtimeCapabilities when modelSwitch is $label',
+    ({ capabilities }) => {
+      mocks.capabilities = capabilities
+      expect(mount().runtimeCapabilities).toEqual(capabilities)
+    },
+  )
 
   it('blocks submissions while an interaction holds the session', () => {
     mocks.blockedReason = 'pending_interaction'

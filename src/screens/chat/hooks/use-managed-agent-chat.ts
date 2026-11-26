@@ -740,8 +740,11 @@ export function useManagedAgentChat({
         // only live in session-model-store unless we push them through
         // updateSessionSettings (ACP session/set_model) before the prompt.
         // The prompt queue drains only after the settings write settles.
+        // Push whenever the user picked a model: some live snapshots omit
+        // `modelSwitch` even though the runtime accepts per-turn overrides
+        // (Codex historically advertised only `perTurnModelOverride`).
         const settingsPatch = managedSessionSettingsPatch({
-          selectedModel: session?.capabilities?.modelSwitch === true ? selectedModel : undefined,
+          selectedModel,
           effort: options?.effort,
           current: selectEngineSession(
             chatRuntime.engine.getSnapshot(),

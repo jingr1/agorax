@@ -26,6 +26,8 @@ import {
 import {
   MODEL_SWITCH_BLOCKED_TOAST,
   getZeroForkModelInfoFlags,
+  isModelSwitcherEnabled,
+  isRuntimeCapabilityAllowed,
   shouldBlockZeroForkModelSwitch,
 } from './chat-composer-model-switch'
 import { ComposerPrimaryButton } from './composer-primary-button'
@@ -199,6 +201,12 @@ type ChatComposerProps = {
    * payload is not competing with models/session-status/etc. on a cold gateway.
    */
   gatewayQueriesEnabled?: boolean
+  /**
+   * Managed Agent Activity session capabilities.
+   * Omit (`undefined`) for Hermes. Pass `null` while capabilities are still
+   * loading — that must not grey out model switch / image input; only an
+   * explicit `false` on the capability disables the control.
+   */
   runtimeCapabilities?: AgentActivitySessionCapabilities | null
   clearDraftOnSubmit?: boolean
   /** Number of follow-ups waiting to send after the current turn */
@@ -778,8 +786,12 @@ function ChatComposerComponent({
   runtimeCapabilities,
   clearDraftOnSubmit = true,
 }: ChatComposerProps) {
-  const imageInputAllowed = runtimeCapabilities === undefined || runtimeCapabilities?.imageInput === true
-  const modelSwitchAllowed = runtimeCapabilities === undefined || runtimeCapabilities?.modelSwitch === true
+  // null (managed capabilities not yet reported) must match undefined
+  // (Hermes / no gate): only an explicit false disables the control.
+  const imageInputAllowed = isRuntimeCapabilityAllowed(
+    runtimeCapabilities,
+    'imageInput',
+  )
   const { activeProfileName, activeProfile, workspaceProfileName } =
     useProfiles()
   const contextProfile =
@@ -1108,6 +1120,13 @@ function ChatComposerComponent({
     return ids
   }, [modelsQuery.data?.models])
 
+  // Do not tie the picker to submit `disabled` — managed sessions are often
+  // blocked while the catalog is already known (Codex/Claude local settings).
+  const modelSwitchAllowed = isModelSwitcherEnabled(
+    runtimeCapabilities,
+    catalogModelIds.size,
+  )
+
   const catalogCurrentModel = (modelsQuery.data?.currentModel || '').trim()
 
   // Drop persisted picks that aren't in this agent's catalog (or when the
@@ -1174,7 +1193,7 @@ function ChatComposerComponent({
 
   const handleModelSelect = useCallback(
     function handleModelSelect(nextModel: string, provider?: string) {
-      if (disabled || !modelSwitchAllowed) return
+      if (!modelSwitchAllowed) return
       const model = nextModel.trim()
       if (!model) return
       if (
@@ -1228,7 +1247,6 @@ function ChatComposerComponent({
     [
       activeProfileName,
       gatewayModeQuery.data,
-      disabled,
       modelSwitchAllowed,
       runtimeCapabilities,
       modelKeyMode,
@@ -1318,7 +1336,7 @@ function ChatComposerComponent({
     }
   }, [currentModel, thinkingLevel, onThinkingLevelChange])
 
-  const isModelSwitcherDisabled = disabled || !modelSwitchAllowed
+  const isModelSwitcherDisabled = !modelSwitchAllowed
   // On new chat, currentModel is empty until a session is created.
   // Read the runtime model from the models query (first item is default).
   const configuredModel = useMemo(() => {

@@ -134,6 +134,29 @@ test("projects connector presentation icons from the daemon catalog", () => {
   );
 });
 
+test("treats empty capability values as unknown, not all-false", () => {
+  const response = {
+    behavior: {},
+    capabilities: { values: [] },
+    capabilityCatalog: [],
+    commands: [],
+    effectiveSettings: {},
+    modelConfig: { configurable: false, options: [] },
+    permissionConfig: { configurable: false, modes: [] },
+    provider: "claude-code",
+    reasoningConfig: { configurable: false, options: [] },
+    reasoningOptionsByModel: {},
+    runtimeContext: {},
+    skills: []
+  } as unknown as DaemonProviderComposerOptionsResponse;
+
+  const options = agentActivityComposerOptionsFromDaemonResult(
+    "claude-code",
+    response
+  );
+  assert.equal(options.capabilities, null);
+});
+
 test("accepts agorax-injected and connector skill source kinds", () => {
   const response = {
     behavior: {},

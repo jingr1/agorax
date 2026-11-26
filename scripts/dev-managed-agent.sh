@@ -2,7 +2,8 @@
 # Start agorax-agentd for local Agorax development.
 #
 # Idempotent (safe under `pnpm dev:ui` restarts):
-#   - /health OK            → skip
+#   - /health OK + current binary → skip
+#   - /health OK + newer on-disk binary / path mismatch → replace
 #   - our process on :PORT  → skip (do not kill; avoids bind races)
 #   - foreign process       → fail with a clear message
 #   - port free             → start
@@ -15,6 +16,7 @@ PORT="${AGORAX_MANAGED_AGENT_PORT:-8788}"
 HOST="${AGORAX_MANAGED_AGENT_HOST:-127.0.0.1}"
 HEALTH_URL="http://${HOST}:${PORT}/health"
 DB_PATH="${AGORAX_AGENT_DB_PATH:-$ROOT/.agorax/agent.db}"
+BIN="$ROOT/.agorax/agorax-agentd"
 FORCE=0
 REPLACE_ONLY=0
 for arg in "$@"; do
@@ -31,6 +33,8 @@ mkdir -p "$ROOT/.agorax"
 
 # shellcheck disable=SC1091
 source "$ROOT/scripts/load-dotenv-file.sh"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/managed-agent-daemon-lib.sh"
 # Repo .env first, then ~/.hermes/.env for provider keys (Codex tokenx
 # env_key=TOKENX_API_KEY_VPEL, etc.). Existing process env wins.
 agorax_load_dotenv_file "$ROOT/.env"
@@ -57,33 +61,11 @@ daemon_ready() {
 }
 
 listener_pids() {
-  if command -v ss >/dev/null 2>&1; then
-    # Prefer numeric output; fall back to parsing the process column.
-    ss -ltnp 2>/dev/null | awk -v port=":${PORT}" '
-      index($4, port) || index($4, "*:" port) || index($4, "0.0.0.0:" port) || index($4, "[::]:" port) {
-        while (match($0, /pid=[0-9]+/)) {
-          print substr($0, RSTART + 4, RLENGTH - 4)
-          $0 = substr($0, RSTART + RLENGTH)
-        }
-      }' | sort -u
-    return
-  fi
-  if command -v lsof >/dev/null 2>&1; then
-    lsof -t -iTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null || true
-  fi
+  agorax_managed_agent_listener_pids "$PORT"
 }
 
 is_agorax_agentd_pid() {
-  local pid=$1
-  local cmd
-  cmd=$(ps -p "$pid" -o args= 2>/dev/null || true)
-  [[ -n "$cmd" ]] || return 1
-  case "$cmd" in
-    *agorax-agentd* | *packages/agent/daemon/cmd/agorax-agentd* | *cmd/agorax-agentd*)
-      return 0
-      ;;
-  esac
-  return 1
+  agorax_is_agorax_agentd_pid "$1"
 }
 
 free_stale_listeners() {
@@ -112,6 +94,11 @@ free_stale_listeners() {
   fi
 }
 
+if [[ "$FORCE" -ne 1 ]] && daemon_ready && agorax_managed_agent_binary_stale "$BIN" "$PORT"; then
+  echo "dev:managed-agent: ${HEALTH_URL} healthy but on-disk $BIN is newer (or path mismatch) — replacing"
+  FORCE=1
+fi
+
 if [[ "$FORCE" -ne 1 ]] && daemon_ready; then
   echo "dev:managed-agent: healthy daemon (with hermes-bridge) already on ${HEALTH_URL} — skipping"
   exit 0
@@ -138,13 +125,18 @@ if [[ -n "$existing" ]]; then
     exit 1
   fi
   if [[ "$ours" -eq 1 && "$FORCE" -ne 1 ]]; then
-    if health_ok; then
+    if [[ -x "$BIN" ]] && agorax_managed_agent_binary_stale "$BIN" "$PORT"; then
+      echo "dev:managed-agent: :${PORT} listener is behind on-disk $BIN — replacing"
+      FORCE=1
+      free_stale_listeners
+    elif health_ok; then
       echo "dev:managed-agent: agorax-agentd already listening on :${PORT} — skipping"
+      exit 0
     else
       echo "dev:managed-agent: agorax-agentd already listening on :${PORT} (health not ready yet) — skipping"
       echo "dev:managed-agent: pass --force to replace it"
+      exit 0
     fi
-    exit 0
   fi
   if [[ "$FORCE" -eq 1 ]]; then
     free_stale_listeners
@@ -161,7 +153,6 @@ export AGORAX_MANAGED_AGENT_PORT="$PORT"
 export AGORAX_AGENT_DB_PATH="$DB_PATH"
 
 # Prefer a prebuilt binary when present — avoids multi-minute go run module fetches.
-BIN="$ROOT/.agorax/agorax-agentd"
 if [[ -x "$BIN" ]]; then
   echo "dev:managed-agent: starting $BIN on ${HOST}:${PORT} (db=$DB_PATH)"
   exec "$BIN"

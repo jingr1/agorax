@@ -2,8 +2,50 @@ import { describe, expect, it } from 'vitest'
 import {
   MODEL_SWITCH_BLOCKED_TOAST,
   getZeroForkModelInfoFlags,
+  isModelSwitcherEnabled,
+  isRuntimeCapabilityAllowed,
   shouldBlockZeroForkModelSwitch,
 } from './chat-composer-model-switch'
+
+describe('isRuntimeCapabilityAllowed', () => {
+  it('allows model switch when capabilities are unknown (Hermes or loading managed)', () => {
+    expect(isRuntimeCapabilityAllowed(undefined, 'modelSwitch')).toBe(true)
+    expect(isRuntimeCapabilityAllowed(null, 'modelSwitch')).toBe(true)
+  })
+
+  it('only disables when the capability is explicitly false', () => {
+    expect(
+      isRuntimeCapabilityAllowed({ modelSwitch: true } as never, 'modelSwitch'),
+    ).toBe(true)
+    expect(
+      isRuntimeCapabilityAllowed(
+        { modelSwitch: false } as never,
+        'modelSwitch',
+      ),
+    ).toBe(false)
+  })
+
+  it('applies the same null-vs-false gate to imageInput', () => {
+    expect(isRuntimeCapabilityAllowed(null, 'imageInput')).toBe(true)
+    expect(
+      isRuntimeCapabilityAllowed({ imageInput: false } as never, 'imageInput'),
+    ).toBe(false)
+  })
+})
+
+describe('isModelSwitcherEnabled', () => {
+  it('stays enabled when a catalog exists even if modelSwitch was omitted as false', () => {
+    expect(
+      isModelSwitcherEnabled({ modelSwitch: false } as never, 3),
+    ).toBe(true)
+  })
+
+  it('disables only when modelSwitch is false and the catalog is empty', () => {
+    expect(
+      isModelSwitcherEnabled({ modelSwitch: false } as never, 0),
+    ).toBe(false)
+  })
+})
 
 describe('zero-fork model switch guard', () => {
   it('blocks picker swaps only for zero-fork vanilla agents', () => {

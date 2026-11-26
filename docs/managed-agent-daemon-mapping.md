@@ -48,7 +48,8 @@ turn 留在 `running`（协议收尾、prompt RPC、进程清理）。这不是�
 Claude CLI：组装后的 `assistant` 行（通常早于 `result`）会
 `assistant_segment_complete` → normalizer `Finish(completed)`，只关正文段、
 不 settle Host turn。ACP tool_call 路径本来就会在 tool 前 `Finish` 正文段。
-改 daemon 后需重建并重启 `agorax-agentd` 才生效。
+改 daemon 后需重建 `agorax-agentd` 才生效。本地 start / `ensureManagedAgentDaemon`
+在 `:8788` 已健康时，若 `$ROOT/.agorax/agorax-agentd` 比监听进程更新（或路径不是本仓库二进制），会自动替换旧进程，避免装了新版本仍跑旧 daemon。
 
 ## Coverage
 

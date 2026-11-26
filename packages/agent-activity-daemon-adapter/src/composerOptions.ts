@@ -136,7 +136,16 @@ function sessionCapabilitiesFromValue(
 ): AgentActivitySessionCapabilities | null {
   const capabilities = recordValue(value);
   if (Array.isArray(capabilities.values)) {
-    return agentActivitySessionCapabilitiesFromIds(capabilities.values.filter((entry): entry is string => typeof entry === "string"));
+    const values = capabilities.values.filter(
+      (entry): entry is string => typeof entry === "string"
+    );
+    // Match session detail mapping: an empty values list is "unknown", not
+    // "every capability is false". Otherwise /commands turns Claude/Kimi
+    // empty snapshots into a greyed-out model picker.
+    if (values.length === 0) {
+      return null;
+    }
+    return agentActivitySessionCapabilitiesFromIds(values);
   }
   if (Object.keys(capabilities).length === 0) {
     return null;

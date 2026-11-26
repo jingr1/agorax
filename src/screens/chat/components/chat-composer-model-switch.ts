@@ -1,9 +1,41 @@
+import type { AgentActivitySessionCapabilities } from '@agorax/agent-activity-core'
+
 export const MODEL_SWITCH_BLOCKED_TOAST =
   'Model switching requires the enhanced runtime. Set a default via `claude config set model <id>` — the displayed model reflects your config.'
 
 export type ZeroForkModelInfoFlags = {
   vanillaAgent: boolean
   supportsRuntimeSwitching: boolean
+}
+
+/**
+ * Composer capability gate for managed Agent Activity sessions.
+ * - `undefined` / `null` = unknown or Hermes (no gate) → allow
+ * - explicit `false` → disable
+ * - explicit `true` → allow
+ */
+export function isRuntimeCapabilityAllowed(
+  capabilities: AgentActivitySessionCapabilities | null | undefined,
+  key: 'modelSwitch' | 'imageInput',
+): boolean {
+  return capabilities == null || capabilities[key] === true
+}
+
+/**
+ * Model picker enablement for Hermes + managed composers.
+ * Submit admission (`disabled`) must not grey the picker — users need to
+ * choose a model before a blocked runtime becomes submittable.
+ * When a runtime already advertised concrete catalog entries (Claude/Codex
+ * local settings, daemon composer-options), keep the picker usable even if
+ * a live session snapshot omitted `modelSwitch` (Codex historically emitted
+ * only the non-canonical `perTurnModelOverride` alias).
+ */
+export function isModelSwitcherEnabled(
+  capabilities: AgentActivitySessionCapabilities | null | undefined,
+  catalogSize: number,
+): boolean {
+  if (isRuntimeCapabilityAllowed(capabilities, 'modelSwitch')) return true
+  return catalogSize > 0
 }
 
 function readBoolean(value: unknown): boolean | null {

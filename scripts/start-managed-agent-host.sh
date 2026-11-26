@@ -2,7 +2,8 @@
 # Start agorax managed-agent daemon on the host network (not Cursor sandbox).
 #
 # Prefer a prebuilt binary; keep newly started daemons in the foreground.
-# A validated existing daemon is external and is never stopped by this script.
+# A healthy daemon that matches the on-disk binary is left alone; a newer
+# install (or foreign checkout binary) on :PORT is replaced.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOG="${AGORAX_AGENT_LOG:-/tmp/agorax-daemon.log}"
@@ -16,6 +17,8 @@ mkdir -p "$ROOT/.agorax"
 
 # shellcheck disable=SC1091
 source "$ROOT/scripts/load-dotenv-file.sh"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/managed-agent-daemon-lib.sh"
 # Prebuilt-binary path used to skip dotenv entirely — Codex then failed with
 # Missing environment variable: TOKENX_API_KEY_VPEL (key lives in ~/.hermes/.env).
 agorax_load_dotenv_file "$ROOT/.env"
@@ -50,6 +53,11 @@ hermes_bridge_ok() {
 daemon_ready() {
   health_ok && hermes_bridge_ok
 }
+
+if [[ "$FORCE" -ne 1 ]] && daemon_ready && agorax_managed_agent_binary_stale "$BIN" "$PORT"; then
+  echo "managed-agent-host: :${PORT} healthy but on-disk $BIN is newer (or path mismatch) — replacing"
+  FORCE=1
+fi
 
 if [[ "$FORCE" -ne 1 ]] && daemon_ready; then
   echo "managed-agent-host: healthy daemon (with hermes-bridge) already on :${PORT} — skipping"
