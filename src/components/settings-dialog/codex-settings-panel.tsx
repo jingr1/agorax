@@ -27,6 +27,7 @@ type CodexConfigSnapshot = {
   configPath: string
   catalogProviders: Array<CatalogProviderLite>
   availableModels: Array<{ id: string; name: string; provider: string }>
+  modelCatalogJson?: string
 }
 
 export type CodexSettingsPanelProps = {
@@ -41,6 +42,7 @@ export function CodexSettingsPanel({ onSaved }: CodexSettingsPanelProps) {
   const [config, setConfig] = useState<CodexConfigSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [rebuilding, setRebuilding] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
   const [model, setModel] = useState('')
@@ -172,6 +174,43 @@ export function CodexSettingsPanel({ onSaved }: CodexSettingsPanelProps) {
     setSaving(false)
   }
 
+  const canRebuildCatalog =
+    provider !== DIRECT_OPENAI_ID && Boolean(provider)
+
+  const handleRebuildCatalog = async () => {
+    if (!canRebuildCatalog) return
+    setRebuilding(true)
+    setMsg(null)
+    try {
+      const res = await fetch('/api/agents/codex-impl/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rebuildModelCatalog: true,
+          copyFromCatalogProvider: provider,
+          ...(effectiveModel ? { model: effectiveModel } : {}),
+        }),
+      })
+      const data = (await res.json()) as {
+        ok?: boolean
+        error?: string
+        config?: CodexConfigSnapshot
+      }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'Rebuild failed')
+      }
+      if (data.config) setConfig(data.config)
+      setMsg('Catalog rebuilt')
+      void queryClient.invalidateQueries({
+        queryKey: ['composer', 'models'],
+      })
+      onSaved?.()
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Failed to rebuild catalog')
+    }
+    setRebuilding(false)
+  }
+
   if (loading) {
     return <div className="h-20 animate-pulse rounded-xl bg-primary-100/70" />
   }
@@ -182,7 +221,7 @@ export function CodexSettingsPanel({ onSaved }: CodexSettingsPanelProps) {
         <div
           className={cn(
             'rounded-lg px-3 py-2 text-sm font-medium',
-            msg === 'Saved'
+            msg === 'Saved' || msg === 'Catalog rebuilt'
               ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
               : 'bg-red-500/15 text-red-500 dark:text-red-400',
           )}
@@ -193,7 +232,7 @@ export function CodexSettingsPanel({ onSaved }: CodexSettingsPanelProps) {
 
       <SettingsSection
         title="Provider"
-        description="Selecting a Provider copies its base URL and key into ~/.codex/config.toml."
+        description="Selecting a catalog provider copies its base URL/key into ~/.codex/config.toml and regenerates model-catalogs/<id>.json for Codex metadata."
         icon={CloudIcon}
       >
         <SettingsRow stacked label="Provider">
@@ -268,11 +307,21 @@ export function CodexSettingsPanel({ onSaved }: CodexSettingsPanelProps) {
         </SettingsRow>
       </SettingsSection>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {canRebuildCatalog ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void handleRebuildCatalog()}
+            disabled={rebuilding || saving}
+          >
+            {rebuilding ? 'Rebuilding…' : 'Rebuild catalog'}
+          </Button>
+        ) : null}
         <Button
           size="sm"
           onClick={() => void handleSave()}
-          disabled={saving}
+          disabled={saving || rebuilding}
         >
           {saving ? 'Saving…' : 'Save'}
         </Button>

@@ -3,6 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import {
+  ensureCodexModelCatalog,
   listCodexModels,
   maskSecrets,
   patchCodexConfig,
@@ -12,10 +13,37 @@ import {
 
 const TEST_CONFIG_DIR = path.join(os.tmpdir(), 'hermes-codex-settings-test')
 const TEST_CONFIG_PATH = path.join(TEST_CONFIG_DIR, 'config.toml')
+const TEST_CATALOG_DIR = path.join(TEST_CONFIG_DIR, 'model-catalogs')
+const TEST_HERMES_HOME = path.join(TEST_CONFIG_DIR, 'hermes-home')
 
 function resetTestConfig(text: string): void {
   fs.mkdirSync(TEST_CONFIG_DIR, { recursive: true })
   fs.writeFileSync(TEST_CONFIG_PATH, text, 'utf8')
+}
+
+function seedEndpointMetadata(models: Record<string, { context_length: number }>): void {
+  const cacheDir = path.join(TEST_HERMES_HOME, 'cache')
+  fs.mkdirSync(cacheDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(cacheDir, 'endpoint_model_metadata.json'),
+    JSON.stringify({
+      'https://model.nioint.com/token-x/v1': {
+        at: Date.now() / 1000,
+        models: Object.fromEntries(
+          Object.entries(models).map(([name, meta]) => [
+            name,
+            { name, context_length: meta.context_length },
+          ]),
+        ),
+      },
+    }),
+    'utf8',
+  )
+}
+
+const patchOpts = {
+  catalogDir: TEST_CATALOG_DIR,
+  hermesHome: TEST_HERMES_HOME,
 }
 
 describe('codex-settings', () => {
@@ -51,6 +79,7 @@ describe('codex-settings', () => {
     patchCodexConfig(
       { model: 'gpt-5.6-terra', provider: 'openai' },
       TEST_CONFIG_PATH,
+      patchOpts,
     )
 
     const text = fs.readFileSync(TEST_CONFIG_PATH, 'utf8')
@@ -66,6 +95,7 @@ describe('codex-settings', () => {
     patchCodexConfig(
       { model: 'Kimi-K2.7-Code', copyFromCatalogProvider: 'tokenx' },
       TEST_CONFIG_PATH,
+      patchOpts,
     )
 
     const text = fs.readFileSync(TEST_CONFIG_PATH, 'utf8')
@@ -90,6 +120,7 @@ api_key = "old-key"
     patchCodexConfig(
       { model: 'Kimi-K2.7-Code', copyFromCatalogProvider: 'tokenx' },
       TEST_CONFIG_PATH,
+      patchOpts,
     )
 
     const text = fs.readFileSync(TEST_CONFIG_PATH, 'utf8')
@@ -109,6 +140,7 @@ api_key = "old-key"
   it('switches back to openai and disables the previous catalog block key', () => {
     resetTestConfig(`model = "Kimi-K2.7-Code"
 model_provider = "tokenx"
+model_catalog_json = "${TEST_CATALOG_DIR}/tokenx.json"
 
 [model_providers.tokenx]
 name = "NIO TokenX"
@@ -120,6 +152,7 @@ api_key = "real-key"
     patchCodexConfig(
       { model: 'gpt-5.6-terra', provider: 'openai' },
       TEST_CONFIG_PATH,
+      patchOpts,
     )
 
     const cfg = readCodexConfig(TEST_CONFIG_PATH)
@@ -131,6 +164,57 @@ api_key = "real-key"
     expect(text).toContain('# api_key = "real-key"')
     expect(text).toContain('[model_providers.tokenx]')
     expect(text).toContain('https://model.nioint.com/token-x/v1')
+    expect(text).not.toContain('model_catalog_json')
+  })
+
+  it('writes model_catalog_json and catalog file when copying from catalog', () => {
+    seedEndpointMetadata({
+      'Kimi-K2.7-Code': { context_length: 256000 },
+      'GPT-6.1-Terra': { context_length: 272000 },
+    })
+    resetTestConfig(`model = "gpt-5.6-terra"\nmodel_provider = "openai"\n`)
+
+    patchCodexConfig(
+      { model: 'GPT-6.1-Terra', copyFromCatalogProvider: 'tokenx' },
+      TEST_CONFIG_PATH,
+      patchOpts,
+    )
+
+    const text = fs.readFileSync(TEST_CONFIG_PATH, 'utf8')
+    const catalogPath = path.join(TEST_CATALOG_DIR, 'tokenx.json')
+    expect(text).toContain(`model_catalog_json = ${JSON.stringify(catalogPath)}`)
+    expect(fs.existsSync(catalogPath)).toBe(true)
+
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8')) as {
+      models: Array<{ slug: string; context_window: number; base_instructions: string }>
+    }
+    expect(catalog.models.some((m) => m.slug === 'GPT-6.1-Terra')).toBe(true)
+    const terra = catalog.models.find((m) => m.slug === 'GPT-6.1-Terra')
+    expect(terra?.context_window).toBe(272000)
+    expect(terra?.base_instructions).toBeTruthy()
+  })
+
+  it('ensureCodexModelCatalog merges catalog models with endpoint metadata', () => {
+    seedEndpointMetadata({
+      'Kimi-K2.7-Code': { context_length: 256000 },
+      'Only-In-Endpoint': { context_length: 99000 },
+    })
+
+    const result = ensureCodexModelCatalog('tokenx', {
+      catalogDir: TEST_CATALOG_DIR,
+      hermesHome: TEST_HERMES_HOME,
+      extraModels: ['Extra-Selected'],
+    })
+    expect(result).not.toBeNull()
+    expect(result?.catalogPath).toBe(path.join(TEST_CATALOG_DIR, 'tokenx.json'))
+
+    const catalog = JSON.parse(fs.readFileSync(result!.catalogPath, 'utf8')) as {
+      models: Array<{ slug: string; context_window: number }>
+    }
+    const bySlug = Object.fromEntries(catalog.models.map((m) => [m.slug, m]))
+    expect(bySlug['Kimi-K2.7-Code']?.context_window).toBe(256000)
+    expect(bySlug['Only-In-Endpoint']?.context_window).toBe(99000)
+    expect(bySlug['Extra-Selected']?.context_window).toBe(128000)
   })
 
   it('resolves provider name from config block', () => {
