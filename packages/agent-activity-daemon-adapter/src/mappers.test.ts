@@ -223,7 +223,9 @@ test("turn mapping rejects invalid daemon phase or capability refs", () => {
     () =>
       agentActivityTurnFromDaemonTurn(
         createDaemonTurn({
-          CapabilityRefs: [{ capability: "agorax", source: "slash_command" }]
+          CapabilityRefs: [
+            { capability: "not-a-real-capability", source: "slash_command" },
+          ]
         })
       ),
     /unsupported workspace agent capability reference/

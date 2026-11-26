@@ -172,7 +172,9 @@ test("accepts agorax-injected and connector skill source kinds", () => {
     skills: [
       { name: "agorax", trigger: "/agorax", sourceKind: "agorax-injected" },
       { name: "github", trigger: "/github", sourceKind: "connector" },
-      { name: "legacy", trigger: "/legacy", sourceKind: "agorax-injected" }
+      // Unknown kinds are dropped; accepted kinds are kept even when repeated.
+      { name: "legacy", trigger: "/legacy", sourceKind: "not-a-real-kind" },
+      { name: "extra", trigger: "/extra", sourceKind: "agorax-injected" }
     ]
   } as unknown as DaemonProviderComposerOptionsResponse;
 
@@ -183,6 +185,6 @@ test("accepts agorax-injected and connector skill source kinds", () => {
 
   assert.deepEqual(
     options.skills.map((skill) => skill.sourceKind),
-    ["agorax-injected", "connector"]
+    ["agorax-injected", "connector", "agorax-injected"]
   );
 });

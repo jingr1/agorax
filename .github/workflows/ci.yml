@@ -87,4 +87,6 @@ jobs:
           echo "HERMES_HOME=${hermes_home}" >> "$GITHUB_ENV"
           mkdir -p "$hermes_home"
       - run: python -m pip install -r hermes_langgraph_orchestrator/requirements.txt
-      - run: python -m pytest -q tests/test_langgraph_orchestrator.py
+      # asyncio_mode lives in hermes_langgraph_orchestrator/pyproject.toml; running
+      # from the repo root does not pick that file up, so set it explicitly.
+      - run: python -m pytest -q -o asyncio_mode=auto tests/test_langgraph_orchestrator.py

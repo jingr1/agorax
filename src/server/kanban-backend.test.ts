@@ -58,9 +58,19 @@ async function loadKanbanBackend(options?: {
     })),
   }))
 
-  vi.doMock('node:fs', () => ({
-    existsSync: vi.fn((path: string) => options?.existsSync?.(path) ?? false),
-  }))
+  const existsSync = vi.fn(
+    (path: string) => options?.existsSync?.(path) ?? false,
+  )
+  // gateway-capabilities → gateway-ports default-imports node:fs; named + default
+  // must both exist or Vitest rejects the mock during transitive load.
+  vi.doMock('node:fs', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs')>()
+    return {
+      ...actual,
+      default: { ...actual, existsSync },
+      existsSync,
+    }
+  })
 
   const mockCp = {
     execFileSync: vi.fn(

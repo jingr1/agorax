@@ -33,8 +33,19 @@ describe('hermes reconcileHistory while open turn remembered', () => {
       clientSubmitId: 'c-send',
       text: '继续',
     })
+
+    const projectedMessages = () =>
+      runtime.coordinator.project(
+        runtime.projectSnapshot(runtime.engine.getSnapshot()),
+      ).sessionMessagesById[agentSessionId] ?? []
+
+    // Optimistic user lives in the coordinator overlay, not the Engine bucket.
+    expect(selectSessionMessages(runtime.engine.getSnapshot(), agentSessionId)).toEqual(
+      [],
+    )
     expect(
       selectHermesChatState(runtime.engine.getSnapshot(), agentSessionId, {
+        sessionMessages: projectedMessages(),
         isSubmitting: true,
       }).messages.map((m) => m.id),
     ).toEqual(['user:c-send'])
@@ -53,14 +64,12 @@ describe('hermes reconcileHistory while open turn remembered', () => {
       1,
     )
 
-    const ids = selectSessionMessages(
-      runtime.engine.getSnapshot(),
-      agentSessionId,
-    ).map((m) => m.messageId)
-    expect(ids).toEqual(['user:c-send'])
-    expect(ids.some((id) => id.includes(':pending:'))).toBe(false)
+    const overlayIds = projectedMessages().map((m) => m.messageId)
+    expect(overlayIds).toEqual(['user:c-send'])
+    expect(overlayIds.some((id) => id.includes(':pending:'))).toBe(false)
 
     const chat = selectHermesChatState(runtime.engine.getSnapshot(), agentSessionId, {
+      sessionMessages: projectedMessages(),
       isSubmitting: true,
     })
     expect(chat.streamingMessageId).toBeNull()
