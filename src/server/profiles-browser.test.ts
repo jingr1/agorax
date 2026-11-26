@@ -263,7 +263,8 @@ describe('getMessagesForProfile', () => {
         tool_calls TEXT,
         tool_call_id TEXT,
         tool_name TEXT,
-        timestamp REAL NOT NULL
+        timestamp REAL NOT NULL,
+        platform_message_id TEXT
       );
       INSERT INTO sessions (id, title, started_at, message_count)
         VALUES ('sess-1', 'hello', 1700000000, 2);
@@ -313,7 +314,8 @@ describe('getMessagesForProfile', () => {
         tool_calls TEXT,
         tool_call_id TEXT,
         tool_name TEXT,
-        timestamp REAL NOT NULL
+        timestamp REAL NOT NULL,
+        platform_message_id TEXT
       );
     `)
     db.close()

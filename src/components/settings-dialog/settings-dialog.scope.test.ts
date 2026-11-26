@@ -72,8 +72,12 @@ describe('settings model/provider scope wiring', () => {
     expect(src).not.toContain('saveAllProfilesModelProvider')
     expect(src).not.toContain('<option value="global">')
     expect(src).toContain("queryKey: ['profiles', 'chat']")
-    expect(profileSrc).toContain('Save default')
-    expect(profileSrc).toContain('Save fallback')
+    // Buttons are labeled "Save"; the default vs fallback paths are the
+    // onSaveDefault / onSaveFallback handlers and saving === 'default'|'fallback'.
+    expect(profileSrc).toContain('onSaveDefault')
+    expect(profileSrc).toContain('onSaveFallback')
+    expect(profileSrc).toContain("saving === 'default'")
+    expect(profileSrc).toContain("saving === 'fallback'")
     expect(catalogSrc).not.toContain('update-manifest')
     expect(catalogSrc).not.toContain('Manifest base URL')
   })

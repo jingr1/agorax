@@ -1,4 +1,25 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { homedir } = vi.hoisted(() => ({
+  homedir: vi.fn().mockReturnValue('/tmp/agorax-openai-compat-home'),
+}))
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>()
+  return {
+    ...actual,
+    default: { ...actual, homedir },
+    homedir,
+  }
+})
+
+vi.mock('./chat-gateway', () => ({
+  resolveChatGateway: () => ({
+    profile: 'default',
+    url: 'http://127.0.0.1:8642',
+    token: '',
+  }),
+}))
 
 import { openaiChat, parseOpenAIStream } from './openai-compat-api'
 
@@ -21,14 +42,16 @@ function createStreamResponse(chunks: string[]): Response {
   )
 }
 
-const ORIGINAL_HOME = process.env.HOME
+beforeEach(() => {
+  delete process.env.HERMES_API_TOKEN
+  delete process.env.CLAUDE_API_TOKEN
+  homedir.mockReturnValue('/tmp/agorax-openai-compat-home-empty')
+})
 
 afterEach(() => {
   vi.restoreAllMocks()
   delete process.env.HERMES_API_TOKEN
   delete process.env.CLAUDE_API_TOKEN
-  if (ORIGINAL_HOME === undefined) delete process.env.HOME
-  else process.env.HOME = ORIGINAL_HOME
 })
 
 describe('openaiChat', () => {
@@ -59,7 +82,6 @@ describe('openaiChat', () => {
   })
 
   it('sends Hermes session continuity headers even without a bearer token', async () => {
-    process.env.HOME = '/tmp/hermes-workspace-test-no-codex-auth'
     const fetchMock = vi
       .fn()
       .mockResolvedValue(

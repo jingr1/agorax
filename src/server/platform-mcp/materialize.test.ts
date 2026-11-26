@@ -51,11 +51,15 @@ describe('platform-mcp materialize', () => {
     )
     writeFileSync(join(hermesHome, 'active_profile'), 'developer\n', 'utf-8')
     process.env.HERMES_HOME = hermesHome
+    // Pin collab.db to this temp tree so parallel workers / leftover names
+    // cannot collide on a shared ~/.hermes/collab.db.
+    process.env.HERMES_COLLAB_DB = join(tempRoot, 'collab.db')
     vi.resetModules()
   })
 
   afterEach(() => {
     delete process.env.HERMES_HOME
+    delete process.env.HERMES_COLLAB_DB
     try {
       rmSync(tempRoot, { recursive: true, force: true })
     } catch {

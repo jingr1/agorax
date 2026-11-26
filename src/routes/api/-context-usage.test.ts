@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../server/gateway-capabilities', () => ({
   BEARER_TOKEN: '',
@@ -70,6 +73,27 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+const ORIGINAL_HERMES_HOME = process.env.HERMES_HOME
+let hermesHomeDir: string | null = null
+
+beforeEach(() => {
+  hermesHomeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agorax-context-usage-'))
+  process.env.HERMES_HOME = hermesHomeDir
+  // CI / empty HERMES_HOME has no models.dev disk cache; seed the entry the
+  // composer-selected-model fallback test expects from Hermes metadata.
+  fs.writeFileSync(
+    path.join(hermesHomeDir, 'models_dev_cache.json'),
+    JSON.stringify({
+      moonshotai: {
+        models: {
+          'Kimi-K2.7-Code': { limit: { context: 262_144 } },
+        },
+      },
+    }),
+  )
+  clearModelsDevContextCache()
+})
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.clearAllMocks()
@@ -84,6 +108,12 @@ afterEach(() => {
   vi.mocked(getCapabilities).mockReturnValue({
     dashboard: { available: false },
   } as any)
+  if (ORIGINAL_HERMES_HOME === undefined) delete process.env.HERMES_HOME
+  else process.env.HERMES_HOME = ORIGINAL_HERMES_HOME
+  if (hermesHomeDir) {
+    fs.rmSync(hermesHomeDir, { recursive: true, force: true })
+    hermesHomeDir = null
+  }
 })
 
 describe('context usage estimation', () => {

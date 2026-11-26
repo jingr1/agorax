@@ -12,27 +12,40 @@ vi.mock('@tanstack/react-router', () => ({
   createFileRoute: (_path: string) => (opts: unknown) => opts,
 }))
 
-vi.mock('../../server/auth-middleware', () => ({
+vi.mock('../../../server/auth-middleware', () => ({
   isAuthenticated: () => true,
 }))
 
+const dispatchReadyAssignments = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
+    ok: true,
+    dispatched: [
+      { assignmentId: 'assign-1', workerId: 'researcher', ok: true },
+    ],
+  }),
+)
+
+vi.mock('../../../server/task-pipeline/dispatch-ready', () => ({
+  dispatchReadyAssignments,
+}))
+
 let tmpHome = ''
-let originalCwd = ''
+let missionsPath = ''
+let kanbanPath = ''
 
 function writeSwarmMissions(missions: Array<Record<string, unknown>>) {
-  const runtimePath = path.join(tmpHome, '.runtime')
-  fs.mkdirSync(runtimePath, { recursive: true })
+  fs.mkdirSync(path.dirname(missionsPath), { recursive: true })
   fs.writeFileSync(
-    path.join(runtimePath, 'swarm-missions.json'),
+    missionsPath,
     JSON.stringify({ version: 1, missions }, null, 2) + '\n',
     'utf-8',
   )
 }
 
 function writeKanbanCards(cards: Array<Record<string, unknown>>) {
-  fs.mkdirSync(tmpHome, { recursive: true })
+  fs.mkdirSync(path.dirname(kanbanPath), { recursive: true })
   fs.writeFileSync(
-    path.join(tmpHome, 'swarm2-kanban.json'),
+    kanbanPath,
     JSON.stringify({ cards }, null, 2) + '\n',
     'utf-8',
   )
@@ -44,16 +57,37 @@ async function makeTaskIdHandlers() {
 }
 
 beforeEach(() => {
-  originalCwd = process.cwd()
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tasks-start-route-test-'))
-  process.chdir(tmpHome)
+  missionsPath = path.join(tmpHome, '.runtime', 'swarm-missions.json')
+  kanbanPath = path.join(tmpHome, 'swarm2-kanban.json')
+  // Avoid process.chdir — cwd is process-global and races under vitest threads.
   vi.stubEnv('HERMES_HOME', tmpHome)
   vi.stubEnv('CLAUDE_KANBAN_BACKEND', 'local')
+  vi.stubEnv('HERMES_COLLAB_DB', path.join(tmpHome, 'collab.db'))
+  dispatchReadyAssignments.mockReset()
+  dispatchReadyAssignments.mockResolvedValue({
+    ok: true,
+    dispatched: [
+      { assignmentId: 'assign-1', workerId: 'researcher', ok: true },
+    ],
+  })
   vi.resetModules()
+  vi.doMock('../../../server/swarm-environment', () => ({
+    SWARM_CANONICAL_REPO: tmpHome,
+    SWARM_MISSIONS_PATH: missionsPath,
+    SWARM_MEMORY_ROOT: path.join(tmpHome, 'memory'),
+    SWARM_MEMORY_HANDOFFS: path.join(tmpHome, 'memory'),
+    SWARM_LEGACY_OUTPUT_ROOT: path.join(tmpHome, 'output'),
+    SWARM_FORBIDDEN_PATHS: [],
+    getSwarmEnvironment: () => ({
+      canonicalRepo: tmpHome,
+      hermesRoot: tmpHome,
+    }),
+    isForbiddenSwarmPath: () => false,
+  }))
 })
 
 afterEach(() => {
-  process.chdir(originalCwd)
   vi.unstubAllEnvs()
   fs.rmSync(tmpHome, { recursive: true, force: true })
 })
@@ -94,15 +128,6 @@ describe('POST /api/tasks/:taskId/start', () => {
       { id: 'card-123', title: 'Test', status: 'todo', missionId: 'mission-123' },
     ])
 
-    vi.doMock('../../server/task-pipeline/dispatch-ready', () => ({
-      dispatchReadyAssignments: vi.fn().mockResolvedValue({
-        ok: true,
-        dispatched: [
-          { assignmentId: 'assign-1', workerId: 'researcher', ok: true },
-        ],
-      }),
-    }))
-
     const handlers = await makeTaskIdHandlers()
     const res = await handlers.POST({
       request: new Request('http://localhost/api/tasks/card-123/start', {
@@ -115,6 +140,7 @@ describe('POST /api/tasks/:taskId/start', () => {
     expect(res.status).toBe(200)
     expect(body.ok).toBe(true)
     expect(body.dispatched).toHaveLength(1)
+    expect(dispatchReadyAssignments).toHaveBeenCalledWith('mission-123')
   })
 
   it('returns 400 when no assignments are ready', async () => {
@@ -149,12 +175,13 @@ describe('POST /api/tasks/:taskId/start', () => {
       },
     ])
     writeKanbanCards([
-      { id: 'card-456', title: 'Test', status: 'running', missionId: 'mission-456' },
+      {
+        id: 'card-456',
+        title: 'Blocked',
+        status: 'in_progress',
+        missionId: 'mission-456',
+      },
     ])
-
-    vi.doMock('../../server/task-pipeline/dispatch-ready', () => ({
-      dispatchReadyAssignments: vi.fn(),
-    }))
 
     const handlers = await makeTaskIdHandlers()
     const res = await handlers.POST({
@@ -166,10 +193,12 @@ describe('POST /api/tasks/:taskId/start', () => {
     const body = await res.json()
 
     expect(res.status).toBe(400)
-    expect(body.error).toContain('No ready assignments')
+    expect(body.error).toMatch(/No ready assignments/i)
+    expect(dispatchReadyAssignments).not.toHaveBeenCalled()
   })
 
-  it('returns 404 when task card is missing', async () => {
+  it('returns 404 when the task card is missing', async () => {
+    writeSwarmMissions([])
     writeKanbanCards([])
 
     const handlers = await makeTaskIdHandlers()
@@ -182,24 +211,23 @@ describe('POST /api/tasks/:taskId/start', () => {
     const body = await res.json()
 
     expect(res.status).toBe(404)
-    expect(body.error).toContain('Task not found')
+    expect(body.error).toMatch(/not found/i)
   })
 
-  it('returns 400 when task has no bound mission', async () => {
-    writeKanbanCards([
-      { id: 'card-789', title: 'Orphan', status: 'todo', missionId: null },
-    ])
+  it('returns 400 when the card has no bound mission', async () => {
+    writeSwarmMissions([])
+    writeKanbanCards([{ id: 'card-orphan', title: 'Orphan', status: 'todo' }])
 
     const handlers = await makeTaskIdHandlers()
     const res = await handlers.POST({
-      request: new Request('http://localhost/api/tasks/card-789/start', {
+      request: new Request('http://localhost/api/tasks/card-orphan/start', {
         method: 'POST',
       }),
-      params: { taskId: 'card-789' },
+      params: { taskId: 'card-orphan' },
     })
     const body = await res.json()
 
     expect(res.status).toBe(400)
-    expect(body.error).toContain('No mission bound')
+    expect(body.error).toMatch(/No mission bound/i)
   })
 })
