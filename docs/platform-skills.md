@@ -64,6 +64,16 @@ supports preview/source modes; all text files can be edited. Draft files can be
 added or removed and are saved with `SKILL.md` as one revision. Binary attachments
 are downloadable without decoding them as text. Cancel discards the entire draft.
 
+### `.agorax-skill-ignore`
+
+Optional gitignore-like file at the skill root. Matched paths stay on disk for
+runtime (Hermes / local scripts) but are **omitted** from Agorax package read,
+hash, and watcher fingerprints. Use this for fixed codegen trees that must not
+enter the 512-file catalog sync (for example `references/generated/**`).
+
+If a package still exceeds size limits after ignores, the watcher **skips sync
+for that skill** (one warning, no 30s retry loop) rather than flooding logs.
+
 The editor pins the revision it opened. A concurrent change rejects the save with
 409 rather than overwriting it. The page also shows per-agent deployment status,
 manual synchronization, explicit conflict actions, and restorable revision history.

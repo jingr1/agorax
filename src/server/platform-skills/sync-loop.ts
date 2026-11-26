@@ -9,11 +9,23 @@ import {
 } from './store'
 import {
   PLATFORM_MARKER,
+  SKILL_IGNORE_FILE,
   SKILL_TREE_EXCLUDED_DIR_NAMES,
 } from './skill-tree'
+import {
+  isIgnoredSkillRelativePath,
+  loadSkillIgnorePatterns,
+} from './skill-ignore'
 import { skillWorkingDirectory } from './deployment-tree'
 import { reconcilePlatformSkill } from './reconcile'
 import { platformSkillTarget } from './runtime-target'
+
+const SKILL_PACKAGE_LIMIT_RE =
+  /exceeds file or size limits|Skill package is too large|too large/i
+
+function isSkillPackageLimitError(message: string): boolean {
+  return SKILL_PACKAGE_LIMIT_RE.test(message)
+}
 
 export const SKILL_SYNC_DEBOUNCE_MS = 500
 export const SKILL_SYNC_FALLBACK_MS = 30_000
@@ -105,12 +117,22 @@ function fingerprintDirectory(directory: string): string {
     // Category folders and other unmanaged trees: metadata only, no deep walk.
     if (!fs.existsSync(path.join(directory, 'SKILL.md')))
       return `dir:${stat.mtimeMs}:${stat.ino}:noskill`
+    const ignorePatterns = loadSkillIgnorePatterns(directory)
     const parts: Array<string> = []
     let files = 0
+    try {
+      const ignoreStat = fs.lstatSync(path.join(directory, SKILL_IGNORE_FILE))
+      parts.push(
+        `${SKILL_IGNORE_FILE}:${ignoreStat.mtimeMs}:${ignoreStat.size}`,
+      )
+    } catch {
+      /* no ignore file */
+    }
     const walk = (current: string, prefix: string) => {
       for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
         if (
           entry.name === PLATFORM_MARKER ||
+          entry.name === SKILL_IGNORE_FILE ||
           entry.name.endsWith('.pyc') ||
           SKILL_TREE_EXCLUDED_DIR_NAMES.has(entry.name)
         ) {
@@ -127,6 +149,7 @@ function fingerprintDirectory(directory: string): string {
           continue
         }
         const relative = prefix ? `${prefix}/${entry.name}` : entry.name
+        if (isIgnoredSkillRelativePath(relative, ignorePatterns)) continue
         const full = path.join(current, entry.name)
         if (entry.isSymbolicLink()) {
           parts.push(`${relative}:link:${fs.readlinkSync(full)}`)
@@ -230,8 +253,11 @@ export function createPlatformSkillSync(input?: {
       try {
         if (!checkSkill(skillId)) enqueue(skillId, 100)
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
         warn(error, skillId)
-        enqueue(skillId, input?.fallbackMs ?? SKILL_SYNC_FALLBACK_MS)
+        // Oversized / unreadable packages will not heal on retry — skip requeue.
+        if (!isSkillPackageLimitError(message))
+          enqueue(skillId, input?.fallbackMs ?? SKILL_SYNC_FALLBACK_MS)
       }
     }, delay)
     next.unref()
@@ -277,6 +303,16 @@ export function createPlatformSkillSync(input?: {
       getPlatformSkill(skillId)?.revisionId ??
       ''
     const fingerprint = fingerprintForSkill(skillId, directories, revisionId)
+    // External or unmanaged trees that still exceed limits after skill-ignore:
+    // mark settled and stop retrying. Runtime assets can remain on disk.
+    if (isSkillPackageLimitError(fingerprint)) {
+      observations.set(skillId, { fingerprint, applied: fingerprint })
+      warn(
+        `Skipping sync for oversized skill package (add ${SKILL_IGNORE_FILE} for fixed codegen trees such as references/generated/**): ${skillId}`,
+        skillId,
+      )
+      return true
+    }
     const previous = observations.get(skillId)
     if (previous?.fingerprint !== fingerprint) {
       observations.set(skillId, { fingerprint, applied: previous?.applied })
@@ -290,6 +326,14 @@ export function createPlatformSkillSync(input?: {
       targets.get(skillId) ?? directories,
       revisions.get(skillId) ?? revisionId,
     )
+    if (isSkillPackageLimitError(after)) {
+      observations.set(skillId, { fingerprint: after, applied: after })
+      warn(
+        `Skipping sync for oversized skill package (add ${SKILL_IGNORE_FILE} for fixed codegen trees such as references/generated/**): ${skillId}`,
+        skillId,
+      )
+      return true
+    }
     const settled = after === fingerprint
     observations.set(skillId, {
       fingerprint: after,
@@ -307,7 +351,12 @@ export function createPlatformSkillSync(input?: {
             .filter((entry): entry is string => Boolean(entry)),
         ),
       ].join('; ')
-      if (message) warn(message, skillId)
+      if (message) {
+        warn(message, skillId)
+        if (isSkillPackageLimitError(message)) {
+          observations.set(skillId, { fingerprint: after, applied: after })
+        }
+      }
     }
     return true
   }

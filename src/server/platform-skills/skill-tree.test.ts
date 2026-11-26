@@ -61,6 +61,38 @@ describe('portable skill package', () => {
     )
   })
 
+  it('honors .agorax-skill-ignore for fixed codegen trees', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-tree-'))
+    roots.push(root)
+    const skillDir = path.join(root, 'skill')
+    fs.mkdirSync(path.join(skillDir, 'references', 'generated', 'sql'), {
+      recursive: true,
+    })
+    fs.mkdirSync(path.join(skillDir, 'references', 'workflows'), {
+      recursive: true,
+    })
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# Skill\n')
+    fs.writeFileSync(
+      path.join(skillDir, '.agorax-skill-ignore'),
+      'references/generated/**\n',
+    )
+    fs.writeFileSync(
+      path.join(skillDir, 'references', 'generated', 'sql', 'q.sql'),
+      'SELECT 1;\n',
+    )
+    fs.writeFileSync(
+      path.join(skillDir, 'references', 'workflows', 'startup.md'),
+      '# startup\n',
+    )
+    const tree = readSkillTree(skillDir)
+    expect(tree.files?.map((file) => file.path)).toEqual([
+      'references/workflows/startup.md',
+    ])
+    expect(fs.existsSync(path.join(skillDir, 'references', 'generated', 'sql', 'q.sql'))).toBe(
+      true,
+    )
+  })
+
   it('ignores node_modules and other junk dirs when reading or hashing', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-tree-'))
     roots.push(root)

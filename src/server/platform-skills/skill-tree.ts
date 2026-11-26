@@ -2,7 +2,13 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import type { PlatformSkillFile } from './types'
+import {
+  SKILL_IGNORE_FILE,
+  isIgnoredSkillRelativePath,
+  loadSkillIgnorePatterns,
+} from './skill-ignore'
 
+export { SKILL_IGNORE_FILE } from './skill-ignore'
 export const PLATFORM_MARKER = '.agorax-platform-skill'
 export type SkillTree = { content: string; files?: Array<PlatformSkillFile> }
 export type SkillTreeMarker = { version: 2; skillId: string; baseHash: string; executables?: Array<string> }
@@ -153,16 +159,19 @@ export function readSkillTree(directory: string): SkillTree {
     throw new Error('Valid UTF-8 SKILL.md is required')
   const files: Array<PlatformSkillFile> = []
   const executablePaths = new Set(process.platform === 'win32' ? readSkillMarker(directory)?.executables ?? [] : [])
+  const ignorePatterns = loadSkillIgnorePatterns(directory)
   let total = 0
   const walk = (current: string, prefix: string) => {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       if (
         entry.name === PLATFORM_MARKER ||
+        entry.name === SKILL_IGNORE_FILE ||
         entry.name.endsWith('.pyc') ||
         SKILL_TREE_EXCLUDED_DIR_NAMES.has(entry.name)
       )
         continue
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name
+      if (isIgnoredSkillRelativePath(relative, ignorePatterns)) continue
       normalizeSkillFilePath(relative)
       const full = path.join(current, entry.name)
       if (entry.isSymbolicLink())
