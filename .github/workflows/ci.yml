@@ -86,6 +86,9 @@ jobs:
           hermes_home="${RUNNER_TEMP}/agorax-python/hermes"
           echo "HERMES_HOME=${hermes_home}" >> "$GITHUB_ENV"
           mkdir -p "$hermes_home"
+      # agents.yaml is gitignored; mirror install.sh and materialize from the example.
+      - name: Seed agents.yaml from example
+        run: cp agents.yaml.example agents.yaml
       - run: python -m pip install -r hermes_langgraph_orchestrator/requirements.txt
       # asyncio_mode lives in hermes_langgraph_orchestrator/pyproject.toml; running
       # from the repo root does not pick that file up, so set it explicitly.

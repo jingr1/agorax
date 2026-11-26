@@ -290,11 +290,7 @@ def test_swarm_roster_has_worker_wrappers():
     import yaml
     from pathlib import Path
 
-    root = Path(__file__).parent.parent
-    # Local agents.yaml is gitignored; CI / fresh checkouts only have the example.
-    swarm_path = root / "agents.yaml"
-    if not swarm_path.is_file():
-        swarm_path = root / "agents.yaml.example"
+    swarm_path = Path(__file__).parent.parent / "agents.yaml"
     with open(swarm_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     workers = {w["id"]: w for w in data.get("agents", [])}
