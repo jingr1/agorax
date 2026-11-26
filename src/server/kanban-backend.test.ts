@@ -12,6 +12,7 @@ async function loadKanbanBackend(options?: {
 }) {
   vi.doMock('./swarm-kanban-store', () => ({
     SWARM_KANBAN_FILE: '/tmp/swarm2-kanban.json',
+    getSwarmKanbanFile: () => '/tmp/swarm2-kanban.json',
     createSwarmKanbanCard: vi.fn((input) => ({
       id: 'local-1',
       title: input.title,

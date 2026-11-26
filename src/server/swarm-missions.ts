@@ -178,7 +178,7 @@ function shortId(prefix: string): string {
 }
 
 function readStore(): SwarmMissionStore {
-  if (!existsSync(SWARM_MISSIONS_PATH)) return { version: 1, missions: [] }
+    if (!existsSync(SWARM_MISSIONS_PATH)) return { version: 1, missions: [] }
   try {
     const parsed = JSON.parse(
       readFileSync(SWARM_MISSIONS_PATH, 'utf8'),
@@ -201,7 +201,7 @@ function readStore(): SwarmMissionStore {
 }
 
 function writeStore(store: SwarmMissionStore): void {
-  mkdirSync(dirname(SWARM_MISSIONS_PATH), { recursive: true })
+    mkdirSync(dirname(SWARM_MISSIONS_PATH), { recursive: true })
   const tmp = `${SWARM_MISSIONS_PATH}.${process.pid}.${Date.now()}.tmp`
   writeFileSync(tmp, JSON.stringify(store, null, 2) + '\n')
   renameSync(tmp, SWARM_MISSIONS_PATH)

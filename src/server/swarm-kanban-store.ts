@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { getHermesRoot } from './hermes-paths'
 
 export const SWARM_KANBAN_LANES = [
   'backlog',
@@ -66,17 +66,21 @@ export type UpdateSwarmKanbanCardInput = Partial<
   Omit<CreateSwarmKanbanCardInput, 'createdBy'>
 >
 
-const HERMES_HOME =
-  process.env.HERMES_HOME ??
-  process.env.HERMES_HOME ??
-  path.join(os.homedir(), '.hermes')
-export const SWARM_KANBAN_FILE = path.join(HERMES_HOME, 'swarm2-kanban.json')
+/** Live path under current Hermes root — same contract as getHermesRoot(). */
+export function getSwarmKanbanFile(): string {
+  return path.join(getHermesRoot(), 'swarm2-kanban.json')
+}
+
+/** Snapshot for mocks/diagnostics; I/O uses getSwarmKanbanFile() (live HERMES_HOME). */
+export const SWARM_KANBAN_FILE = getSwarmKanbanFile()
 
 function ensureKanbanFile(): void {
-  fs.mkdirSync(HERMES_HOME, { recursive: true })
-  if (!fs.existsSync(SWARM_KANBAN_FILE)) {
+  const hermesHome = getHermesRoot()
+  const file = getSwarmKanbanFile()
+  fs.mkdirSync(hermesHome, { recursive: true })
+  if (!fs.existsSync(file)) {
     fs.writeFileSync(
-      SWARM_KANBAN_FILE,
+      file,
       JSON.stringify({ cards: [] }, null, 2) + '\n',
       'utf-8',
     )
@@ -86,7 +90,7 @@ function ensureKanbanFile(): void {
 function readKanbanFile(): SwarmKanbanFile {
   ensureKanbanFile()
   try {
-    const raw = fs.readFileSync(SWARM_KANBAN_FILE, 'utf-8').trim()
+    const raw = fs.readFileSync(getSwarmKanbanFile(), 'utf-8').trim()
     if (!raw) return { cards: [] }
     const parsed = JSON.parse(raw) as Partial<SwarmKanbanFile>
     return {
@@ -100,7 +104,7 @@ function readKanbanFile(): SwarmKanbanFile {
 function writeKanbanFile(data: SwarmKanbanFile): void {
   ensureKanbanFile()
   fs.writeFileSync(
-    SWARM_KANBAN_FILE,
+    getSwarmKanbanFile(),
     JSON.stringify({ cards: data.cards.map(normalizeCard) }, null, 2) + '\n',
     'utf-8',
   )

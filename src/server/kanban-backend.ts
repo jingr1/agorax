@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { getHermesRoot, getWorkspaceHermesHome } from './hermes-paths'
 import { openSqliteDatabase, runSqlite, sqliteQuote } from './sqlite-helper'
 import {
-  SWARM_KANBAN_FILE,
+  getSwarmKanbanFile,
   type CreateSwarmKanbanCardInput,
   createSwarmKanbanCard,
   deleteSwarmKanbanCard,
@@ -437,7 +437,7 @@ const localBackend: KanbanBackend = {
       label: 'Local board',
       detected: true,
       writable: true,
-      path: SWARM_KANBAN_FILE,
+      path: getSwarmKanbanFile(),
       details: 'Using local Swarm board JSON store.',
     }
   },
