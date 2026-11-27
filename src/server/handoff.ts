@@ -9,8 +9,8 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { SWARM_MEMORY_HANDOFFS } from './swarm-environment'
 import { getSwarmMission } from './swarm-missions'
 import { getProject } from './task-pipeline/projects'
 import { diffRange, localGitContext } from './git-ops'
@@ -32,21 +32,32 @@ export type SwarmHandoff = {
   sourceCheckpoint: ParsedSwarmCheckpoint
 }
 
-const HANDOFF_DIR = join(SWARM_MEMORY_HANDOFFS, 'handoffs', 'swarm')
 const MAX_GIT_DIFF_CHARS = 20_000
 const MAX_TERMINAL_CHARS = 10_000
 const TMUX_CAPTURE_LINES = 50
 
+/** Live memory root — same contract as deploy (HERMES_SWARM_MEMORY_ROOT). */
+function swarmMemoryRoot(): string {
+  return (
+    process.env.HERMES_SWARM_MEMORY_ROOT?.trim() ||
+    join(homedir(), 'hermes-workspace')
+  )
+}
+
+function handoffDirPath(): string {
+  return join(swarmMemoryRoot(), 'memory', 'handoffs', 'swarm')
+}
+
 function ensureHandoffDir(): void {
-  mkdirSync(HANDOFF_DIR, { recursive: true })
+  mkdirSync(handoffDirPath(), { recursive: true })
 }
 
 function handoffJsonPath(workerId: string): string {
-  return join(HANDOFF_DIR, `${workerId}-latest.json`)
+  return join(handoffDirPath(), `${workerId}-latest.json`)
 }
 
 function handoffMarkdownPath(workerId: string): string {
-  return join(HANDOFF_DIR, `${workerId}-latest.md`)
+  return join(handoffDirPath(), `${workerId}-latest.md`)
 }
 
 /**
@@ -275,5 +286,5 @@ export function handoffPath(workerId: string): string {
 }
 
 export function handoffDirectory(): string {
-  return HANDOFF_DIR
+  return handoffDirPath()
 }

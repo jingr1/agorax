@@ -11,8 +11,8 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { homedir } from 'node:os'
 import YAML from 'yaml'
-import { getHermesRoot } from './hermes-paths'
 
 // -------------------------------------------------------------------
 // Well-known local providers
@@ -244,8 +244,13 @@ void ensureDiscovery()
 // Config auto-writer
 // -------------------------------------------------------------------
 
+/**
+ * Active process HERMES_HOME (may already be a named profile dir).
+ * Do not peel via getHermesRoot() — custom_providers live on the active home.
+ */
 function configPath(): string {
-  return path.join(getHermesRoot(), 'config.yaml')
+  const home = process.env.HERMES_HOME?.trim() || path.join(homedir(), '.hermes')
+  return path.join(home, 'config.yaml')
 }
 
 const loggedWarnings = new Set<string>()

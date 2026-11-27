@@ -1,5 +1,7 @@
-import { rm } from 'node:fs/promises'
-import { afterEach, describe, expect, it } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   buildHandoff,
   handoffDirectory,
@@ -11,11 +13,20 @@ import type { ParsedSwarmCheckpoint } from './swarm-checkpoints'
 const TEST_WORKER = 'test-handoff-worker'
 
 describe('handoff', () => {
+  let memoryRoot = ''
+  let prevMemoryRoot: string | undefined
+
+  beforeEach(async () => {
+    memoryRoot = await mkdtemp(join(tmpdir(), 'agorax-handoff-'))
+    prevMemoryRoot = process.env.HERMES_SWARM_MEMORY_ROOT
+    // Deploy contract: handoffs live under HERMES_SWARM_MEMORY_ROOT/memory/...
+    process.env.HERMES_SWARM_MEMORY_ROOT = memoryRoot
+  })
+
   afterEach(async () => {
-    await rm(`${handoffDirectory()}/${TEST_WORKER}-latest.json`, {
-      force: true,
-    })
-    await rm(`${handoffDirectory()}/${TEST_WORKER}-latest.md`, { force: true })
+    if (prevMemoryRoot === undefined) delete process.env.HERMES_SWARM_MEMORY_ROOT
+    else process.env.HERMES_SWARM_MEMORY_ROOT = prevMemoryRoot
+    await rm(memoryRoot, { recursive: true, force: true })
   })
 
   it('builds a structured handoff from a checkpoint', async () => {
@@ -24,7 +35,7 @@ describe('handoff', () => {
       runtimeState: 'idle',
       checkpointStatus: 'done',
       filesChanged:
-        '- `/home/ramon.jing/hermes-workspace/src/server/handoff.ts` — new handoff module',
+        '- `/workspace/src/server/handoff.ts` — new handoff module',
       commandsRun: '- `pnpm test`\n- `git status`',
       result: 'Implemented structured handoff builder.',
       blocker: null,
@@ -43,9 +54,7 @@ describe('handoff', () => {
     expect(handoff.assignmentId).toBe('assignment-abc')
     expect(handoff.state).toBe('DONE')
     expect(handoff.result).toBe('Implemented structured handoff builder.')
-    expect(handoff.filesChanged).toContain(
-      '/home/ramon.jing/hermes-workspace/src/server/handoff.ts',
-    )
+    expect(handoff.filesChanged).toContain('/workspace/src/server/handoff.ts')
     expect(handoff.commandsRun).toEqual(['pnpm test', 'git status'])
     expect(handoff.nextAction).toBe('Route to architect for review.')
     expect(handoff.sourceCheckpoint.raw).toBe('STATE: DONE')
@@ -69,6 +78,7 @@ describe('handoff', () => {
     const paths = await writeHandoff(handoff)
     expect(paths.jsonPath).toContain(`${TEST_WORKER}-latest.json`)
     expect(paths.markdownPath).toContain(`${TEST_WORKER}-latest.md`)
+    expect(paths.jsonPath.startsWith(handoffDirectory())).toBe(true)
 
     const read = readHandoff(TEST_WORKER)
     expect(read).not.toBeNull()

@@ -94,7 +94,7 @@ describe('POST /api/tasks/:taskId/start', () => {
       { id: 'card-123', title: 'Test', status: 'todo', missionId: 'mission-123' },
     ])
 
-    vi.doMock('../../server/task-pipeline/dispatch-ready', () => ({
+    vi.doMock('../../../server/task-pipeline/dispatch-ready', () => ({
       dispatchReadyAssignments: vi.fn().mockResolvedValue({
         ok: true,
         dispatched: [
@@ -152,7 +152,7 @@ describe('POST /api/tasks/:taskId/start', () => {
       { id: 'card-456', title: 'Test', status: 'running', missionId: 'mission-456' },
     ])
 
-    vi.doMock('../../server/task-pipeline/dispatch-ready', () => ({
+    vi.doMock('../../../server/task-pipeline/dispatch-ready', () => ({
       dispatchReadyAssignments: vi.fn(),
     }))
 

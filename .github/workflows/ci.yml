@@ -48,8 +48,10 @@ jobs:
       - name: Create isolated runtime directories
         run: |
           hermes_home="${RUNNER_TEMP}/agorax/${{ matrix.command }}/hermes"
+          swarm_memory="${RUNNER_TEMP}/agorax/${{ matrix.command }}/hermes-workspace"
           echo "HERMES_HOME=${hermes_home}" >> "$GITHUB_ENV"
-          mkdir -p "$hermes_home"
+          echo "HERMES_SWARM_MEMORY_ROOT=${swarm_memory}" >> "$GITHUB_ENV"
+          mkdir -p "$hermes_home" "$swarm_memory"
       # agents.yaml is gitignored; mirror install.sh (collab.db stays under HERMES_HOME).
       - name: Seed agents.yaml from example
         run: cp agents.yaml.example agents.yaml
@@ -85,8 +87,10 @@ jobs:
       - name: Create isolated Hermes home
         run: |
           hermes_home="${RUNNER_TEMP}/agorax-python/hermes"
+          swarm_memory="${RUNNER_TEMP}/agorax-python/hermes-workspace"
           echo "HERMES_HOME=${hermes_home}" >> "$GITHUB_ENV"
-          mkdir -p "$hermes_home"
+          echo "HERMES_SWARM_MEMORY_ROOT=${swarm_memory}" >> "$GITHUB_ENV"
+          mkdir -p "$hermes_home" "$swarm_memory"
       # agents.yaml is gitignored; mirror install.sh and materialize from the example.
       - name: Seed agents.yaml from example
         run: cp agents.yaml.example agents.yaml
